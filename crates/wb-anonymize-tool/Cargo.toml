@@ -1,0 +1,20 @@
+[package]
+name = "wb-anonymize-tool"
+version = "0.1.0"
+edition = "2021"
+description = "Dev tool: reads a real .wb (legacy WhiteBrowser SQLite DB) read-only and writes a deterministically anonymized movie-only sample fixture. Never depends on tauri -- standalone CLI."
+
+[lib]
+name = "wb_anonymize_tool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wb-anonymize-tool"
+path = "src/main.rs"
+
+[dependencies]
+gb-core = { path = "../gb-core" }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

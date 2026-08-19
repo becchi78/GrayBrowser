@@ -1,0 +1,394 @@
+name: CI
+
+# PR時に自動実行するのはubuntu 1ジョブ（pr-checks）の最小CIのみ。
+# Windowsのフル検証（checks/build）とE2E（e2e）はworkflow_dispatchでの
+# 手動実行に限定する（Windowsランナーは単価が高いため）。ローカル検証は
+# 改訂後のdoc/git-workflow-rules.md R6に委ねる。
+# checks/buildをworkflow_dispatch限定にした結果、push（main以外）で`if`が
+# 真になるジョブが1つも無くなったため、トップレベルのpushトリガー自体を
+# 削除している（ジョブが1つも走らない空のワークフロー実行を避けるため）。
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------
+  # 0. PR時の最小CI（Issue #43）
+  #
+  # `.wb`トラックで`crates/gb-core/src/lib.rs`の`pub mod reconcile;`を実体
+  # 未コミットのまま巻き込みかけた事故（doc/git-workflow-rules.md R6の
+  # 存在理由）を、安価なubuntuランナーに機械的に検知させるための最小CI。
+  # `gb-core`はOS非依存クレート（依存はxxhash-rust/blake3/thiserror/regex
+  # の純粋クロスプラットフォームクレートのみ）なのでubuntu上でも検証でき、
+  # 高価なWindowsランナー（checks/build/e2e、いずれもworkflow_dispatch
+  # 限定）を毎PRで回さずに済む。TS側の全チェック（lint/typecheck/
+  # test:unit）も対象がgb-coreだけに留まらないためこのジョブに集約する。
+  #
+  # `paths`フィルタは付けない（ジョブ自体が軽量なため、フィルタ漏れに
+  # よる見落としリスクを避ける方を優先する: YAGNI）。
+  # ---------------------------------------------------------------
+  pr-checks:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    concurrency:
+      group: pr-checks-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: cargo fmt --check
+        run: cargo fmt --check --all
+
+      - name: cargo build (gb-core)
+        # モジュール解決失敗（実体の無いpub mod宣言など）をclean checkout
+        # で機械的に検知するための明示ステップ。doc/git-workflow-rules.md
+        # 改訂後R6がRust変更時の検証コマンドとして明示している
+        # `cargo build -p gb-core`と同一のものをここに置く。
+        run: cargo build -p gb-core --locked
+
+      - name: cargo clippy (gb-core)
+        run: cargo clippy -p gb-core --all-targets -- -D warnings
+
+      - name: cargo test (gb-core)
+        run: cargo test -p gb-core --all-features
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # 22+ required: package.json's test:unit script runs
+          # `node --experimental-strip-types --test`, which needs Node
+          # 22.6+ (not available on Node 20).
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Lint / typecheck / unit test (frontend)
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run test:unit
+
+  # ---------------------------------------------------------------
+  # 1. Lint + ユニットテスト（フル・手動実行専用）
+  #
+  # 元は lint/unit-test の2ジョブに分かれ needs で直列化していたが、
+  # 両者に本当の依存関係は無く、同じcargo資産・同じtoolchainセット
+  # アップを2回繰り返すだけだったため1ジョブに統合した（PR9でのCI
+  # 高速化）。依存クレートの脆弱性チェック（cargo audit）は、これら
+  # を毎pushでブロックしないよう .github/workflows/audit.yml に分離
+  # した（Cargo.lock/Cargo.toml変更時のpush/PR + 週次cron）。
+  #
+  # test-strategy.md 5.7節からの差分: PR1でCargoワークスペース化した
+  # ため（src-tauri + crates/gb-core）、`working-directory: src-tauri`
+  # を外しリポジトリルートで実行し、`cargo clippy`/`cargo test` に
+  # `--workspace` を付与している。
+  #
+  # Issue #43: PR時の自動CIはubuntu 1ジョブ（pr-checks、下記）のみに
+  # 最小化したため、このWindowsフルジョブはworkflow_dispatchでの手動
+  # 実行専用に位置づけを変更した（build/e2eと同じ扱い）。
+  # ---------------------------------------------------------------
+  checks:
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # 22+ required: package.json's test:unit script runs
+          # `node --experimental-strip-types --test`, which needs Node
+          # 22.6+ (not available on Node 20). Already used by the e2e job
+          # below for a different reason (node:sqlite); this bumps checks
+          # to match.
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Lint / typecheck / unit test (frontend)
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run test:unit
+
+  # ---------------------------------------------------------------
+  # 2. ビルド（.msi生成まで確認。手動実行専用）
+  #
+  # Phase 1のゴール判定には含めない（test-strategy.md 5.3節のランナー
+  # 時間節約方針）。ワークフローには記述のみ。
+  #
+  # Issue #43: 以前は`pull_request || workflow_dispatch`だったが、PR時の
+  # 自動CIはubuntu 1ジョブ（pr-checks）のみに最小化したため、checks同様
+  # workflow_dispatch限定に変更した（手動実行時、e2eジョブが再利用する
+  # 同一runの成果物を作るためにもこのジョブが必要）。
+  # ---------------------------------------------------------------
+  build:
+    runs-on: windows-latest
+    needs: checks
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri build
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grayb-windows-installer
+          # Cargo workspace build output lands under the repo root's
+          # target/ (not src-tauri/target/) -- PR9 found this via a real
+          # `pull_request`-triggered run: the build itself succeeded and
+          # produced the .msi, but this path (copied from test-strategy.md
+          # 5.7節's pre-workspace reference) never matched, so no artifact
+          # was ever uploaded.
+          path: target/release/bundle/**/*.msi
+          retention-days: 7
+
+      - name: Upload built app (for e2e reuse)
+        uses: actions/upload-artifact@v4
+        with:
+          name: grayb-app-exe
+          # e2e reuses this release build instead of doing its own separate
+          # --debug build from scratch (PR9 CI speedup) -- build already has
+          # to compile a release binary for the .msi above, so sharing it
+          # costs nothing extra here and removes a full duplicate Tauri
+          # build in e2e. Includes any top-level DLLs alongside the exe
+          # (e.g. WebView2Loader.dll) in case the raw build output needs them.
+          path: |
+            target/release/graybrowser.exe
+            target/release/*.dll
+          retention-days: 1
+
+  # ---------------------------------------------------------------
+  # 3. UI/E2Eテスト（tauri-driver + WebdriverIO）
+  #
+  # Phase 1のゴール判定には含めない。ワークフローには記述のみ。
+  #
+  # 経緯（Phase 3 PR #4 → e2e-followupトラック）: tauri-driverが実CI環境
+  # （windows-latest）でWebDriverセッションを一度も確立できず、
+  # stdout/stderrとも無出力のまま起動失敗する問題があった。原因は
+  # tauri-driver/msedgedriver自体ではなく、GitHub Actionsのステップ境界
+  # プロセスクリーンアップだった: Start-Processで起動したtauri-driverは、
+  # そのステップが終了すると子プロセス（msedgedriverを含む）ごと回収され、
+  # 別ステップからのポーリング待ちの時点では既に存在しなくなっていた
+  # （e2e-followupトラックのA/B対照実験で確定 -- 同一ステップ内なら30秒間
+  # 生存し続け、別ステップに分けた途端に消える、という結果が決定的だった）。
+  # 「起動」「待機」「テスト実行」を1ステップに統合し、プロセスの生存期間を
+  # ステップの生存期間と一致させることで解消した。この修正自体はCI上で
+  # 実証済み（tauri-driverの起動・ポート維持・テスト開始まで到達）。
+  #
+  # ただし上記修正の実証run（PR #5）で、tauri-driver起動より後の層――
+  # WebDriverセッション生成（POST /session）が30秒でタイムアウトする――
+  # という別の未解決問題が新たに見つかった。これはtauri-driverの起動可否
+  # とは異なる層の問題（対象exeの起動可否等が疑われるが未検証、Phase 5
+  # 申し送り参照）であり、このトラックのスコープ外として一旦切り離す。
+  #
+  # pull_requestトリガーは、この新問題が解決するまで再度workflow_dispatch
+  # 限定に戻す。Phase 3時点の限定化との違いに注意: あのときは起動失敗の
+  # 原因が未特定のまま赤を隠す措置だったが、今回はtauri-driverの起動問題
+  # 自体は原因特定・修正・実証済みであり、次に取り組むべき問題の所在
+  # （WebDriverセッション生成層、対象exe起動まわり）も具体的に絞れている
+  # 状態での一時的な待避。Phase 5でセッション生成問題を解決したら
+  # pull_requestトリガーへ戻すこと。
+  # ---------------------------------------------------------------
+  e2e:
+    runs-on: windows-latest
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # 22+ required: e2e/fixtures.mjs uses node:sqlite (stable from
+          # 22.5), which the other jobs' Node 20 doesn't have at all
+          # (ERR_UNKNOWN_BUILTIN_MODULE, found via a real CI run on PR #4).
+          # Scoped to this job only -- checks/build/release never touch
+          # node:sqlite.
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Download built app from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: grayb-app-exe
+          path: target/release/
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      # tauri-driver internally launches msedgedriver, but the runner image
+      # doesn't guarantee one on PATH -- found via a real CI run on PR #4:
+      # tauri-driver accepted the port but every WebDriver new-session
+      # request timed out (it was silently unable to spawn msedgedriver).
+      # Fetches the exact build matching this runner's installed WebView2
+      # runtime, since a version mismatch between msedgedriver and the
+      # WebView2 it drives fails the same way a missing binary does.
+      - name: Install matching msedgedriver
+        shell: pwsh
+        run: |
+          $version = (Get-Item "C:\Program Files (x86)\Microsoft\EdgeWebView\Application").GetDirectories() |
+            Where-Object { $_.Name -match '^\d+\.' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1 -ExpandProperty Name
+          Write-Host "WebView2 runtime version: $version"
+          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP\edgedriver.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath "$env:RUNNER_TEMP\edgedriver" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\edgedriver"
+
+      # tauri-driverの起動から待機・E2Eテスト実行までを単一ステップ内で
+      # 完結させる。GitHub Actionsはステップ終了時にそのステップが起動した
+      # 子プロセスツリーを回収するため(上記の経緯コメント参照)、
+      # tauri-driverはテスト実行が終わるまで同じステップ内で生存させる
+      # 必要がある。stdout/stderrのリダイレクトは診断目的で維持(tauri-driver
+      # は正常時も無出力なため、空でも異常ではない -- e2e-followupトラックで
+      # 確認済み)。
+      - name: Run E2E tests (start tauri-driver and test in one step)
+        shell: pwsh
+        run: |
+          $proc = Start-Process tauri-driver -ArgumentList "--port 4444" -PassThru `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\tauri-driver-stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\tauri-driver-stderr.log"
+          Write-Host "tauri-driver PID: $($proc.Id)"
+
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            $ready = $false
+            while ((Get-Date) -lt $deadline) {
+              $result = Test-NetConnection -ComputerName localhost -Port 4444 -WarningAction SilentlyContinue
+              if ($result.TcpTestSucceeded) {
+                Write-Host "tauri-driver is listening on port 4444"
+                $ready = $true
+                break
+              }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) {
+              throw "tauri-driver did not start listening on port 4444 within 30s"
+            }
+
+            npm run test:e2e
+            if ($LASTEXITCODE -ne 0) {
+              throw "E2E tests failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+            Get-Process msedgedriver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Show tauri-driver log (diagnostic, always runs)
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "--- tauri-driver stdout ---"
+          Get-Content "$env:RUNNER_TEMP\tauri-driver-stdout.log" -ErrorAction SilentlyContinue
+          Write-Host "--- tauri-driver stderr ---"
+          Get-Content "$env:RUNNER_TEMP\tauri-driver-stderr.log" -ErrorAction SilentlyContinue
+
+      - name: Upload E2E failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-screenshots
+          path: e2e/screenshots/**
+          retention-days: 7
+
+  # ---------------------------------------------------------------
+  # 4. リリース（タグpush時のみ。tauri-actionでビルド＆GitHub Release作成）
+  # ---------------------------------------------------------------
+  release:
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "GrayBrowser ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false

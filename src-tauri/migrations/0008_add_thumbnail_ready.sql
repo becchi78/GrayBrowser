@@ -1,0 +1,19 @@
+-- Adds a persisted "is thumbnails/[id].webp present" flag to videos, so
+-- list_videos's hot path (queries::list_videos_filtered + VideoDto::from_row)
+-- can read it straight off the row instead of calling
+-- thumbnails_dir.join(...).exists() once per returned row. A benchmark found
+-- this per-row filesystem stat() call -- not the LIKE-based search itself --
+-- was the real bottleneck behind a full-library browse (up to 100,000
+-- stat() calls for a 100k-video library).
+--
+-- `DEFAULT 0` means every pre-existing row (including ones whose thumbnail
+-- file was already generated before this migration ever ran) starts out
+-- reading as "not ready" even though the file is actually present on disk.
+-- This is intentional and self-correcting, not a bug: `thumbnail::worker`'s
+-- resume pass (`list_videos_missing_thumbnails`, which still treats the
+-- filesystem as the source of truth for "what actually needs generating",
+-- unlike this hot-path column) backfills `thumbnail_ready = 1` for any row
+-- it finds with an existing file but a stale flag, the next time it runs
+-- (app startup / after a scan) -- the same "next run self-heals" property
+-- the rest of this app's stateless-resume design already relies on.
+ALTER TABLE videos ADD COLUMN thumbnail_ready INTEGER NOT NULL DEFAULT 0;

@@ -1,0 +1,50 @@
+name: Dependency Audit
+
+# ci.yml の checks/build をブロックしないよう独立ワークフローに分離
+# （PR9でのCI高速化）。Cargo.lock/Cargo.toml が変わった時と週次で実行。
+#
+# runs-on を ubuntu-latest にしているのは他ジョブと異なる判断のため
+# 明記しておく: cargo audit は Cargo.lock を読んで既知の脆弱性DBと
+# 突き合わせるだけで、プロジェクトのコンパイル・実機実行を一切伴わ
+# ない。test-strategy.md 5.7節が windows-latest を全ステージで使う
+# 理由（Windows API依存ロジック・WebView2/MSVCビルド前提）はこの
+# ジョブには当てはまらないため、速度を優先してLinuxランナーを使う。
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+  schedule:
+    - cron: "0 0 * * 1" # 毎週月曜 0:00 UTC（Cargo.lock変更が無い週でも新規CVEを検知する）
+  workflow_dispatch: {} # 手動実行用（PR9でのCI実証に使用）
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # cargo install --locked によるソースビルドは数分かかる。
+      # taiki-e/install-action はプリビルドバイナリを取得するため、
+      # ここがほぼ一瞬になる（PR9でのCI高速化の主要因）。
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo audit

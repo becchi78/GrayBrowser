@@ -1,0 +1,56 @@
+name: "改善タスク"
+description: "改善タスクの起票用"
+title: "[改善] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        この Issue は `CLAUDE.md` の『Issue起点の改善タスク運用』手順から参照される。人間が着手判断済みの内容を記載すること。
+  - type: textarea
+    id: background
+    attributes:
+      label: "背景"
+      description: "なぜこの改善が必要か"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: "スコープ"
+    validations:
+      required: true
+  - type: textarea
+    id: non-scope
+    attributes:
+      label: "非スコープ"
+      description: "触らないこと"
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: "要判断事項"
+      description: "推奨案とその理由を添えて記載する欄。実装前にPlanで是非を確認する。"
+    validations:
+      required: false
+  - type: textarea
+    id: dod
+    attributes:
+      label: "DoD"
+      description: "チェックリスト形式（- [ ] ...）で記載"
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: "参照すべき設計書・完了報告"
+    validations:
+      required: false
+  - type: input
+    id: branch
+    attributes:
+      label: "Git運用: ブランチ名"
+      description: "feature/<track>-<Issue番号>-<短い説明> の形式で指定（例: feature/test-infra-21-cold-start-ab）"
+    validations:
+      required: true

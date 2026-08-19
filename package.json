@@ -1,0 +1,38 @@
+{
+  "name": "graybrowser",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts e2e/sandboxGuard.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 e2e/specs/tag-management.e2e.mjs e2e/specs/incremental-search.e2e.mjs e2e/specs/grid-visible-after-scan.e2e.mjs e2e/specs/layout-shrink-regression.e2e.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.6",
+    "@tauri-apps/api": "^2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^20.19.43",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^10.7.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.64.0",
+    "vite": "^7.0.4",
+    "webdriverio": "^9.30.0"
+  }
+}

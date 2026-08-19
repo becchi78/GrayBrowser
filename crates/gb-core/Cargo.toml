@@ -1,0 +1,17 @@
+[package]
+name = "gb-core"
+version = "0.1.0"
+edition = "2021"
+description = "GrayBrowser OS-independent business logic (hash calc, filename validation, path logic, migrations). No dependency on tauri, rusqlite, or process-spawning crates."
+
+[dependencies]
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+blake3 = "1"
+thiserror = "2"
+regex = "1"
+
+[features]
+testing = []
+
+[lib]
+name = "gb_core"

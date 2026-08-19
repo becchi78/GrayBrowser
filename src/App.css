@@ -1,0 +1,1383 @@
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+input,
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: #0f0f0f;
+  background-color: #ffffff;
+  transition: border-color 0.25s;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #396cd8;
+}
+button:active {
+  border-color: #396cd8;
+  background-color: #e8e8e8;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 1em;
+  padding: 1em;
+  height: 100vh;
+  /* Defense in depth, not the primary fix: tauri.conf.json's window/
+     minWidth/minHeight are sized so the sibling sections above/below
+     `.video-list` plus its own `min-height` floor (see that rule's own
+     comment) fit inside the window without needing to shrink at all at the
+     app's default and minimum sizes (verified with a WebDriver
+     measurement). This only engages if something not accounted for there
+     (e.g. many sibling panels opened at once with a lot of real content)
+     still doesn't fit -- scrolling the whole page here is preferable to
+     silently clipping content or squeezing a sibling section into an
+     unreadable sliver. */
+  overflow-y: auto;
+}
+
+.ffmpeg-notice {
+  background-color: #f8d7a3;
+  color: #5a3d00;
+  border-radius: 8px;
+  padding: 0.75em 1em;
+}
+
+.scan-summary {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+.wb-import-path {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+.wb-import-progress {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+.wb-import-note {
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.wb-import-error {
+  color: #8a1f1f;
+  font-size: 0.9em;
+  margin: 0;
+}
+
+/* Always-visible header, row 1 (52px budget, search + sort). `flex-shrink:
+   0` is explicit -- unlike the old `.toolbar` this replaces, this row must
+   never compete for the shrink-share `.video-list`'s `flex: 1` depends on,
+   so it deliberately does NOT get a `flex-basis: 0` (no `flex: 1`) and
+   does NOT get its own `overflow: auto` shrink budget the way the
+   temporary panels below still do. */
+.header-row-primary {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  flex-shrink: 0;
+}
+
+/* この行の高さはグローバルな`input, button`ルール(padding 0.6em 1.2em・
+   font-size 1em)がそのまま効いていたため、`.video-row-info button,
+   .video-row-info input`と同じスコープ付きオーバーライドを適用する。
+   グローバルな`input, button`ルール自体は他のダイアログ等に影響するため
+   変更しない。 */
+.header-row-primary button,
+.header-row-primary input,
+.header-row-primary select {
+  padding: 0.35em 0.8em;
+  font-size: 0.9em;
+}
+
+/* Row 2 (38px budget, tag filter chips). Same `flex-shrink: 0` rule as row
+   1. `TagFilter` renders nothing (`null`) when the library has no tags yet,
+   so this wrapper naturally collapses to 0 height in that case -- no
+   special-casing needed here. */
+.header-row-filters {
+  flex-shrink: 0;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 12em;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  /* Unbounded like `.folder-dialog-list` -- grows with the number of tags
+     in the library. Same self-contained shrink/scroll budget as the other
+     sibling sections. */
+  min-height: 0;
+  max-height: 10vh;
+  overflow: auto;
+}
+
+/* `.header-row-primary`と同じ理由で、タグフィルタ行(`.header-row-filters`)
+   の高さを縮める -- チップのpadding/font-sizeを一段階小さくする。 */
+.tag-filter-chip {
+  border-radius: 999px;
+  padding: 0.15em 0.6em;
+  font-size: 0.8em;
+  box-shadow: none;
+  background-color: #e8e8e8;
+}
+
+.tag-filter-chip--active {
+  background-color: #396cd8;
+  color: #ffffff;
+}
+
+/* MainArea, the `flex: 1` body row that hosts FolderSidebar + the video
+   list side by side (the old 3rd column, the detail panel, is gone --
+   folded into each `.video-row`). `min-height: 0` overrides this item's
+   default `min-height: auto` in `.app`'s *column* flex layout -- without
+   it, this item's automatic
+   minimum height would be based on its children's own content sizes
+   (FolderSidebar's list, `.video-list`'s explicit `min-height: 226px`,
+   etc.) rather than being allowed to shrink freely, which would silently
+   reintroduce the same "flex-basis-0 item can't actually get smaller"
+   class of bug this file's other comments document (see `.video-list`
+   below) at this new nesting level. */
+.main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Registered-folder list, always visible, user-resizable (200px〜500px)
+   via a drag handle -- see FolderSidebar.tsx, which owns the width as its
+   own component state (`style={{ width }}` on this element) and is why
+   there's no fixed `width` rule here.
+   `flex-shrink: 0` is still needed so `.video-list`'s own flex-basis-0
+   shrink never eats into whatever width FolderSidebar's state currently
+   reports -- same reasoning as the header rows above, just against a
+   variable width now instead of a constant one. */
+.folder-sidebar {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid #ddd;
+}
+
+/* The drag handle itself -- absolutely positioned
+   (against `.folder-sidebar`'s own `position: relative` above) as a thin
+   strip spanning the sidebar's full height along its right edge, straddling
+   the 1px `border-right`. Positioned this way (rather than as a normal flex
+   child of the column layout above) so it overlays the whole sidebar height
+   regardless of how much content (folder count) the column itself has,
+   instead of being just one more stacked item at the bottom. `cursor:
+   col-resize` is the only visual affordance; the actual resize logic
+   (mousedown/mousemove/mouseup) lives entirely in FolderSidebar.tsx, not
+   here. Deliberately given its own small hit area (6px, wider than the 1px
+   border-right it straddles) rather than relying on the border pixel
+   itself, which would be unreasonably hard to grab with a mouse. */
+.folder-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.folder-sidebar-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0.5em 0.75em;
+  font-size: 0.85em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-sidebar-item--active {
+  background-color: #396cd8;
+  color: #ffffff;
+}
+
+/* Kept visually distinct from `.folder-sidebar-item` above (an italic,
+   muted, non-toggling entry) since it opens a dialog rather than filtering
+   the grid. `margin-top: auto` pins it to the bottom of the sidebar's flex
+   column regardless of how many folders are registered above it. */
+.folder-sidebar-manage-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0.5em 0.75em;
+  margin-top: auto;
+  font-size: 0.85em;
+  font-style: italic;
+  opacity: 0.75;
+  border-top: 1px solid #ddd;
+}
+
+/* The always-visible status bar (badges row). `flex-shrink: 0` + fixed
+   `height: 26px` are the same guarantee the header rows above rely on --
+   this row must never compete for `.video-list`'s `flex: 1` shrink-share.
+   `position: relative` is the anchor for `.status-panel` (see below), an
+   absolutely-positioned popover that opens *above* this row instead of
+   stacking inline -- inline stacking would make this row's own height
+   depend on whichever panel's content is open, reintroducing the exact
+   flex-basis-0 problem documented for `.video-list`. `.status-badge`'s
+   height/padding/font-size scale proportionally with this row's height
+   (below); `.status-panel` anchors via `bottom: 100%`, so changing this
+   row's height doesn't shift its position. */
+.status-bar {
+  flex-shrink: 0;
+  height: 26px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.status-bar-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  height: 100%;
+}
+
+.status-badge {
+  height: 20px;
+  padding: 0 0.6em;
+  font-size: 0.75em;
+  box-shadow: none;
+  background-color: #e8e8e8;
+}
+
+.status-badge[aria-pressed="true"] {
+  background-color: #396cd8;
+  color: #ffffff;
+}
+
+/* The popover slot shared by whichever of
+   SkippedFilesPanel/DuplicateGroupsPanel/GenerationFailuresPanel is
+   currently open (only one at a time -- see StatusBar.tsx). Anchored to
+   `.status-bar`'s `position: relative` above, opening upward (`bottom:
+   100%`) so it never affects the status bar's own fixed-height flex
+   budget. Each panel component keeps its own class (`skipped-files-panel`
+   etc.) alongside this shared one purely for its own internal rules below
+   (list max-height etc.); the popover positioning/chrome itself lives only
+   here. */
+.status-panel {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 0.5em;
+  /* Doubled from `min(28em, 90vw)` -- at 28em (448px) the
+     `-path`/`-name` rows below routinely ellipsis away the file name
+     itself (the one piece of information that actually identifies which
+     file is affected), leaving the panel unusable for that purpose. The
+     `90vw` cap is unchanged, so this still clamps down at
+     `tauri.conf.json`'s 900px `minWidth` (see
+     `e2e/specs/layout-shrink-regression.e2e.mjs`'s 900px-no-overflow
+     assertion, which enforces this empirically rather than by this
+     comment's arithmetic alone). */
+  width: min(56em, 90vw);
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  padding: 0.75em 1em;
+  z-index: 20;
+}
+
+.video-list-empty {
+  flex: 1;
+  min-width: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+}
+
+.video-list {
+  flex: 1;
+  overflow: auto;
+  /* `flex: 1` gives this a flex-basis of 0, so in the (rare, see
+     tauri.conf.json's window/minWidth/minHeight) case where the sibling
+     sections still add up to more than the window's height, CSS flexbox's
+     shrink algorithm assigns this item exactly 0 of the negative free
+     space -- its scaled shrink factor (flex-basis * flex-shrink) is always
+     0, independent of whatever the siblings' own `min-height: 0` +
+     `max-height` + `overflow: auto` (see those rules) do. This floor is
+     what actually guarantees `@tanstack/react-virtual` always has a
+     nonzero container to measure and can render at least one row
+     (ROW_HEIGHT = 226px in ThumbnailGrid.tsx, matching the real rendered
+     `.video-row` height -- see that constant's own comment). */
+  min-height: 226px;
+  /* Horizontal counterpart of the min-height floor above -- `.main-area`
+     is a *row* flex container, so this item's `flex: 1` also gives it a
+     horizontal flex-basis of 0, subject to the same "scaled shrink factor
+     is always 0" mechanics but along the row axis. This floor keeps the
+     list from collapsing to 0 width if the sidebar ever leaves less than
+     this much for it (overflow from a row's own 6 thumbnails is handled by
+     `.video-row-thumbnails`'s own `overflow-x: auto`, not by shrinking
+     this container). Derived from `.video-row`'s own non-content width
+     (24px left+right padding + 8px gap, see that rule's own comment) plus
+     `.video-row-thumbnails-wrap`'s min-width (200px) plus
+     `.video-row-info`'s fixed width (300px): 24px + 200px + 8px + 300px =
+     532px. Below this, `.video-row`'s own content would be wider than
+     `.video-list` itself, which (given `.video-list`'s `overflow: auto`,
+     both axes) would only ever show as an extra, contained horizontal
+     scrollbar on `.video-list` itself -- not visual breakage -- but
+     matching the floor to the real content avoids that scrollbar appearing
+     needlessly. `sidebarResize.ts`'s `VIDEO_LIST_MIN_WIDTH_PX` must match
+     this value; the sidebar's own resizable max width (FolderSidebar.tsx,
+     500px) is additionally clamped against the window's actual available
+     width so dragging it wide at a narrow window can't force `.video-list`
+     below this floor in the first place -- see that component's own
+     comment. */
+  min-width: 532px;
+}
+
+/* One row = one video. `height: 100%` fills the virtualizer's
+   absolutely-positioned wrapper
+   (ThumbnailGrid.tsx sets that wrapper's `height` to `ROW_HEIGHT`);
+   `overflow: hidden` keeps unexpectedly tall content (e.g. a video with
+   many tags) from visually bleeding into the next virtualized row, which
+   is positioned by an absolute `translateY` that assumes every row is
+   exactly `ROW_HEIGHT` tall. `.video-row-info` below has its own
+   `overflow-y: auto` as the actual escape hatch for that content instead. */
+.video-row {
+  display: flex;
+  align-items: stretch;
+  /* 情報パネル左側の間隔は8px。右側は下の`padding`の右辺(8px)が担う --
+     左側(サムネイル領域の左の間隔)は`padding`の左辺(1em)のまま。 */
+  gap: 8px;
+  height: 100%;
+  /* 右のみpaddingを8pxに縮小。上下・左は1em(左はサムネイル領域の左の間隔)。 */
+  padding: 0.5em 8px 0.5em 1em;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.video-row--selected {
+  background-color: #e8f0fe;
+}
+
+/* This wrap sits one level up from `.video-row-thumbnails` itself, as the
+   `position: relative` containing block shared by
+   `.thumbnail-offline-badge--overlay` and the
+   new `.video-row-filename-overlay` below (see VideoRow.tsx's own comment
+   on why both need a non-scrolling anchor). `min-width` (one thumbnail's
+   width, moved here from `.video-row-thumbnails` below) is what used to
+   keep that inner element from shrinking to nothing; it plays the same role
+   here now that this wrap is the actual flex item of `.video-row`. */
+.video-row-thumbnails-wrap {
+  position: relative;
+  /* 200px, matching `.video-row-thumbnail-wrap`'s own size below
+     (WhiteBrowser互換の200x150サムネイル)。 */
+  min-width: 200px;
+}
+
+/* 6 fixed-width thumbnails in a row; `overflow-x: auto` is the entire
+   mechanism for the "narrow window -> horizontal scrollbar on just this
+   area" behavior -- no JS column-count calculation involved (see
+   ThumbnailGrid.tsx's comment). This area *must* be allowed to shrink
+   (default `flex-shrink: 1`, NOT `0` -- with `flex-shrink: 0` here, this
+   item never shrinks below its 6-thumbnail content width, so *all* of a
+   narrow row's squeeze falls on `.video-row-info` instead until it hits
+   its own floor and then simply overflows `.video-row`'s `overflow:
+   hidden`, hiding the metadata/rating/tag column entirely instead of
+   showing this area's own scrollbar). `position: relative`/`min-width`
+   live on `.video-row-thumbnails-wrap` instead -- this is a plain scroll
+   container filling that wrap via `width`/`height: 100%`, so shrinking
+   still works the same since the wrap itself is the flex item that
+   shrinks and this element just tracks its size. */
+.video-row-thumbnails {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: pointer;
+}
+
+/* Fixed size, does not shrink -- each of the 6 slots holds its spot even
+   while the sibling thumbnails are still loading (`thumbnail_ready` false)
+   or missing, so the row doesn't jump around as thumbnails arrive one by
+   one. 200x150 (4:3) matches WhiteBrowser's own thumbnail size (200x150,
+   6 tiles per row -- the same 6-thumbnails-per-video count this UI already
+   uses). At this size, all 6 thumbnails don't necessarily fit within
+   `.video-row-thumbnails` at the default window width -- this is expected:
+   `.video-row-thumbnails`'s `overflow-x: auto` (see that rule's own
+   comment) is the mechanism for showing a horizontal scrollbar over just
+   this area instead of forcing the row wider. */
+.video-row-thumbnail-wrap {
+  /* width/flex-basis is set inline per-row by VideoRow.tsx (derived from
+     the video's real width/height, so
+     each of the 6 slots renders at the video's own aspect ratio instead of a
+     fixed 4:3 200x150 box) -- 200px here only remains as the pre-render/
+     no-inline-style fallback (SSR-less React always applies the inline style
+     on first paint in practice, but keeping a matching static fallback here
+     costs nothing and avoids a flash of the wrong width if that ever isn't
+     true). height stays fixed at 150px regardless of aspect ratio -- see
+     VideoRow.tsx's own comment for the width formula. */
+  flex: 0 0 200px;
+  width: 200px;
+  height: 150px;
+}
+
+.video-row-thumbnail-wrap img {
+  width: 100%;
+  height: 100%;
+  /* The wrap's width is computed from the video's own aspect ratio (see
+     above), so in the common case this box already matches the image's
+     intrinsic ratio exactly and `contain`/`cover` would render
+     identically; `contain` is kept
+     as a safety margin against rounding (Math.round in VideoRow.tsx) or
+     stale/inconsistent ffprobe metadata ever producing an off-by-a-few-px
+     mismatch -- `cover` would silently crop in that case, `contain` never
+     does (worst case: a hairline letterbox instead of a crop). */
+  object-fit: contain;
+  border-radius: 4px;
+  background-color: #ddd;
+}
+
+.thumbnail-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background-color: #ddd;
+  color: #666;
+  font-size: 0.85em;
+}
+
+.video-row--offline .video-row-thumbnail-wrap img,
+.video-row--offline .video-row-thumbnail-wrap .thumbnail-placeholder {
+  /* 45% opacity. `filter: grayscale` kept alongside opacity, same as the
+     old `.thumbnail-cell--offline` rule this replaces. */
+  filter: grayscale(100%);
+  opacity: 0.45;
+}
+
+/* Metadata + rating + tag editor, to the right of the thumbnails.
+   `min-width: 0` lets this flex item actually shrink below its content's
+   intrinsic width (this file's usual flex-basis-0 concern) so it never
+   forces the row wider than the window; `overflow-y: auto` is the
+   escape hatch for content taller than `ROW_HEIGHT` (see `.video-row`'s own
+   comment on why that matters for the virtualizer) -- ROW_HEIGHT is sized
+   generously enough that this is a rare fallback, not the normal
+   case, so `justify-content: flex-start` (not `center`) keeps the *top* of
+   the content (再生時間, the first `<dt>`) anchored and visible even when it
+   does engage, rather than centering and pushing the top out of view.
+   `overflow-x: hidden` avoids a second, unwanted horizontal scrollbar that
+   `overflow-y: auto` alone would otherwise trigger (the CSS `overflow-x:
+   visible` + `overflow-y: auto` combination computes `overflow-x` to
+   `auto` automatically per spec) -- children below (`.video-row-properties`
+   grid, `TagEditor`'s form) already wrap/shrink instead of overflowing
+   sideways. */
+.video-row-info {
+  /* The info panel must not shrink like a normal flex-basis-0 item: a
+     plain `flex: 1; min-width: 0` (this file's usual shrink-to-zero
+     pattern) would let this column collapse toward 0 width first and use
+     *all* the squeeze before `.video-row-thumbnails` ever needs its own
+     `overflow-x: auto`, collapsing the entire metadata/rating/tag column
+     to nothing at narrow window widths. A fixed `flex: 0 0 300px` avoids
+     that and keeps `.video-row-properties`'s 4-column grid in its
+     intended single-row layout at all times, at the cost of no longer
+     growing to use extra window width (that width goes to
+     `.video-row-thumbnails` instead). */
+  flex: 0 0 300px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.35em;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Shrinks the entire panel proportionally -- every child rule below
+     (`.video-row-properties`, `.video-row-info button/input`, `.tag-chip`,
+     `.star`, etc.) is already written in relative `em` units against this
+     ancestor's `font-size` (this file's usual pattern), so adding it once
+     here is enough; no individual child rule needs editing to shrink along
+     with it. `.video-list`'s own `min-width` and `sidebarResize.ts`'s
+     `VIDEO_LIST_MIN_WIDTH_PX` must match this column's width -- see those
+     rules' own comments. */
+  font-size: 0.85em;
+}
+
+/* Real-data measurement: `StarRating`/`TagEditor` reuse the global
+   `input`/`button` rules (padding 0.6em 1.2em, ~40px tall each) sized for
+   full-width dialogs elsewhere in the app -- inside a fixed-height list row
+   that also has to fit the properties grid below, that's too tall to leave
+   room for the tag-add form without scrolling. This scoped override only
+   affects the two rendered inside `.video-row-info` (not
+   `StarRating.tsx`/`TagEditor.tsx` themselves, which stay unstyled and
+   reusable elsewhere at their normal size). */
+.video-row-info button,
+.video-row-info input {
+  padding: 0.25em 0.6em;
+  font-size: 0.85em;
+}
+
+/* 2 label/value pairs per line (4 grid columns,
+   `dt`/`dd` alternating in DOM order) instead of PropertiesPanel's original
+   single-column stack -- halves the number of rows (7 -> 4) so the
+   properties block leaves enough of `ROW_HEIGHT`'s vertical budget for
+   `StarRating` + `TagEditor` below it to render without scrolling in the
+   common case. */
+.video-row-properties {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 0.1em 1em;
+  margin: 0;
+  font-size: 0.78em;
+}
+
+.video-row-properties dt {
+  opacity: 0.7;
+}
+
+.video-row-properties dd {
+  margin: 0;
+  /* `.video-row-properties`'s two value columns are equal-share `1fr`
+     tracks (see the grid rule above), so a value's actual column width is
+     capped independently of that value's own content length. Every value
+     in this grid is short/uniform by design (codec names, "N.N Mbps",
+     "NN.NN fps", resolution like "1920 × 1080", etc.), so forcing no-wrap
+     here is safe -- worst case an unexpectedly long value overflows its
+     column by a hair rather than wrapping onto two lines, same trade-off
+     already made for `.folder-row-path`/`.skipped-file-name` elsewhere in
+     this file. */
+  white-space: nowrap;
+}
+
+.thumbnail-offline-badge {
+  /* Recolored from red to amber/orange -- red is reserved for the .wb
+     import dialog's real-failure display only, and this badge's original
+     red predates that reservation. This
+     base rule is shared by two different callers with two different
+     layouts: VideoRow (overlaid on `.video-row-thumbnails` -- see
+     `.thumbnail-offline-badge--overlay` below) and
+     DuplicateGroupsPanel's `DuplicateGroupMemberRow` (inline, next to the
+     "登録日時" text, not overlaid on anything). Only text/color styling
+     belongs here; positioning is caller-specific. */
+  font-size: 0.75em;
+  font-weight: 500;
+  color: #7a3b00;
+  background-color: #ffe0b2;
+  border-radius: 4px;
+  padding: 0.1em 0.5em;
+}
+
+/* Overlay-only positioning, applied *in addition to*
+   `.thumbnail-offline-badge` and only by VideoRow (whose
+   `.video-row-thumbnails-wrap` is the `position: relative` containing
+   block this needs). Deliberately NOT
+   folded into `.thumbnail-offline-badge` itself: that class is also reused
+   by DuplicateGroupsPanel's member rows (inline, no positioned wrapper
+   around it), and `.duplicate-group-member`/`.duplicate-groups-list`/
+   `.duplicate-group`/`.duplicate-groups-panel` have no `position: relative`
+   ancestor of their own -- only the panel's own root `.status-panel` does
+   (`position: absolute`, this file's popover-anchoring rule above), which
+   would then wrongly resolve as the badge's containing block, jamming every
+   offline badge in every group into that popover's own top-right corner
+   instead of next to each member's thumbnail. */
+.thumbnail-offline-badge--overlay {
+  position: absolute;
+  /* Bottom-right, to avoid overlapping the file-name overlay below
+     (`.video-row-filename-overlay`), which sits at the top edge. */
+  bottom: 4px;
+  right: 4px;
+}
+
+/* `.video-row-thumbnails-wrap`（上記、position: relative）に対して絶対配置し、
+   内側の`.video-row-thumbnails`が横スクロールしても常に同じ位置に留まる。
+   `pointer-events: none`でクリックを透過させ、VideoRow.tsx側のselect/play判定
+   （`.video-row-thumbnails`のonClick/onDoubleClick）をそのまま機能させる。 */
+.video-row-filename-overlay {
+  position: absolute;
+  /* 上端に配置(下端は見えにくい/オフラインバッジと将来競合しうるため)。
+     `border-radius`もそれに合わせて上側の角のみ丸める。 */
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0.15em 0.4em;
+  /* 背景は透明。ただしサムネイル画像が明るい色の場合に白文字が読みにくく
+     なるため、背景の代わりにtext-shadow(黒の縁取り)で最低限の視認性を
+     確保する。 */
+  background-color: transparent;
+  color: #ffffff;
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(0, 0, 0, 0.9);
+  font-size: 0.85em;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 4px 4px 0 0;
+  pointer-events: none;
+}
+
+.skipped-files-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  /* Rendered inside `.status-panel` (a popover anchored to the status
+     bar, see that rule), not as a flex child of `.app` -- the
+     `.status-panel` rule above already caps the popover's own
+     width/position. This `max-height` + `overflow` is this panel's own
+     scroll budget for its (potentially long) `.skipped-files-list`,
+     independent of the popover's own sizing. */
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.skipped-files-guidance {
+  font-size: 0.9em;
+  opacity: 0.8;
+  margin: 0;
+}
+
+.skipped-files-list {
+  margin: 0;
+  padding-left: 1.2em;
+  max-height: 20vh;
+  overflow: auto;
+}
+
+.skipped-file-name {
+  font-weight: 500;
+  margin-right: 0.5em;
+}
+
+.skipped-file-reason {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.duplicate-groups-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  /* Same reasoning as `.skipped-files-panel` above -- inside the
+     `.status-panel` popover, not a flex child of `.app`. Sized a little
+     above `.duplicate-groups-list`'s own `max-height: 40vh` so this outer
+     scrollbar stays a rarely-used fallback. */
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.duplicate-groups-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+}
+
+.duplicate-groups-error {
+  color: #8a1f1f;
+  font-size: 0.9em;
+  margin: 0;
+}
+
+.duplicate-groups-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.duplicate-group {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.5em 0.75em;
+}
+
+.duplicate-group-header {
+  margin-bottom: 0.4em;
+}
+
+.duplicate-group-kind {
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.duplicate-group-members {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.duplicate-group-member {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding: 0.3em 0;
+}
+
+.duplicate-group-member-thumb img,
+.duplicate-group-member-thumb .thumbnail-placeholder {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 4px;
+  background-color: #ddd;
+}
+
+.duplicate-group-member--offline .duplicate-group-member-thumb img,
+.duplicate-group-member--offline .duplicate-group-member-thumb .thumbnail-placeholder {
+  filter: grayscale(100%);
+  opacity: 0.5;
+}
+
+.duplicate-group-member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  min-width: 0;
+  flex: 1;
+}
+
+.duplicate-group-member-name {
+  font-weight: 500;
+  /* No longer truncated -- the file name is the core piece of
+     information this row exists to show, so if the panel is too narrow
+     to fit it on one line, it wraps instead of losing characters off the
+     end. `SkippedFilesPanel`'s `.skipped-file-name` already worked this
+     way (it never had an overflow/ellipsis rule to begin with); this just
+     brings the other two panels in line with it. */
+}
+
+/* Shared by DuplicateGroupsPanel's `-path` row and
+   GenerationFailuresPanel's `-path` row (`.file-path-*`, not
+   `.duplicate-group-*`/`.generation-failure-*`, since both panels render
+   the identical "directory (shrinks, ellipsis) + file name (never
+   shrinks)" structure via the same `splitDirAndFileName` helper --
+   src/lib/paths.ts). Splitting the previous single `-path` span (plain
+   `text-overflow: ellipsis`, which only ever elides the *end* of the
+   string -- i.e. the file name itself) into these two flex children is
+   what makes the file name immune to truncation regardless of how narrow
+   the panel is: `.file-path-dir` is the only one of the two allowed to
+   shrink/ellipsis, `.file-path-file` holds its full intrinsic width.
+   font-size/opacity carried over unchanged from the old `-path` rule. */
+.file-path-row {
+  display: flex;
+  min-width: 0;
+}
+
+.file-path-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 0.8em;
+  opacity: 0.75;
+}
+
+.file-path-file {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.8em;
+  opacity: 0.75;
+}
+
+.duplicate-group-member-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.duplicate-group-member-delete {
+  flex-shrink: 0;
+}
+
+.generation-failures-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  /* Same reasoning as `.skipped-files-panel`/`.duplicate-groups-panel`
+     above -- inside the `.status-panel` popover, not a flex child of
+     `.app`. */
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.generation-failures-error {
+  color: #8a1f1f;
+  font-size: 0.9em;
+  margin: 0;
+}
+
+.generation-failures-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.generation-failure-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding: 0.3em 0.5em;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.generation-failure-badge {
+  flex-shrink: 0;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: #8a1f1f;
+  background-color: #f3caca;
+  border-radius: 4px;
+  padding: 0.1em 0.5em;
+}
+
+.generation-failure-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  min-width: 0;
+  flex: 1;
+}
+
+.generation-failure-name {
+  font-weight: 500;
+  /* Same "don't truncate the file name, wrap instead" change as
+     `.duplicate-group-member-name` above. */
+}
+
+/* `-path` row itself uses the shared `.file-path-row`/
+   `.file-path-dir`/`.file-path-file` classes above (see their comment)
+   instead of a `.generation-failure-path` rule of its own. */
+
+.generation-failure-attempts {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.star-rating {
+  display: flex;
+  align-items: center;
+  gap: 0.2em;
+}
+
+.star {
+  padding: 0.1em 0.3em;
+  font-size: 1.2em;
+  opacity: 0.4;
+}
+
+.star--filled {
+  opacity: 1;
+}
+
+.star-clear {
+  font-size: 0.8em;
+  margin-left: 0.5em;
+}
+
+.tag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.tag-editor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  background-color: #e8e8e8;
+  border-radius: 999px;
+  padding: 0.2em 0.6em;
+  font-size: 0.85em;
+}
+
+/* .video-row-info全体の0.85em縮小の影響でこのボタンのクリック領域が
+   実測約6.77x11.56pxまで縮小していた。padding+負のmarginで、隣接する
+   チップの余白/gapに食い込ませる形でヒットボックスだけを拡大し、
+   チップの見た目のレイアウト幅は変えない。 */
+.tag-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding: 0.3em 0.35em;
+  margin: -0.3em -0.35em -0.3em 0;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.tag-editor form {
+  display: flex;
+  gap: 0.5em;
+}
+
+.tag-editor-error {
+  color: #8a1f1f;
+  font-size: 0.85em;
+  margin: 0;
+}
+
+/* FolderDialog/WbImportDialog's shared modal chrome. Both are reached
+   only from the native menu (or the sidebar's own "フォルダ管理 ▸" link)
+   rather than being always-mounted flex children of `.app`, so unlike
+   every rule above, `flex`/`flex-shrink` sizing budgets don't apply here
+   at all -- this is a `position: fixed` overlay stacked on top of the
+   whole app. Closing via clicking the overlay background or the
+   ✕/close button is handled in each dialog component's own onClick
+   (overlay) + stopPropagation (dialog box), not in CSS. */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background-color: #ffffff;
+  color: #0f0f0f;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 1.5em;
+  width: min(32em, 90vw);
+  max-height: 85vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75em;
+  margin-top: 0.5em;
+}
+
+.folder-dialog-empty {
+  opacity: 0.7;
+  margin: 0;
+}
+
+.folder-dialog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  /* This dialog's own scroll budget for a long folder list -- `.dialog`'s
+     own `max-height`/`overflow: auto` above still caps the dialog as a
+     whole (footer/note always stay visible), same layering `.status-panel`'s
+     sibling panels already use for their own lists. */
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.3em 0;
+}
+
+.folder-row-path {
+  flex: 1;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-row-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.folder-row-edit-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.folder-row-path-input {
+  flex: 1;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.folder-row-edit-error {
+  color: #8a1f1f;
+  font-size: 0.8em;
+  margin: 0;
+}
+
+.folder-dialog-rename-summary {
+  font-size: 0.85em;
+  opacity: 0.85;
+  margin: 0;
+}
+
+.folder-row-mode {
+  font-size: 0.75em;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.folder-row-edit-btn,
+.folder-row-delete-btn {
+  padding: 0.2em 0.5em;
+  font-size: 0.85em;
+}
+
+.folder-dialog-note {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.folder-dialog-scan-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+}
+
+.folder-delete-confirm-path {
+  font-family: monospace;
+  font-size: 0.9em;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.wb-import-dialog-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+}
+
+.wb-import-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.wb-import-steps-list {
+  display: flex;
+  gap: 1em;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.wb-import-step {
+  opacity: 0.45;
+}
+
+.wb-import-step--active {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.wb-import-step--done {
+  opacity: 0.75;
+  text-decoration: line-through;
+}
+
+.wb-import-progress-bar {
+  width: 100%;
+}
+
+/* The result-line color scheme this section exists for -- green =
+   success, amber = "not an error, needs manual follow-up", grey = a
+   muted 0-count line, red = a *real* failure only. Deliberately distinct
+   from `.thumbnail-offline-badge`'s existing red (see that rule's own
+   history) -- red is scoped to this dialog only, not a repaint of every
+   red usage elsewhere in the app (that's a separate, out-of-scope
+   concern). */
+.wb-import-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.wb-import-result-line {
+  margin: 0;
+  font-size: 0.9em;
+}
+
+.wb-import-result-success {
+  color: #1f6d2c;
+  font-weight: 600;
+}
+
+.wb-import-result-muted {
+  opacity: 0.6;
+}
+
+.wb-import-result-amber {
+  color: #7a5a00;
+}
+
+.wb-import-result-failed {
+  color: #8a1f1f;
+  font-weight: 600;
+}
+
+.wb-import-result-needs-review {
+  background-color: #fff3cd;
+  color: #7a5a00;
+  border-radius: 6px;
+  padding: 0.5em 0.75em;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4em;
+}
+
+.wb-import-result-detail {
+  margin: 0;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  input,
+  button,
+  select {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+  }
+  button:active {
+    background-color: #0f0f0f69;
+  }
+
+  .ffmpeg-notice {
+    background-color: #5a3d00;
+    color: #f8d7a3;
+  }
+
+  .video-row-thumbnail-wrap img,
+  .thumbnail-placeholder {
+    background-color: #444;
+    color: #ccc;
+  }
+
+  .video-row {
+    border-bottom-color: #444;
+  }
+
+  .video-row--selected {
+    background-color: #2a3a5c;
+  }
+
+  .thumbnail-offline-badge {
+    color: #f8d7a3;
+    background-color: #5a3d00;
+  }
+
+  .folder-sidebar {
+    border-right-color: #555;
+  }
+
+  .folder-sidebar-item--active {
+    background-color: #5a8ef0;
+    color: #0f0f0f;
+  }
+
+  .tag-chip {
+    background-color: #444;
+  }
+
+  .tag-editor-error {
+    color: #f3caca;
+  }
+
+  .wb-import-error {
+    color: #f3caca;
+  }
+
+  .folder-row-edit-error {
+    color: #f3caca;
+  }
+
+  .duplicate-groups-error {
+    color: #f3caca;
+  }
+
+  .duplicate-group {
+    border-color: #555;
+  }
+
+  .duplicate-group-member-thumb img,
+  .duplicate-group-member-thumb .thumbnail-placeholder {
+    background-color: #444;
+    color: #ccc;
+  }
+
+  .tag-filter-chip {
+    background-color: #444;
+  }
+
+  .tag-filter-chip--active {
+    background-color: #5a8ef0;
+    color: #0f0f0f;
+  }
+
+  .generation-failures-error {
+    color: #f3caca;
+  }
+
+  .generation-failure-item {
+    border-color: #555;
+  }
+
+  .generation-failure-badge {
+    color: #f3caca;
+    background-color: #5a1f1f;
+  }
+
+  .status-badge {
+    background-color: #444;
+  }
+
+  .status-badge[aria-pressed="true"] {
+    background-color: #5a8ef0;
+    color: #0f0f0f;
+  }
+
+  .status-panel {
+    background-color: #2f2f2f;
+    color: #f6f6f6;
+    border-color: #555;
+  }
+
+  .folder-sidebar-manage-link {
+    border-top-color: #555;
+  }
+
+  .dialog {
+    background-color: #2f2f2f;
+    color: #f6f6f6;
+  }
+
+  .wb-import-result-success {
+    color: #7ed494;
+  }
+
+  .wb-import-result-amber {
+    color: #f0c674;
+  }
+
+  .wb-import-result-failed {
+    color: #f3caca;
+  }
+
+  .wb-import-result-needs-review {
+    background-color: #5a4600;
+    color: #f0c674;
+  }
+}

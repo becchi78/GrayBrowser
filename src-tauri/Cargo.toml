@@ -1,0 +1,71 @@
+[package]
+name = "graybrowser"
+version = "0.1.0"
+description = "GrayBrowser - local video cataloging desktop app"
+edition = "2021"
+# Disambiguates `cargo run` (with no `--bin`) in favor of the main app binary
+# now that this package has a second bin target (`console_probe`, a
+# regression test helper, gated behind the `testing` feature). Tauri's own
+# tooling (`cargo tauri dev`) invokes `cargo run` without `--bin`, so without
+# this, that command fails with "could not determine which binary to run".
+default-run = "graybrowser"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "graybrowser_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Gates test-only helpers (currently events::FakeCatalogNotifier) that need
+# to be visible to this crate's own external integration tests (`tests/`),
+# not just its inline `#[cfg(test)]` unit tests -- mirrors gb-core's
+# `testing` feature. Unlike gb-core's (activated for *this* crate only via
+# the `[dev-dependencies] gb-core` entry below), a crate's own optional
+# feature is never auto-enabled for its own test targets by Cargo, so the
+# self-referencing `[dev-dependencies]` entry below (a standard, intentional
+# idiom -- dev-dependency cycles on the same crate are explicitly allowed)
+# is what makes this activate automatically for any `cargo test`/`cargo
+# clippy --all-targets` run, without needing an explicit `--features`/
+# `--all-features` flag -- keeping this crate's own testing feature exactly
+# as low-friction as gb-core's.
+testing = []
+
+[[bin]]
+# Test-only helper spawned by the `hidden_command_suppresses_the_child_console`
+# regression test (src/adapters/ffmpeg.rs). Gated behind the
+# `testing` feature so it's never part of a release/`tauri build` binary.
+name = "console_probe"
+path = "src/bin/console_probe.rs"
+required-features = ["testing"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gb-core = { path = "../crates/gb-core" }
+rusqlite = { version = "0.40.1", features = ["bundled", "trace"] }
+r2d2 = "0.8.10"
+r2d2_sqlite = "0.35.0"
+anyhow = "1.0.104"
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-opener = "2.5.4"
+uuid = { version = "1.24.0", features = ["v4"] }
+walkdir = "2.5.0"
+log = "0.4.33"
+base64 = "0.22.1"
+flexi_logger = "0.31.9"
+notify = "7"
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Console"] }
+
+[dev-dependencies]
+gb-core = { path = "../crates/gb-core", features = ["testing"] }
+graybrowser = { path = ".", features = ["testing"] }
+tempfile = "3.27.0"
+

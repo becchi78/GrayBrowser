@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node / build output
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Rust (Cargo workspace builds to <repo-root>/target/, not src-tauri/target/)
+/target/
+
+# Real WhiteBrowser .wb sample data: may contain real file paths/tags, must
+# never be committed. Only anonymized fixtures (tests/fixtures/wb/*.wb, not
+# under local/) are meant to be committed.
+tests/fixtures/wb/local/
+
+# E2E failure screenshots (e2e/session.mjs's saveFailureScreenshot) -- only
+# ever created on a failing local/CI run, ci.yml uploads them as a CI
+# artifact instead of committing them.
+e2e/screenshots/
+
+# Local DB backups (e.g. manual `cp app.db app.db.bak` before a risky
+# operation) -- may contain real catalog data, must never be committed.
+*.db.bak
+
+# Personal Claude Code permission overrides -- machine-local, must never be
+# committed (shared settings live in .claude/settings.json instead).
+.claude/settings.local.json
