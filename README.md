@@ -130,10 +130,10 @@ npm run test:e2e
 
 ## スポンサー・寄付
 
-本プロジェクトはGitHub ActionsのCI(特にWindowsランナーの実行時間)に費用がかかっています。開発の継続を支援していただける方は、以下から寄付を受け付けています。
+本プロジェクトはAI(Claude Code)を活用して個人開発者が開発・保守しています。継続的な開発にかかる費用を支援していただける方は、以下から寄付を受け付けています。
 
 - [GitHub Sponsors](https://github.com/sponsors/becchi78)
-- Ko-fi(準備中)
+- [Ko-fi](https://ko-fi.com/becchi78)
 
 ## ライセンス
 
