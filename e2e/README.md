@@ -3,7 +3,7 @@
 ## 背景
 
 過去に `GB_APP_PATH` を設定しないまま E2E / 実機確認を実行し、
-`e2e/session.mjs` の既定値（`target/release/graybrowser.exe`）へのフォール
+`e2e/session.mjs` の既定値（`target/release/GrayBrowser.exe`）へのフォール
 バック経由で、開発機の実データ（`target/{debug,release}/GrayBrowser/app.db`）
 に書き込みが発生する事故があった。以降、
 E2E / 実機確認は必ず隔離されたサンドボックスビルドに対して実行する。

@@ -211,7 +211,7 @@ jobs:
           # build in e2e. Includes any top-level DLLs alongside the exe
           # (e.g. WebView2Loader.dll) in case the raw build output needs them.
           path: |
-            target/release/graybrowser.exe
+            target/release/GrayBrowser.exe
             target/release/*.dll
           retention-days: 1
 
