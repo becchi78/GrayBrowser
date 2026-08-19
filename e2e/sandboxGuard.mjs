@@ -2,7 +2,7 @@
 //
 // 背景: GB_APP_PATH未設定のままE2E/実機確認を
 // 実行し、session.mjsのDEFAULT_APP_PATHフォールバック（target/release/
-// graybrowser.exe）経由で開発機の実データ（target/{debug,release}/
+// GrayBrowser.exe）経由で開発機の実データ（target/{debug,release}/
 // GrayBrowser/app.db）に書き込みが発生する事故があった。このモジュールは
 // GB_APP_PATHがテスト専用サンドボックスを指していることを、アプリ起動前・
 // WebDriverセッション起動前に検証し、満たさなければ即座に失敗させる。

@@ -71,7 +71,7 @@ try {
         Write-Host "Building release (npm run tauri build -- --no-bundle; frontend build runs automatically via beforeBuildCommand)..."
         npm run tauri build -- --no-bundle
         if ($LASTEXITCODE -ne 0) { throw "npm run tauri build failed with exit code $LASTEXITCODE" }
-        $exePath = Join-Path $SandboxRoot "release\graybrowser.exe"
+        $exePath = Join-Path $SandboxRoot "release\GrayBrowser.exe"
     }
     else {
         Write-Host "Building debug (npm run build, then cargo build -p graybrowser)..."
