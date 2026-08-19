@@ -25,6 +25,7 @@ description: GrayBrowserリポジトリでのGit/GitHub操作全般のガイド�
 
 - Issueに対応する変更のPR本文には `Closes #<N>` を書く。
 - push前に、変更した領域に対応する検証（Rust変更なら `cargo build`/`cargo test`、フロントエンド変更なら `npm run lint`/`npm run typecheck`/`npm run test:unit` 等）を行う。
+- PRを提出したら、`sandboxed-verification` スキルの手順（`e2e/run-sandboxed.ps1 -Mode manual`）で実アプリを起動し、変更が実際に動作することを人と一緒に確認する。lint/testなど機械的な検証だけで済ませず、UIやアプリの挙動に関わる変更では目視確認を省略しない。
 
 ## Issue起点の改善タスクの進め方
 
@@ -35,6 +36,7 @@ description: GrayBrowserリポジトリでのGit/GitHub操作全般のガイド�
 5. 承認後、`feature/<Issue番号>-<短い説明>` でブランチを作成する。
 6. 実装する。非自明な実装は `implementer` サブエージェントに委譲し、`reviewer` サブエージェントで独立に検収する。
 7. PR本文に `Closes #<N>` を書いて提出する。マージはユーザーの判断のため、PR提出までで止める。
+8. PR提出後、上記「コミット/PR規約」の実アプリ動作確認を行う。
 
 ## Issueラベルの意味
 
