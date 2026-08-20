@@ -3,6 +3,13 @@
 このプロジェクトの注目すべき変更はすべてこのファイルに記録します。
 フォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠します。
 
+## [0.1.1] - 2026-08-20
+
+### 修正
+
+- 実行ファイル名が`graybrowser.exe`となっていたのを`GrayBrowser.exe`に統一
+- インストール先が`%LOCALAPPDATA%\GrayBrowser\GrayBrowser\`と二重ネストしていた問題を解消。既存の二重ネスト環境も起動時に自動で新しい場所へデータを移行
+
 ## [0.1.0] - 2026-08-19
 
 ### 追加
