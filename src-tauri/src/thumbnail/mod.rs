@@ -1,7 +1,10 @@
 //! Stateless thumbnail generation queue: no persisted job table.
 //! "Resume after restart" falls out for free from re-enumerating `videos`
-//! rows still missing a `thumbnails/[id].webp` file every time this runs.
+//! rows still missing any of their 6
+//! `thumbnails/<folder-subdir>/[id]_<slot>.webp` files every time this runs.
 
+pub mod migration;
+pub mod paths;
 pub mod worker;
 
 use std::path::PathBuf;
@@ -46,6 +49,13 @@ impl ThumbnailQueueHandle {
 /// never blocks the caller (`.setup()` at startup, or `start_scan` after a
 /// scan completes -- so a scan never freezes the UI).
 ///
+/// `thumbnails_dir` is the `thumbnails/` root (per-registered-folder
+/// subdirectories live under it, see `thumbnail::paths::video_thumbnail_dir`)
+/// -- `watch_folders` is fetched once here, up front, and reused both for
+/// `list_videos_missing_thumbnails`'s per-row existence check and for
+/// resolving each dispatched video's own subdirectory before calling
+/// `generate_thumbnail_for_video`, rather than re-querying it per video.
+///
 /// `notifier` is threaded in only here, not into `worker.rs` -- `worker.rs`'s
 /// `generate_thumbnail_for_video`/`list_videos_missing_thumbnails` keep their
 /// existing pure/testable signatures unchanged, and the
@@ -77,13 +87,31 @@ pub fn enqueue_missing_thumbnails<F, N>(
             return;
         }
 
-        let pending = match worker::list_videos_missing_thumbnails(&db, &thumbnails_dir) {
-            Ok(pending) => pending,
+        let watch_folders = match db.read_pool.get() {
+            Ok(conn) => match crate::db::queries::get_watch_folders(&conn) {
+                Ok(folders) => folders,
+                Err(e) => {
+                    log::error!("failed to read watch_folders before enqueueing thumbnails: {e}");
+                    return;
+                }
+            },
             Err(e) => {
-                log::error!("failed to list videos missing thumbnails: {e}");
+                log::error!(
+                    "failed to acquire a DB connection to read watch_folders before enqueueing \
+                     thumbnails: {e}"
+                );
                 return;
             }
         };
+
+        let pending =
+            match worker::list_videos_missing_thumbnails(&db, &thumbnails_dir, &watch_folders) {
+                Ok(pending) => pending,
+                Err(e) => {
+                    log::error!("failed to list videos missing thumbnails: {e}");
+                    return;
+                }
+            };
         if pending.is_empty() {
             return;
         }
@@ -96,6 +124,7 @@ pub fn enqueue_missing_thumbnails<F, N>(
                 let pending = Arc::clone(&pending);
                 let db = db.clone();
                 let thumbnails_dir = thumbnails_dir.clone();
+                let watch_folders = watch_folders.clone();
                 let queue = queue.clone();
                 let ffmpeg = Arc::clone(&ffmpeg);
                 let notifier = Arc::clone(&notifier);
@@ -105,10 +134,15 @@ pub fn enqueue_missing_thumbnails<F, N>(
                     }
                     let next = pending.lock().unwrap().next();
                     let Some((id, path)) = next else { break };
+                    let video_dir = paths::video_thumbnail_dir(
+                        &thumbnails_dir,
+                        &watch_folders,
+                        &path.to_string_lossy(),
+                    );
                     match worker::generate_thumbnail_for_video(
                         ffmpeg.as_ref(),
                         &db,
-                        &thumbnails_dir,
+                        &video_dir,
                         &id,
                         &path,
                     ) {

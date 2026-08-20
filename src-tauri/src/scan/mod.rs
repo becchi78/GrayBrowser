@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
+use crate::thumbnail;
 
 #[derive(Default, serde::Serialize)]
 pub struct ScanSummary {
@@ -98,8 +99,17 @@ pub enum ProcessOutcome {
 /// the realtime watcher, an already-collected diff-scan listing in the NAS
 /// poll), and pre-filtering by extension before ever touching the DB is
 /// cheaper for event-driven callers that see non-video events too.
+///
+/// `thumbnails_root` is the `thumbnails/` directory (never a resolved
+/// per-video subdirectory) -- passed down only as far as `register_new_path`
+/// actually needs it (to move a reactivated video's cached thumbnails from
+/// its old resolved location to its new one). Resolved once by the command
+/// layer (`crate::paths::app_data_dir`) and threaded down explicitly rather
+/// than re-resolved here, matching this codebase's "OS-dependent path
+/// resolution stays at the edge" convention.
 pub fn process_detected_file(
     db: &Db,
+    thumbnails_root: &Path,
     entry_path: &Path,
     file_size: u64,
     mtime: i64,
@@ -141,7 +151,7 @@ pub fn process_detected_file(
 
     match known {
         Some(known) => reconcile_known_path(db, &scanned_file, &known),
-        None => register_new_path(db, &scanned_file),
+        None => register_new_path(db, thumbnails_root, &scanned_file),
     }
 }
 
@@ -308,7 +318,11 @@ fn reconcile_known_path(
 /// first -- only falls back to a brand-new row when no such candidate
 /// exists, or when the candidate's target path collides with an
 /// already-`online` row.
-fn register_new_path(db: &Db, scanned_file: &ScannedFile) -> anyhow::Result<ProcessOutcome> {
+fn register_new_path(
+    db: &Db,
+    thumbnails_root: &Path,
+    scanned_file: &ScannedFile,
+) -> anyhow::Result<ProcessOutcome> {
     let quick_hash = match hash_file(&scanned_file.file_path, scanned_file.file_size) {
         Ok(h) => h,
         Err(e) => {
@@ -387,7 +401,50 @@ fn register_new_path(db: &Db, scanned_file: &ScannedFile) -> anyhow::Result<Proc
                 &scanned_file.file_name,
                 "online",
             ) {
-                Ok(()) => Ok(ProcessOutcome::PathFollowed { video_id }),
+                Ok(()) => {
+                    // Best-effort: a reactivated video's cached thumbnails
+                    // (if any were ever generated) live under a subdirectory
+                    // resolved from its *old* file_path -- now that the path
+                    // has moved, they must move with it, or a later
+                    // `get_thumbnails`/`list_videos_missing_thumbnails` call
+                    // would look in the wrong (new) directory and find
+                    // nothing, needlessly regenerating what already exists.
+                    // A failure here never affects `video_id`'s already-
+                    // committed DB write above: thumbnails are regenerable,
+                    // so this is logged, not propagated.
+                    //
+                    // `candidates.first()` is exactly the offline row
+                    // `decide_path_follow` picked (see its doc comment), so
+                    // its `file_path` is this video's pre-rewrite path --
+                    // reading it back from the DB again here isn't needed.
+                    if let Some(candidate) = candidates.first() {
+                        let watch_folders = match queries::get_watch_folders(&conn) {
+                            Ok(folders) => folders,
+                            Err(e) => {
+                                log::warn!(
+                                    "failed to read watch_folders while moving thumbnails for \
+                                     reactivated video_id={video_id}: {e}"
+                                );
+                                Vec::new()
+                            }
+                        };
+                        if !thumbnail::paths::move_video_thumbnails(
+                            thumbnails_root,
+                            &watch_folders,
+                            &video_id,
+                            &candidate.file_path,
+                            &scanned_file.file_path,
+                        ) {
+                            log::warn!(
+                                "failed to fully move cached thumbnails for reactivated \
+                                 video_id={video_id} from {} to {}",
+                                candidate.file_path,
+                                scanned_file.file_path
+                            );
+                        }
+                    }
+                    Ok(ProcessOutcome::PathFollowed { video_id })
+                }
                 Err(e) => {
                     // Final defense: the pre-check above ran inside this
                     // same lock acquisition, so this is not an ordinary
@@ -496,7 +553,11 @@ pub fn mtime_from_metadata(metadata: &std::fs::Metadata) -> Result<i64, String> 
         .map_err(|e| format!("mtime predates the Unix epoch: {e}"))
 }
 
-pub fn scan_folders(folders: &[String], db: &Db) -> anyhow::Result<ScanSummary> {
+pub fn scan_folders(
+    folders: &[String],
+    db: &Db,
+    thumbnails_root: &Path,
+) -> anyhow::Result<ScanSummary> {
     let mut summary = ScanSummary::default();
     log::info!("scan started for {} folder(s)", folders.len());
 
@@ -570,7 +631,7 @@ pub fn scan_folders(folders: &[String], db: &Db) -> anyhow::Result<ScanSummary> 
             discovered_paths.push(file_path.clone());
             summary.scanned += 1;
 
-            match process_detected_file(db, &entry_path, file_size, mtime)? {
+            match process_detected_file(db, thumbnails_root, &entry_path, file_size, mtime)? {
                 ProcessOutcome::Registered => summary.registered += 1,
                 ProcessOutcome::Reconciled => summary.reconciled += 1,
                 ProcessOutcome::Unchanged => summary.unchanged += 1,
@@ -668,6 +729,14 @@ mod tests {
     use crate::db::test_support::init_temp_db;
     use std::fs;
 
+    /// A throwaway `thumbnails/` root for tests that don't care about its
+    /// contents -- none of the scenarios below reactivate a video that
+    /// actually has cached thumbnails to move, so this only needs to be a
+    /// valid, empty directory.
+    fn temp_thumbs_root() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
     /// This scenario -- a path-follow target that's already claimed by
     /// a *different*, currently-online row -- can never actually be reached
     /// through the public `scan_folders`/`process_detected_file` entry
@@ -692,13 +761,14 @@ mod tests {
     fn register_new_path_leaves_both_rows_untouched_when_the_target_path_collides_with_an_online_row(
     ) {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
 
         // R1: an offline candidate for path-follow.
         let old_dir = tempfile::tempdir().unwrap();
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
         let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-        scan_folders(&old_folders, &db).unwrap();
+        scan_folders(&old_folders, &db, thumbs_root.path()).unwrap();
         let r1_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -712,7 +782,7 @@ mod tests {
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"different content, a different length").unwrap();
         let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
-        scan_folders(&new_folders, &db).unwrap();
+        scan_folders(&new_folders, &db, thumbs_root.path()).unwrap();
         let r2_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.query_row(
@@ -735,7 +805,7 @@ mod tests {
             mtime: mtime_from_metadata(&metadata).unwrap(),
         };
 
-        let outcome = register_new_path(&db, &scanned_file).unwrap();
+        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file).unwrap();
         match outcome {
             ProcessOutcome::BlockedByCollision {
                 video_id,
@@ -812,13 +882,14 @@ mod tests {
     fn reconcile_known_path_records_a_path_collision_when_the_rehash_coincidentally_matches_an_offline_row(
     ) {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
 
         // R1: an unrelated offline row, content "shared content".
         let old_dir = tempfile::tempdir().unwrap();
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
         let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-        scan_folders(&old_folders, &db).unwrap();
+        scan_folders(&old_folders, &db, thumbs_root.path()).unwrap();
         let r1_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -833,7 +904,7 @@ mod tests {
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"original R2 content, a different length").unwrap();
         let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
-        scan_folders(&new_folders, &db).unwrap();
+        scan_folders(&new_folders, &db, thumbs_root.path()).unwrap();
         let r2_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.query_row(
@@ -931,12 +1002,13 @@ mod tests {
     fn reconcile_known_path_does_not_record_a_self_collision_when_the_rehash_matches_its_own_stale_row(
     ) {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("video.mp4");
         fs::write(&path, b"shared content").unwrap();
         let folders = vec![dir.path().to_string_lossy().to_string()];
-        scan_folders(&folders, &db).unwrap();
+        scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
         let video_id: String = {
             let conn = db.writer.lock().unwrap();
@@ -1008,12 +1080,13 @@ mod tests {
     #[test]
     fn reconcile_known_path_does_not_record_a_collision_when_no_offline_row_matches_the_rehash() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("video.mp4");
         fs::write(&path, b"original content").unwrap();
         let folders = vec![dir.path().to_string_lossy().to_string()];
-        scan_folders(&folders, &db).unwrap();
+        scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
         // Change the content to something with no matching offline
         // candidate anywhere in the DB (there isn't even another row).
@@ -1041,5 +1114,102 @@ mod tests {
             "an ordinary rehash with no offline-candidate match must not write to \
              path_collisions"
         );
+    }
+
+    /// Regression test for `register_new_path`'s `Reactivate` branch: a
+    /// path-follow reactivation must not just rewrite `file_path` in the
+    /// DB, it must also move the video's already-generated cached
+    /// thumbnails from the subdirectory resolved for its *old* file_path to
+    /// the one resolved for its *new* file_path (`thumbnail::paths::
+    /// move_video_thumbnails`) -- otherwise a later `get_thumbnails` call
+    /// would look in the (now wrong) new location and find nothing, even
+    /// though the thumbnails were already generated and simply never moved.
+    #[test]
+    fn reactivating_a_video_via_path_follow_moves_its_cached_thumbnails_to_the_new_folders_subdir()
+    {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+
+        let old_dir = tempfile::tempdir().unwrap();
+        let new_dir = tempfile::tempdir().unwrap();
+        let old_path = old_dir.path().join("old.mp4");
+        fs::write(&old_path, b"shared content for path-follow").unwrap();
+
+        let old_folder = old_dir.path().to_string_lossy().to_string();
+        let new_folder = new_dir.path().to_string_lossy().to_string();
+        let watch_folders = vec![old_folder.clone(), new_folder.clone()];
+        {
+            let conn = db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, &watch_folders).unwrap();
+        }
+
+        // Register the video under old_dir, then simulate it going offline
+        // (e.g. the drive holding old_dir was disconnected).
+        scan_folders(std::slice::from_ref(&old_folder), &db, thumbs_root.path()).unwrap();
+        let video_id: String = {
+            let conn = db.writer.lock().unwrap();
+            conn.execute("UPDATE videos SET status = 'offline'", [])
+                .unwrap();
+            conn.query_row("SELECT id FROM videos", [], |r| r.get(0))
+                .unwrap()
+        };
+
+        // Simulate 6 already-generated thumbnail files sitting in the
+        // subdirectory resolved for the video's *old* file_path.
+        let old_video_dir = thumbnail::paths::video_thumbnail_dir(
+            thumbs_root.path(),
+            &watch_folders,
+            &old_path.to_string_lossy(),
+        );
+        std::fs::create_dir_all(&old_video_dir).unwrap();
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            std::fs::write(
+                old_video_dir.join(format!("{video_id}_{i}.webp")),
+                format!("slot-{i}"),
+            )
+            .unwrap();
+        }
+
+        // The file reappears at a new path (under a different registered
+        // folder) with identical content -- a path-follow match.
+        let new_path = new_dir.path().join("new.mp4");
+        fs::write(&new_path, b"shared content for path-follow").unwrap();
+
+        scan_folders(std::slice::from_ref(&new_folder), &db, thumbs_root.path()).unwrap();
+
+        let conn = db.writer.lock().unwrap();
+        let (status, file_path): (String, String) = conn
+            .query_row(
+                "SELECT status, file_path FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "online", "the video must be reactivated online");
+        assert_eq!(
+            file_path,
+            new_path.to_string_lossy().to_string(),
+            "the video's id must be reused (reactivated), not re-registered"
+        );
+        drop(conn);
+
+        let new_video_dir = thumbnail::paths::video_thumbnail_dir(
+            thumbs_root.path(),
+            &watch_folders,
+            &new_path.to_string_lossy(),
+        );
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            assert!(
+                !old_video_dir.join(format!("{video_id}_{i}.webp")).exists(),
+                "slot {i} must no longer exist in the old folder's thumbnail subdirectory"
+            );
+            assert_eq!(
+                std::fs::read_to_string(new_video_dir.join(format!("{video_id}_{i}.webp")))
+                    .unwrap(),
+                format!("slot-{i}"),
+                "slot {i} must exist, with its original content, in the new folder's \
+                 thumbnail subdirectory"
+            );
+        }
     }
 }

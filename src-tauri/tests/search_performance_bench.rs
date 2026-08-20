@@ -950,6 +950,7 @@ fn run_resume_pass_bench_for(row_count: usize, seed: u64, results: &mut Vec<Benc
         let missing = graybrowser_lib::thumbnail::worker::list_videos_missing_thumbnails(
             &dataset.db,
             thumbnails_dir.path(),
+            &[],
         )
         .expect("list_videos_missing_thumbnails should succeed");
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;

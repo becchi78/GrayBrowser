@@ -7,7 +7,17 @@ description: GrayBrowserのファイルスキャン・サムネイル生成・�
 
 ## サムネイル
 
-WebP形式、低品質設定で生成し、`GrayBrowser\thumbnails\[id].webp` に保存する。書き込みは一時ファイル経由のアトミック書き込み（`.webp.tmp` → rename）で行う。
+WebP形式、低品質設定で生成する。1動画あたり6枚（`[id]_0.webp`〜`[id]_5.webp`）を生成し、`GrayBrowser\thumbnails\<フォルダサブディレクトリ>\[id]_[0-5].webp` に保存する。書き込みは一時ファイル経由のアトミック書き込み（`.webp.tmp` → rename）で行う。
+
+`<フォルダサブディレクトリ>` は登録フォルダ(監視フォルダ)単位のサブディレクトリで、動画の`file_path`が属する登録フォルダのパス文字列を`xxh64`でハッシュ化した16桁の小文字16進数文字列（`gb_core::paths::thumbnail_folder_subdir`）。登録フォルダはDBの専用テーブルではなくパス文字列自体が識別子であるため、この命名は決定的（同じフォルダパスは常に同じサブディレクトリ名に解決される）。どの登録フォルダにも属さない動画（フォルダ削除後の残骸等）は固定名`_unassigned`配下に格納する。
+
+サムネイルパスの組み立て・解決・移動・削除は`src-tauri/src/thumbnail/paths.rs`に集約されており、呼び出し元（`scan/`・`watch/`・各`commands/`）で直書きしない。フォルダのリネームと削除とで、サブディレクトリ単位の扱いは異なる:
+
+- **フォルダリネーム時**: 動画単位でサムネイルを移動する（`move_video_thumbnails_between_folders`をrenamed_videosの各行についてループ）。フォルダのサブディレクトリを丸ごとrenameしては**いけない**。パス衝突でスキップされた動画（`file_path`が実際には変わっていない行）のサムネイルまで新フォルダ側へ引きずってしまい、DB上の所属と物理的な格納先が食い違う不整合を起こすため。
+- **フォルダ削除時**: 配下の動画は全てDBからも削除されるため、対応するサブディレクトリを`remove_folder_thumbnail_dir`で丸ごと`remove_dir_all`してよい（実際にそうしている）。個々の動画IDでループする必要はない。
+- 動画の再アクティブ化（オフライン→オンライン、別パスへの移動、`register_new_path`のReactivate分岐）でも、動画単位で`move_video_thumbnails`により旧パス側の解決先ディレクトリから新パス側の解決先ディレクトリへサムネイルを移動する。
+
+起動時（`db::init`の後、サムネイル生成キューイングの前）に`thumbnail::migration::migrate_flat_thumbnails_to_folder_subdirs`が実行され、移行前の旧レイアウト（`thumbnails\[id]_[0-5].webp`のフラット配置）が残っていれば新レイアウトへ自動移行する。個々の動画の移行失敗は非fatal（サムネイルは再生成可能なため）。
 
 ## 機種依存文字を含むファイル名
 

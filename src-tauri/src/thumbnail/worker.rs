@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 
+use super::paths as thumbnail_paths;
 use crate::db::{queries, Db};
 
 const THUMBNAIL_WIDTH_PX: u32 = 320;
@@ -25,6 +26,15 @@ pub fn generate_thumbnail_for_video(
     video_id: &str,
     video_path: &Path,
 ) -> anyhow::Result<()> {
+    // Previously the caller created the flat `thumbnails/` root once,
+    // up front, for the whole app lifetime. Now that each video's
+    // thumbnails live under a per-registered-folder subdirectory (see
+    // `thumbnail::paths::video_thumbnail_dir`), `thumbnails_dir` can be a
+    // subdirectory that doesn't exist yet the first time a video under a
+    // newly-registered folder is processed, so this function guarantees it
+    // itself rather than relying on a one-time setup step.
+    std::fs::create_dir_all(thumbnails_dir)?;
+
     // A probe failure just means "duration unknown" --
     // thumbnail_seek_positions already handles that gracefully, so it's not
     // treated as fatal here.
@@ -126,12 +136,18 @@ pub fn generate_thumbnail_for_video(
 }
 
 /// `(id, file_path)` for every online video for which any of the 6
-/// `thumbnails/[id]_0.webp`..`[id]_5.webp` files doesn't exist yet *and*
-/// still has automatic-retry budget left
+/// `thumbnails/<folder-subdir>/[id]_0.webp`..`[id]_5.webp` files doesn't
+/// exist yet *and* still has automatic-retry budget left
 /// (`gb_core::retry::is_eligible_for_automatic_retry`). This --
 /// not a persisted job table -- is the entire "resume after restart"
 /// mechanism: whatever's still missing on disk (and hasn't
 /// exhausted its attempts) is, by definition, still pending.
+///
+/// `watch_folders` is the currently-registered watch-folder list, used
+/// (via `thumbnail::paths::video_thumbnail_dir`) to resolve each video's own
+/// per-registered-folder subdirectory before checking for its 6 slot files --
+/// the caller is expected to fetch it once and reuse it across every row
+/// this function processes, rather than re-querying it per video.
 ///
 /// This is deliberately the one place in the app (besides the generation
 /// worker's own write) that still treats the filesystem, not
@@ -154,13 +170,15 @@ pub fn generate_thumbnail_for_video(
 /// lock acquisition + statement execution cost was still paid every time).
 pub fn list_videos_missing_thumbnails(
     db: &Db,
-    thumbnails_dir: &Path,
+    thumbnails_root: &Path,
+    watch_folders: &[String],
 ) -> anyhow::Result<Vec<(String, PathBuf)>> {
     let all_online = queries::list_online_video_paths_with_thumbnail_attempts(&db.read_pool)?;
     let mut missing = Vec::new();
     for (id, path, attempts, thumbnail_ready) in all_online {
+        let video_dir = thumbnail_paths::video_thumbnail_dir(thumbnails_root, watch_folders, &path);
         let file_exists = (0..THUMBNAILS_PER_VIDEO)
-            .all(|i| thumbnails_dir.join(format!("{id}_{i}.webp")).exists());
+            .all(|i| thumbnail_paths::slot_path(&video_dir, &id, i).exists());
         if file_exists {
             // Self-healing backfill (see doc comment above): the file is
             // already there, so this video is never "missing" regardless of
@@ -189,8 +207,10 @@ mod tests {
 
     /// Writes all 6 final `{id}_{i}.webp` files for `id` directly (bypassing
     /// generation), simulating "this video's thumbnails were already
-    /// generated in a previous run".
+    /// generated in a previous run". `thumbs_dir` is created first since it
+    /// may be a not-yet-existing per-video subdirectory.
     fn write_all_six_final_thumbnails(thumbs_dir: &Path, id: &str) {
+        std::fs::create_dir_all(thumbs_dir).unwrap();
         for i in 0..THUMBNAILS_PER_VIDEO {
             std::fs::write(
                 thumbs_dir.join(format!("{id}_{i}.webp")),
@@ -198,6 +218,14 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    /// The subdirectory `list_videos_missing_thumbnails`/
+    /// `video_thumbnail_dir` resolve every video in these tests to, since
+    /// none of them register any `watch_folders` -- every test video's path
+    /// (`C:/videos/...`) therefore falls under no registered folder.
+    fn unassigned_dir(thumbs_root: &Path) -> PathBuf {
+        thumbs_root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
     }
 
     fn all_six_final_files_exist(thumbs_dir: &Path, id: &str) -> bool {
@@ -239,6 +267,41 @@ mod tests {
             })
             .unwrap();
         assert_eq!(duration, Some(120));
+    }
+
+    /// `thumbnails_dir` now typically points at a per-registered-folder
+    /// subdirectory (see `thumbnail::paths::video_thumbnail_dir`) that may
+    /// not exist yet the first time a video under a newly-registered folder
+    /// is processed -- unlike the other tests here, which pass an
+    /// already-existing tempdir, this one passes a subdirectory that has
+    /// never been created, to confirm `generate_thumbnail_for_video` creates
+    /// it itself rather than failing.
+    #[test]
+    fn creates_a_not_yet_existing_thumbnails_subdirectory() {
+        let (_db_dir, db) = init_temp_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let thumbs_dir = tmp.path().join("not-yet-created-subdir");
+        assert!(!thumbs_dir.exists());
+        insert_test_video(&db, "vid-newdir", "C:/videos/movie.mp4");
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        generate_thumbnail_for_video(
+            &ffmpeg,
+            &db,
+            &thumbs_dir,
+            "vid-newdir",
+            Path::new("C:/videos/movie.mp4"),
+        )
+        .expect(
+            "generation should succeed even though the thumbnails subdirectory didn't exist yet",
+        );
+
+        assert!(all_six_final_files_exist(&thumbs_dir, "vid-newdir"));
     }
 
     #[test]
@@ -431,20 +494,22 @@ mod tests {
     fn list_videos_missing_thumbnails_returns_only_videos_without_all_six_thumbnail_files() {
         let (_db_dir, db) = init_temp_db();
         let thumbs_dir = tempfile::tempdir().unwrap();
+        let video_dir = unassigned_dir(thumbs_dir.path());
         insert_test_video(&db, "has-thumb", "C:/videos/a.mp4");
         insert_test_video(&db, "missing-thumb", "C:/videos/b.mp4");
         insert_test_video(&db, "partial-thumb", "C:/videos/c.mp4");
-        write_all_six_final_thumbnails(thumbs_dir.path(), "has-thumb");
+        write_all_six_final_thumbnails(&video_dir, "has-thumb");
         // Only 5 of the 6 slots present -- must still count as missing.
+        std::fs::create_dir_all(&video_dir).unwrap();
         for i in 0..(THUMBNAILS_PER_VIDEO - 1) {
             std::fs::write(
-                thumbs_dir.path().join(format!("partial-thumb_{i}.webp")),
+                video_dir.join(format!("partial-thumb_{i}.webp")),
                 b"already generated",
             )
             .unwrap();
         }
 
-        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path()).unwrap();
+        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path(), &[]).unwrap();
         let mut ids: Vec<&str> = missing.iter().map(|(id, _)| id.as_str()).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["missing-thumb", "partial-thumb"]);
@@ -553,7 +618,7 @@ mod tests {
 
         let mut was_eligible_by_round = Vec::new();
         for _ in 0..4 {
-            let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path()).unwrap();
+            let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path(), &[]).unwrap();
             let eligible = missing.iter().any(|(id, _)| id == "vid-doomed");
             was_eligible_by_round.push(eligible);
             if eligible {
@@ -701,8 +766,9 @@ mod tests {
     fn list_videos_missing_thumbnails_issues_no_update_when_the_ready_flag_is_already_current() {
         let (_db_dir, db) = init_temp_db();
         let thumbs_dir = tempfile::tempdir().unwrap();
+        let video_dir = unassigned_dir(thumbs_dir.path());
         insert_test_video(&db, "already-ready", "C:/videos/a.mp4");
-        write_all_six_final_thumbnails(thumbs_dir.path(), "already-ready");
+        write_all_six_final_thumbnails(&video_dir, "already-ready");
         {
             let conn = db.writer.lock().unwrap();
             queries::mark_thumbnail_ready(&conn, "already-ready").unwrap();
@@ -718,7 +784,7 @@ mod tests {
             );
         }
 
-        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path()).unwrap();
+        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path(), &[]).unwrap();
 
         assert!(missing.is_empty());
         assert!(
@@ -745,11 +811,12 @@ mod tests {
     fn list_videos_missing_thumbnails_backfills_a_stale_ready_flag_for_existing_files() {
         let (_db_dir, db) = init_temp_db();
         let thumbs_dir = tempfile::tempdir().unwrap();
+        let video_dir = unassigned_dir(thumbs_dir.path());
         insert_test_video(&db, "stale-flag", "C:/videos/a.mp4");
         assert_eq!(thumbnail_ready_flag(&db, "stale-flag"), 0);
-        write_all_six_final_thumbnails(thumbs_dir.path(), "stale-flag");
+        write_all_six_final_thumbnails(&video_dir, "stale-flag");
 
-        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path()).unwrap();
+        let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path(), &[]).unwrap();
 
         assert!(
             missing.is_empty(),

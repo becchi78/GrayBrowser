@@ -76,13 +76,27 @@ pub fn run() {
             let notifier =
                 std::sync::Arc::new(events::TauriCatalogNotifier::new(app.handle().clone()));
 
+            // One-time migration from the pre-#6 flat thumbnail layout to
+            // per-registered-folder subdirectories. Runs after db::init
+            // (needs the DB to look up each leftover file's owning video)
+            // and before enqueue_missing_thumbnails (which must see the
+            // post-migration layout, not race it). Thumbnails are
+            // regenerable, so a failure here is logged and startup
+            // continues -- never `?`, unlike the DB migration above.
+            let thumbnails_root = thumbnail::paths::thumbnails_root(&app_dir);
+            std::fs::create_dir_all(&thumbnails_root)?;
+            if let Err(e) = thumbnail::migration::migrate_flat_thumbnails_to_folder_subdirs(
+                &db,
+                &thumbnails_root,
+            ) {
+                log::error!("thumbnail layout migration failed: {e}");
+            }
+
             // Startup resume: re-enumerate videos missing a
             // thumbnail and kick off generation in the background.
-            let thumbnails_dir = app_dir.join("thumbnails");
-            std::fs::create_dir_all(&thumbnails_dir)?;
             thumbnail::enqueue_missing_thumbnails(
                 db.clone(),
-                thumbnails_dir,
+                thumbnails_root.clone(),
                 queue,
                 std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                 std::sync::Arc::clone(&notifier),
@@ -126,6 +140,7 @@ pub fn run() {
                 app.handle(),
                 &db,
                 &watch_manager,
+                &thumbnails_root,
                 &watch_folders,
                 nas_poll_interval_secs,
             );

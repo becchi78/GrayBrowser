@@ -922,10 +922,14 @@ pub fn count_videos_under_folder(
 /// by that last statement, so every earlier statement's subquery still sees
 /// the full untouched set.
 ///
-/// Returns the deleted video ids (for the caller to also clean up their
-/// cached `thumbnails/[id].webp` files, mirroring `delete_duplicate_video`'s
-/// own thumbnail cleanup for the single-video case -- this function itself
-/// never touches the filesystem).
+/// Returns the deleted video ids. The caller (`commands::settings_cmds::
+/// remove_watch_folder`) does not actually need them for thumbnail cleanup
+/// any more -- since every video under `folder_path` is gone, its entire
+/// cached-thumbnail subdirectory can be removed in one shot via
+/// `thumbnail::paths::remove_folder_thumbnail_dir(thumbnails_root,
+/// folder_path)` instead of looping per id -- but the ids are kept in the
+/// return value for callers/tests that still want per-video confirmation of
+/// what was deleted. This function itself never touches the filesystem.
 pub fn delete_videos_under_folder_cascade(
     conn: &mut Connection,
     folder_path: &str,
@@ -966,10 +970,34 @@ pub fn delete_videos_under_folder_cascade(
 
 /// Result of `rename_watch_folder_videos`: how many rows under the folder
 /// were rewritten to the new path vs. left untouched because the new path
-/// would collide with another video's `file_path`.
+/// would collide with another video's `file_path`, plus the full identity/
+/// path pair for every row that was *actually* rewritten
+/// (`renamed_videos`).
+///
+/// `renamed_videos` exists specifically so `commands::settings_cmds::
+/// rename_watch_folder` can move each renamed video's cached thumbnails
+/// individually, one video at a time -- never as a single whole-
+/// subdirectory rename of the old folder's thumbnail subdirectory to the
+/// new one. A collision-skipped row's `file_path` never actually changed,
+/// so its resolved thumbnail subdirectory (`gb_core::paths::
+/// resolve_thumbnail_subdir`) hasn't changed either; a caller that moved
+/// the *whole* subdirectory instead would incorrectly drag a collision-
+/// skipped video's thumbnails along with it, leaving them physically
+/// relocated to a folder the video's own DB row no longer (or never did)
+/// belong to.
 pub struct RenameWatchFolderOutcome {
     pub renamed_count: u32,
     pub collision_skipped_count: u32,
+    pub renamed_videos: Vec<RenamedVideo>,
+}
+
+/// One row actually rewritten by `rename_watch_folder_videos` (i.e. not
+/// collision-skipped) -- its identity plus its `file_path` before and after
+/// the rename.
+pub struct RenamedVideo {
+    pub video_id: String,
+    pub old_file_path: String,
+    pub new_file_path: String,
 }
 
 /// Checks whether `file_path` currently belongs to any *other* video row,
@@ -1036,6 +1064,7 @@ pub fn rename_watch_folder_videos(
 
     let mut renamed_count = 0u32;
     let mut collision_skipped_count = 0u32;
+    let mut renamed_videos = Vec::new();
 
     for (video_id, old_path) in rows {
         let Some(new_path) =
@@ -1069,12 +1098,18 @@ pub fn rename_watch_folder_videos(
             params![new_path, status, video_id],
         )?;
         renamed_count += 1;
+        renamed_videos.push(RenamedVideo {
+            video_id,
+            old_file_path: old_path,
+            new_file_path: new_path,
+        });
     }
 
     tx.commit()?;
     Ok(RenameWatchFolderOutcome {
         renamed_count,
         collision_skipped_count,
+        renamed_videos,
     })
 }
 

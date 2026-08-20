@@ -14,9 +14,17 @@ fn init_temp_db() -> (tempfile::TempDir, db::Db) {
     (dir, db)
 }
 
+/// A throwaway `thumbnails/` root -- none of the scenarios below assert on
+/// thumbnail file placement, so this only needs to be a valid, empty
+/// directory `scan_folders` can pass down to `register_new_path`.
+fn temp_thumbs_root() -> tempfile::TempDir {
+    tempfile::tempdir().expect("failed to create thumbs root tempdir")
+}
+
 #[test]
 fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     fs::write(
         scan_dir.path().join("normal_movie.mp4"),
@@ -35,7 +43,8 @@ fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
     .unwrap();
 
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-    let summary = scan::scan_folders(&folders, &db).expect("scan should succeed");
+    let summary =
+        scan::scan_folders(&folders, &db, thumbs_root.path()).expect("scan should succeed");
 
     // notes.txt is filtered out before it ever reaches validate/hash, so
     // `scanned` only counts the two video-extension files.
@@ -76,13 +85,14 @@ fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
 #[test]
 fn rescanning_the_same_folder_is_idempotent() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     fs::write(scan_dir.path().join("movie.mp4"), b"bytes").unwrap();
     fs::write(scan_dir.path().join("\u{2460}movie.mp4"), b"bytes2").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    scan::scan_folders(&folders, &db).unwrap();
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
     let conn = db.writer.lock().unwrap();
     let video_count: i64 = conn
@@ -109,6 +119,7 @@ fn scan_continues_past_a_file_it_cannot_open_and_registers_the_rest() {
     use std::os::windows::fs::OpenOptionsExt;
 
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     let locked_path = scan_dir.path().join("locked.mp4");
     fs::write(&locked_path, b"fake video bytes").unwrap();
@@ -121,7 +132,7 @@ fn scan_continues_past_a_file_it_cannot_open_and_registers_the_rest() {
         .expect("failed to open the file exclusively for test setup");
 
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-    let summary = scan::scan_folders(&folders, &db)
+    let summary = scan::scan_folders(&folders, &db, thumbs_root.path())
         .expect("a single unreadable file must not abort the whole scan");
 
     assert_eq!(summary.scanned, 2);
@@ -142,11 +153,12 @@ fn scan_continues_past_a_file_it_cannot_open_and_registers_the_rest() {
 #[test]
 fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     fs::write(scan_dir.path().join("movie.mp4"), b"stable bytes").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    let first = scan::scan_folders(&folders, &db).unwrap();
+    let first = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     assert_eq!(first.registered, 1);
 
     let quick_hash_after_first: String = {
@@ -155,7 +167,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
             .unwrap()
     };
 
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     assert_eq!(second.scanned, 1);
     assert_eq!(second.registered, 0);
     assert_eq!(second.reconciled, 0);
@@ -175,12 +187,13 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
 #[test]
 fn rescanning_a_modified_file_updates_quick_hash_and_size() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     let video_path = scan_dir.path().join("movie.mp4");
     fs::write(&video_path, b"original bytes").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     let (id, quick_hash_before): (String, String) = {
         let conn = db.writer.lock().unwrap();
         conn.query_row("SELECT id, quick_hash FROM videos", [], |r| {
@@ -193,7 +206,7 @@ fn rescanning_a_modified_file_updates_quick_hash_and_size() {
     // filesystem's mtime resolution happens not to advance within the test.
     fs::write(&video_path, b"a completely different, longer set of bytes").unwrap();
 
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     assert_eq!(second.registered, 0);
     assert_eq!(second.reconciled, 1);
     assert_eq!(second.unchanged, 0);
@@ -227,11 +240,12 @@ fn rescanning_a_modified_file_updates_quick_hash_and_size() {
 #[test]
 fn rescanning_an_offline_rows_original_path_reconnects_it_to_online() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     fs::write(scan_dir.path().join("movie.mp4"), b"bytes").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     let id: String = {
         let conn = db.writer.lock().unwrap();
         conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -240,7 +254,7 @@ fn rescanning_an_offline_rows_original_path_reconnects_it_to_online() {
             .unwrap()
     };
 
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     assert_eq!(second.registered, 0);
     assert_eq!(second.reconciled, 1);
     assert_eq!(second.unchanged, 0);
@@ -265,14 +279,15 @@ fn rescanning_an_offline_rows_original_path_reconnects_it_to_online() {
 #[test]
 fn rescanning_after_a_lone_known_video_disappears_holds_it_online() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     let video_path = scan_dir.path().join("movie.mp4");
     fs::write(&video_path, b"bytes").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     fs::remove_file(&video_path).unwrap();
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
     assert_eq!(second.went_offline, 0);
     let conn = db.writer.lock().unwrap();
@@ -296,6 +311,7 @@ fn rescanning_after_a_lone_known_video_disappears_holds_it_online() {
 #[test]
 fn rescanning_after_one_file_disappears_from_a_larger_library_flips_it_offline() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     let paths: Vec<_> = (0..6)
         .map(|i| scan_dir.path().join(format!("movie{i}.mp4")))
@@ -305,9 +321,9 @@ fn rescanning_after_one_file_disappears_from_a_larger_library_flips_it_offline()
     }
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     fs::remove_file(&paths[0]).unwrap();
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
     assert_eq!(second.went_offline, 1);
     let conn = db.writer.lock().unwrap();
@@ -337,6 +353,7 @@ fn rescanning_after_one_file_disappears_from_a_larger_library_flips_it_offline()
 #[test]
 fn missing_detection_does_not_cross_contaminate_between_folders() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let folder_a = tempfile::tempdir().expect("failed to create folder A");
     let folder_b = tempfile::tempdir().expect("failed to create folder B");
     // Folder A needs >= 5 known videos so a single deletion there stays
@@ -354,9 +371,9 @@ fn missing_detection_does_not_cross_contaminate_between_folders() {
         folder_b.path().to_string_lossy().to_string(),
     ];
 
-    scan::scan_folders(&folders, &db).unwrap();
+    scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
     fs::remove_file(&a_paths[0]).unwrap();
-    let second = scan::scan_folders(&folders, &db).unwrap();
+    let second = scan::scan_folders(&folders, &db, thumbs_root.path()).unwrap();
 
     // Only a0.mp4 (under folder A) should go offline; folder B's single
     // video must be untouched by folder A's walk results.
@@ -379,13 +396,14 @@ fn missing_detection_does_not_cross_contaminate_between_folders() {
 #[test]
 fn a_file_reappearing_at_a_new_path_is_path_followed_not_re_registered() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let old_dir = tempfile::tempdir().expect("failed to create old-location tempdir");
     let new_dir = tempfile::tempdir().expect("failed to create new-location tempdir");
     let old_path = old_dir.path().join("movie.mp4");
     fs::write(&old_path, b"identical bytes").unwrap();
 
     let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-    scan::scan_folders(&old_folders, &db).unwrap();
+    scan::scan_folders(&old_folders, &db, thumbs_root.path()).unwrap();
     let id_before: String = {
         let conn = db.writer.lock().unwrap();
         conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -403,7 +421,7 @@ fn a_file_reappearing_at_a_new_path_is_path_followed_not_re_registered() {
     fs::write(&new_path, b"identical bytes").unwrap();
     let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
 
-    let summary = scan::scan_folders(&new_folders, &db).unwrap();
+    let summary = scan::scan_folders(&new_folders, &db, thumbs_root.path()).unwrap();
     assert_eq!(summary.reactivated, 1);
     assert_eq!(summary.registered, 0);
     assert_eq!(summary.collisions, 0);
@@ -440,6 +458,7 @@ fn scanning_a_folder_deeper_than_max_path_succeeds_and_stores_a_plain_file_path(
     use graybrowser_lib::adapters::long_path;
 
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
 
     let mut deep = scan_dir.path().to_path_buf();
@@ -459,7 +478,8 @@ fn scanning_a_folder_deeper_than_max_path_succeeds_and_stores_a_plain_file_path(
         .expect("writing the fixture file should succeed via \\\\?\\ prefixing");
 
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-    let summary = scan::scan_folders(&folders, &db).expect("scan should succeed past MAX_PATH");
+    let summary = scan::scan_folders(&folders, &db, thumbs_root.path())
+        .expect("scan should succeed past MAX_PATH");
     assert_eq!(summary.scanned, 1);
     assert_eq!(summary.registered, 1);
 
@@ -486,8 +506,8 @@ fn scanning_a_folder_deeper_than_max_path_succeeds_and_stores_a_plain_file_path(
     // Rescanning the same deep folder must also work end-to-end past
     // MAX_PATH (WalkDir root prefixing + entry-path stripping stay
     // consistent across repeated walks) and remain idempotent.
-    let summary2 =
-        scan::scan_folders(&folders, &db).expect("rescan should also succeed past MAX_PATH");
+    let summary2 = scan::scan_folders(&folders, &db, thumbs_root.path())
+        .expect("rescan should also succeed past MAX_PATH");
     assert_eq!(summary2.unchanged, 1);
     assert_eq!(summary2.registered, 0);
     let video_count: i64 = conn
