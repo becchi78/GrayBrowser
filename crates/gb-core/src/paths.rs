@@ -1,12 +1,29 @@
 //! Portable directory resolution: all app data lives in a `GrayBrowser/`
-//! folder next to the executable.
+//! folder next to the executable -- except when the executable already sits
+//! directly inside a folder named `GrayBrowser` (the production NSIS
+//! installer's per-user `%LOCALAPPDATA%\GrayBrowser\GrayBrowser.exe` layout),
+//! in which case that folder itself *is* the data directory, so it isn't
+//! nested a second time.
 
 use std::path::{Path, PathBuf};
 
-/// Given the running executable's path, returns the portable data directory
-/// (`<exe_dir>/GrayBrowser`), or `None` if `exe_path` has no parent directory.
+/// Given the running executable's path, returns the portable data directory.
+///
+/// If the executable's parent directory is already named `GrayBrowser`
+/// (case-insensitive), that directory itself is returned unchanged --
+/// otherwise a `GrayBrowser` subfolder is appended, as before. Returns `None`
+/// if `exe_path` has no parent directory.
 pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
-    exe_path.parent().map(|dir| dir.join("GrayBrowser"))
+    let dir = exe_path.parent()?;
+    let already_named_graybrowser = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_lowercase() == "graybrowser");
+    if already_named_graybrowser {
+        Some(dir.to_path_buf())
+    } else {
+        Some(dir.join("GrayBrowser"))
+    }
 }
 
 /// Extracts the drive root of a Windows path, for drive-type detection: a
@@ -149,6 +166,28 @@ mod tests {
         // A bare drive root has no parent directory to resolve against.
         let exe = Path::new(r"C:\");
         assert_eq!(resolve_app_dir(exe), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn does_not_double_nest_when_the_parent_is_already_named_graybrowser() {
+        // The production NSIS installer's `currentUser` layout: the exe
+        // itself lives directly inside `%LOCALAPPDATA%\GrayBrowser\`.
+        let exe = Path::new(r"C:\Users\me\AppData\Local\GrayBrowser\GrayBrowser.exe");
+        assert_eq!(
+            resolve_app_dir(exe),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Local\GrayBrowser"))
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn does_not_double_nest_regardless_of_the_parent_folder_names_casing() {
+        let exe = Path::new(r"C:\Users\me\AppData\Local\graybrowser\GrayBrowser.exe");
+        assert_eq!(
+            resolve_app_dir(exe),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Local\graybrowser"))
+        );
     }
 
     #[test]

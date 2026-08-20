@@ -1,6 +1,6 @@
 [package]
 name = "graybrowser"
-version = "0.1.0"
+version = "0.1.1"
 description = "GrayBrowser - local video cataloging desktop app"
 edition = "2021"
 # Disambiguates `cargo run` (with no `--bin`) in favor of the main app binary
