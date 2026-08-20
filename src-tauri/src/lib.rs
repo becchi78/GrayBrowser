@@ -47,6 +47,11 @@ pub fn run() {
             // Before db::init so a migration failure is captured in app.log
             // too, not just wherever Tauri prints its own startup error.
             let _ = logging::init(&app_dir);
+            // Before db::init: moves any pre-existing double-nested install
+            // data (see `paths::migrate_legacy_nested_app_dir`) into place
+            // first, so db::init opens the real database rather than
+            // creating a fresh empty one.
+            paths::migrate_legacy_nested_app_dir(&app_dir)?;
             let db = db::init(&app_dir.join("app.db"))
                 .inspect_err(|e| log::error!("failed to initialize database: {e}"))?;
             app.manage(db.clone());
