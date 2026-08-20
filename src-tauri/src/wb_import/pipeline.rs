@@ -221,12 +221,15 @@ fn import_all<S, F, N, C>(
     let mut registered = 0u32;
     let mut skipped = 0u32;
     let mut tags_assigned = 0u32;
-    // (video_id, thumbnail_hash) for every row that was actually inserted
-    // and carries a thumbnail hash -- the input to match_thumbnail_files
-    // below. Rows that were skipped (already registered) are deliberately
-    // excluded: their thumbnail, if any, was already linked (or not) by
-    // whatever earlier import/scan first registered them.
-    let mut registered_movies: Vec<(String, String)> = Vec::new();
+    // (video_id, thumbnail_hash, file_path) for every row that was actually
+    // inserted and carries a thumbnail hash -- the input to
+    // match_thumbnail_files below. `file_path` is carried alongside so
+    // `link_thumbnails` can resolve each video's own registered-folder
+    // thumbnail subdirectory without a second DB round trip. Rows that were
+    // skipped (already registered) are deliberately excluded: their
+    // thumbnail, if any, was already linked (or not) by whatever earlier
+    // import/scan first registered them.
+    let mut registered_movies: Vec<(String, String, String)> = Vec::new();
 
     for (idx, row) in rows.iter().enumerate() {
         let candidate = match wb_row_to_import_candidate(row) {
@@ -304,7 +307,7 @@ fn import_all<S, F, N, C>(
                 // video can produce a fresh one.
                 if file_state.status == "offline" {
                     if let Some(hash) = candidate.thumbnail_hash {
-                        registered_movies.push((id, hash));
+                        registered_movies.push((id, hash, candidate.movie_path.clone()));
                     }
                 }
             }
@@ -319,9 +322,22 @@ fn import_all<S, F, N, C>(
         }
     }
 
+    // Fetched once, up front, and reused by `link_thumbnails` for every
+    // matched video rather than re-querying it per video.
+    let watch_folders = match db.read_pool.get() {
+        Ok(conn) => queries::get_watch_folders(&conn).unwrap_or_default(),
+        Err(e) => {
+            log::warn!(
+                "wb import: failed to acquire a DB connection to read watch_folders before \
+                 linking legacy thumbnails: {e}"
+            );
+            Vec::new()
+        }
+    };
     let (thumbnails_linked, thumbnails_failed, thumbnails_unmatched) = link_thumbnails(
         &paths.thumbnail_folder,
         &paths.thumbnails_dir,
+        &watch_folders,
         &registered_movies,
         ffmpeg,
     );
@@ -376,10 +392,18 @@ fn import_all<S, F, N, C>(
 ///
 /// Returns `(linked, failed, unmatched)`, where `linked`/`failed` count
 /// videos, not individual slot files.
+///
+/// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
+/// `watch_folders` (fetched once by the caller, `import_all`) is used
+/// together with each matched video's own `file_path` (carried in
+/// `registered_movies`) to resolve its registered-folder subdirectory
+/// (`thumbnail::paths::video_thumbnail_dir`) before writing anything into
+/// it.
 fn link_thumbnails<F: FfmpegAdapter>(
     thumbnail_folder: &Path,
-    thumbnails_dir: &Path,
-    registered_movies: &[(String, String)],
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+    registered_movies: &[(String, String, String)],
     ffmpeg: &F,
 ) -> (u32, u32, u32) {
     let filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
@@ -394,7 +418,19 @@ fn link_thumbnails<F: FfmpegAdapter>(
         }
     };
 
-    let plan = match_thumbnail_files(registered_movies, &filenames);
+    // `match_thumbnail_files` only needs (video_id, thumbnail_hash) pairs --
+    // `file_path` is looked back up per matched video via this map instead
+    // of threading a third tuple element through `gb_core::wb_import`.
+    let movies_for_matching: Vec<(String, String)> = registered_movies
+        .iter()
+        .map(|(id, hash, _)| (id.clone(), hash.clone()))
+        .collect();
+    let file_path_by_id: std::collections::HashMap<&str, &str> = registered_movies
+        .iter()
+        .map(|(id, _, file_path)| (id.as_str(), file_path.as_str()))
+        .collect();
+
+    let plan = match_thumbnail_files(&movies_for_matching, &filenames);
     let thumbnails_unmatched = plan.unmatched_filenames.len() as u32;
     if !plan.unmatched_filenames.is_empty() {
         log::warn!(
@@ -407,12 +443,34 @@ fn link_thumbnails<F: FfmpegAdapter>(
     let mut thumbnails_linked = 0u32;
     let mut thumbnails_failed = 0u32;
     for (video_id, filename) in plan.matched {
+        // Defensive only: every `video_id` here came from `movies_for_matching`,
+        // which is derived from the very same `registered_movies` this map
+        // was built from, so a miss should never actually occur.
+        let Some(&file_path) = file_path_by_id.get(video_id.as_str()) else {
+            log::warn!(
+                "wb import: internal inconsistency -- matched video {video_id} has no known \
+                 file_path; skipping its legacy thumbnail link"
+            );
+            thumbnails_failed += 1;
+            continue;
+        };
+        let video_dir =
+            crate::thumbnail::paths::video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
+        if let Err(e) = fs::create_dir_all(&video_dir) {
+            log::warn!(
+                "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
+                video_dir.display()
+            );
+            thumbnails_failed += 1;
+            continue;
+        }
+
         let src_path = thumbnail_folder.join(&filename);
         // Shared scratch file for the single conversion pass below; distinct
         // from the per-slot `{video_id}_{i}.webp.tmp` names used by
         // `thumbnail::worker` so the two pipelines can never collide on a
         // tmp path.
-        let shared_tmp_path = thumbnails_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
+        let shared_tmp_path = video_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
 
         if let Err(e) =
             ffmpeg.convert_image_to_webp(&src_path, &shared_tmp_path, WB_THUMBNAIL_QUALITY)
@@ -434,7 +492,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
         // treat "all slots present" as the only valid state.
         let mut copy_err: Option<std::io::Error> = None;
         for i in 0..THUMBNAILS_PER_VIDEO {
-            let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
+            let final_path = crate::thumbnail::paths::slot_path(&video_dir, &video_id, i);
             if let Err(e) = fs::copy(&shared_tmp_path, &final_path) {
                 copy_err = Some(e);
                 break;
@@ -450,7 +508,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                      ({filename}): {e}"
                 );
                 for i in 0..THUMBNAILS_PER_VIDEO {
-                    let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
+                    let final_path = crate::thumbnail::paths::slot_path(&video_dir, &video_id, i);
                     let _ = fs::remove_file(&final_path);
                 }
                 thumbnails_failed += 1;
@@ -471,6 +529,13 @@ mod tests {
 
     use crate::db::test_support::init_temp_db;
     use crate::events::{FakeCatalogNotifier, FakeWbImportNotifier};
+
+    /// The subdirectory `link_thumbnails`/`video_thumbnail_dir` resolve
+    /// every video in these tests to, since none of them register any
+    /// `watch_folders`.
+    fn unassigned_dir(thumbnails_root: &Path) -> PathBuf {
+        thumbnails_root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+    }
 
     fn row(overrides: impl FnOnce(&mut WbMovieRow)) -> WbMovieRow {
         let mut row = WbMovieRow {
@@ -852,18 +917,14 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
+        let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
         for i in 0..THUMBNAILS_PER_VIDEO {
             assert!(
-                h.paths
-                    .thumbnails_dir
-                    .join(format!("{matched_id}_{i}.webp"))
-                    .exists(),
+                video_dir.join(format!("{matched_id}_{i}.webp")).exists(),
                 "slot {i} must exist for the matched video"
             );
         }
-        assert!(!h
-            .paths
-            .thumbnails_dir
+        assert!(!video_dir
             .join(format!("{matched_id}.wb_legacy.webp.tmp"))
             .exists());
 
@@ -876,16 +937,11 @@ mod tests {
             .unwrap();
         for i in 0..THUMBNAILS_PER_VIDEO {
             assert!(
-                !h.paths
-                    .thumbnails_dir
-                    .join(format!("{failing_id}_{i}.webp"))
-                    .exists(),
+                !video_dir.join(format!("{failing_id}_{i}.webp")).exists(),
                 "slot {i} must not exist for the failing video"
             );
         }
-        assert!(!h
-            .paths
-            .thumbnails_dir
+        assert!(!video_dir
             .join(format!("{failing_id}.wb_legacy.webp.tmp"))
             .exists());
     }
@@ -908,6 +964,9 @@ mod tests {
     fn copy_failure_partway_through_the_slot_loop_cleans_up_and_stops() {
         let h = harness();
         let video_id = "fixed-video-id-for-copy-failure-test";
+        let video_file_path = "Z:\\video-for-copy-failure-test.mp4";
+        let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
+        std::fs::create_dir_all(&video_dir).unwrap();
 
         std::fs::write(
             h.paths.thumbnail_folder.join("MyVideo.mp4.#deadbeef.jpg"),
@@ -919,7 +978,7 @@ mod tests {
         // there specifically. Slots 0 and 1 must succeed first (their
         // destinations are untouched), proving the loop really got partway
         // through the six slots before hitting the failure.
-        std::fs::create_dir(h.paths.thumbnails_dir.join(format!("{video_id}_2.webp"))).unwrap();
+        std::fs::create_dir(video_dir.join(format!("{video_id}_2.webp"))).unwrap();
 
         // Fail-fast side channel for slot 3 (the slot immediately after the
         // failure, so the very first one a broken/missing `break` would
@@ -938,23 +997,21 @@ mod tests {
         // content too), while `fs::remove_file` on the slot path afterward
         // only detaches that one directory entry -- the marker keeps
         // whatever content the copy left behind, cleaned up or not.
-        let marker_path = h
-            .paths
-            .thumbnails_dir
-            .join("fail_fast_side_channel_marker.bin");
+        let marker_path = video_dir.join("fail_fast_side_channel_marker.bin");
         std::fs::write(&marker_path, b"untouched-original-marker-content").unwrap();
-        std::fs::hard_link(
-            &marker_path,
-            h.paths.thumbnails_dir.join(format!("{video_id}_3.webp")),
-        )
-        .unwrap();
+        std::fs::hard_link(&marker_path, video_dir.join(format!("{video_id}_3.webp"))).unwrap();
 
         let ffmpeg = no_op_ffmpeg();
 
         let (linked, failed, unmatched) = link_thumbnails(
             &h.paths.thumbnail_folder,
             &h.paths.thumbnails_dir,
-            &[(video_id.to_string(), "deadbeef".to_string())],
+            &[],
+            &[(
+                video_id.to_string(),
+                "deadbeef".to_string(),
+                video_file_path.to_string(),
+            )],
             &ffmpeg,
         );
 
@@ -969,10 +1026,7 @@ mod tests {
         // cleaned back up by the best-effort cleanup pass.
         for i in 0..2 {
             assert!(
-                !h.paths
-                    .thumbnails_dir
-                    .join(format!("{video_id}_{i}.webp"))
-                    .exists(),
+                !video_dir.join(format!("{video_id}_{i}.webp")).exists(),
                 "slot {i} must have been cleaned up after the later copy failure at slot 2"
             );
         }
@@ -982,21 +1036,14 @@ mod tests {
         // uses `fs::remove_file`, which cannot remove a directory, so
         // best-effort cleanup leaves it untouched by design (not a bug --
         // the test's own `tempfile::TempDir` removes it on drop).
-        assert!(h
-            .paths
-            .thumbnails_dir
-            .join(format!("{video_id}_2.webp"))
-            .is_dir());
+        assert!(video_dir.join(format!("{video_id}_2.webp")).is_dir());
 
         // Slots 3..THUMBNAILS_PER_VIDEO's own destination paths must be gone
         // too (removed by the same best-effort cleanup pass as slots 0/1 --
         // this alone doesn't prove they were *never attempted*, see above).
         for i in 3..THUMBNAILS_PER_VIDEO {
             assert!(
-                !h.paths
-                    .thumbnails_dir
-                    .join(format!("{video_id}_{i}.webp"))
-                    .exists(),
+                !video_dir.join(format!("{video_id}_{i}.webp")).exists(),
                 "slot {i}'s path must not remain after cleanup"
             );
         }
@@ -1017,9 +1064,7 @@ mod tests {
         );
 
         // The shared scratch tmp file must not survive the failure either.
-        assert!(!h
-            .paths
-            .thumbnails_dir
+        assert!(!video_dir
             .join(format!("{video_id}.wb_legacy.webp.tmp"))
             .exists());
     }

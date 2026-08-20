@@ -34,14 +34,23 @@ fn init_temp_db() -> (tempfile::TempDir, db::Db) {
     (dir, db)
 }
 
+/// A throwaway `thumbnails/` root -- none of the scenarios below reactivate
+/// a video that has cached thumbnails to move, so this only needs to be a
+/// valid, empty directory.
+fn temp_thumbs_root() -> tempfile::TempDir {
+    tempfile::tempdir().expect("failed to create thumbs root tempdir")
+}
+
 #[test]
 fn registers_new_files_found_on_the_simulated_nas() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &nas_dir.path().to_string_lossy(),
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -61,12 +70,14 @@ fn registers_new_files_found_on_the_simulated_nas() {
 #[test]
 fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"stable bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -80,6 +91,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -107,6 +119,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
 #[test]
 fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let video_path = nas_dir.path().join("movie.mp4");
     fs::write(&video_path, b"bytes").unwrap();
@@ -114,6 +127,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -122,6 +136,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
     fs::remove_file(&video_path).unwrap();
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -148,6 +163,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
 #[test]
 fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let folder = nas_dir.path().to_string_lossy().to_string();
     let paths: Vec<_> = (0..6)
@@ -159,6 +175,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -167,6 +184,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
     fs::remove_file(&paths[0]).unwrap();
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -197,6 +215,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
 #[test]
 fn an_unreachable_root_does_not_touch_any_existing_online_row() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let video_path = nas_dir.path().join("movie.mp4");
     fs::write(&video_path, b"bytes").unwrap();
@@ -204,6 +223,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -216,6 +236,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -241,11 +262,13 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
 #[test]
 fn stop_returns_almost_immediately_regardless_of_the_poller_thread() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let folder = nas_dir.path().to_string_lossy().to_string();
 
     let handle = start_nas_polling(
         db,
+        thumbs_root.path().to_path_buf(),
         folder,
         Duration::from_secs(600),
         Arc::new(FakeCatalogNotifier::default()),
@@ -269,12 +292,14 @@ fn stop_returns_almost_immediately_regardless_of_the_poller_thread() {
 #[test]
 fn a_pre_set_stop_flag_prevents_any_processing_this_cycle() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(true),
         &FakeCatalogNotifier::default(),
@@ -297,12 +322,20 @@ fn a_pre_set_stop_flag_prevents_any_processing_this_cycle() {
 #[test]
 fn run_nas_diff_scan_notifies_when_a_new_file_is_registered() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
     let notifier = FakeCatalogNotifier::default();
 
-    run_nas_diff_scan(&db, &folder, &AtomicBool::new(false), &notifier).unwrap();
+    run_nas_diff_scan(
+        &db,
+        thumbs_root.path(),
+        &folder,
+        &AtomicBool::new(false),
+        &notifier,
+    )
+    .unwrap();
 
     assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
 }
@@ -310,12 +343,14 @@ fn run_nas_diff_scan_notifies_when_a_new_file_is_registered() {
 #[test]
 fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"stable bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -323,7 +358,14 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
     .unwrap();
 
     let notifier = FakeCatalogNotifier::default();
-    run_nas_diff_scan(&db, &folder, &AtomicBool::new(false), &notifier).unwrap();
+    run_nas_diff_scan(
+        &db,
+        thumbs_root.path(),
+        &folder,
+        &AtomicBool::new(false),
+        &notifier,
+    )
+    .unwrap();
 
     assert_eq!(
         notifier.calls(),
@@ -335,6 +377,7 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
 #[test]
 fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let paths: Vec<_> = (0..6)
         .map(|i| nas_dir.path().join(format!("movie{i}.mp4")))
@@ -346,6 +389,7 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -354,7 +398,14 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
     fs::remove_file(&paths[0]).unwrap();
 
     let notifier = FakeCatalogNotifier::default();
-    run_nas_diff_scan(&db, &folder, &AtomicBool::new(false), &notifier).unwrap();
+    run_nas_diff_scan(
+        &db,
+        thumbs_root.path(),
+        &folder,
+        &AtomicBool::new(false),
+        &notifier,
+    )
+    .unwrap();
 
     assert_eq!(
         notifier.calls(),
@@ -366,12 +417,14 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
 #[test]
 fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
     let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
 
     run_nas_diff_scan(
         &db,
+        thumbs_root.path(),
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
@@ -380,7 +433,14 @@ fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
     drop(nas_dir);
 
     let notifier = FakeCatalogNotifier::default();
-    run_nas_diff_scan(&db, &folder, &AtomicBool::new(false), &notifier).unwrap();
+    run_nas_diff_scan(
+        &db,
+        thumbs_root.path(),
+        &folder,
+        &AtomicBool::new(false),
+        &notifier,
+    )
+    .unwrap();
 
     assert_eq!(
         notifier.calls(),

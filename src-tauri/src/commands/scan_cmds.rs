@@ -133,7 +133,10 @@ pub async fn start_scan(
         let conn = db.writer.lock().unwrap();
         queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
     };
-    let summary = scan::scan_folders(&folders, &db).map_err(|e| e.to_string())?;
+    let thumbnails_root = crate::paths::app_data_dir()
+        .map(|dir| crate::thumbnail::paths::thumbnails_root(&dir))
+        .map_err(|e| e.to_string())?;
+    let summary = scan::scan_folders(&folders, &db, &thumbnails_root).map_err(|e| e.to_string())?;
     // Cloned before `app` moves into `TauriCatalogNotifier` below --
     // `TauriDedupNotifier` needs its own `AppHandle` for the fire-and-forget
     // dedup refresh further down.
@@ -148,16 +151,14 @@ pub async fn start_scan(
     // Fire-and-forget: re-enumerate videos missing a thumbnail and kick off
     // generation in the background (a "resume after scan" pass). This
     // does not block the response to the frontend.
-    if let Ok(thumbnails_dir) = crate::paths::app_data_dir().map(|dir| dir.join("thumbnails")) {
-        let _ = std::fs::create_dir_all(&thumbnails_dir);
-        thumbnail::enqueue_missing_thumbnails(
-            db.inner().clone(),
-            thumbnails_dir,
-            queue.inner().clone(),
-            Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
-            Arc::clone(&notifier),
-        );
-    }
+    let _ = std::fs::create_dir_all(&thumbnails_root);
+    thumbnail::enqueue_missing_thumbnails(
+        db.inner().clone(),
+        thumbnails_root,
+        queue.inner().clone(),
+        Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
+        Arc::clone(&notifier),
+    );
 
     // Fire-and-forget, same "resume after scan" reasoning as above.
     crate::metadata::enqueue_missing_metadata_probes(

@@ -40,7 +40,9 @@ pub async fn refresh_duplicate_groups(
 /// Removes a video from the catalog -- its `videos` row plus every
 /// `video_tags`/`path_collisions` row referencing it
 /// (`queries::delete_video_cascade`) -- and deletes its cached thumbnails
-/// (`thumbnails/[video_id]_0.webp`..`[video_id]_5.webp`) if any exist.
+/// (all 6 `[video_id]_0.webp`..`[video_id]_5.webp` slot files, under
+/// whichever registered-folder subdirectory the video's `file_path`
+/// currently resolves to) if any exist.
 ///
 /// **Does not touch the source video file on disk.** Only the catalog row
 /// and cached thumbnail are removed; there is deliberately no
@@ -57,12 +59,34 @@ pub fn delete_duplicate_video(
     db: State<Db>,
     video_id: String,
 ) -> Result<(), String> {
-    if let Ok(thumbnails_dir) = crate::paths::app_data_dir().map(|dir| dir.join("thumbnails")) {
-        // Best-effort: the thumbnails may never have been generated (e.g. an
-        // offline video), same "may not exist" reasoning as
+    // Looked up *before* the DB delete below -- once the row is gone,
+    // `file_path` (and therefore the resolved thumbnail subdirectory) is no
+    // longer recoverable from the DB. A lookup failure/absence is not fatal
+    // to this command: it just means the thumbnail-cleanup step below has
+    // nothing to do.
+    let file_path = crate::db::queries::find_video_by_id(&db.read_pool, &video_id)
+        .ok()
+        .flatten()
+        .map(|row| row.file_path);
+
+    if let (Some(file_path), Ok(app_dir)) = (file_path, crate::paths::app_data_dir()) {
+        let thumbnails_root = crate::thumbnail::paths::thumbnails_root(&app_dir);
+        let watch_folders = db
+            .read_pool
+            .get()
+            .ok()
+            .and_then(|conn| crate::db::queries::get_watch_folders(&conn).ok())
+            .unwrap_or_default();
+        let video_dir = crate::thumbnail::paths::video_thumbnail_dir(
+            &thumbnails_root,
+            &watch_folders,
+            &file_path,
+        );
+        // Best-effort: the thumbnails may never have been generated (e.g.
+        // an offline video), same "may not exist" reasoning as
         // thumbnail::worker's own tmp-file cleanup.
         for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
-            let thumb_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
+            let thumb_path = crate::thumbnail::paths::slot_path(&video_dir, &video_id, i);
             let _ = std::fs::remove_file(&thumb_path);
         }
     }

@@ -344,6 +344,70 @@ fn every_non_colliding_row_under_the_folder_is_renamed_together() {
     );
 }
 
+// --- renamed_videos: the data settings_cmds::rename_watch_folder relies on
+// to move thumbnails video-by-video rather than as a whole-subdirectory
+// rename (see `queries::RenameWatchFolderOutcome`'s doc comment) ---------
+
+#[test]
+fn renamed_videos_reports_the_old_and_new_file_path_for_every_actually_renamed_row() {
+    let (dir, db) = init_temp_db();
+    let old_folder = r"C:\OldVideos".to_string();
+    let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
+
+    let mut conn = db.writer.lock().unwrap();
+    insert_video(&conn, "a", r"C:\OldVideos\a.mp4", "online");
+    insert_video(&conn, "b", r"C:\OldVideos\Sub\b.mp4", "online");
+
+    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
+
+    let mut renamed = outcome.renamed_videos;
+    renamed.sort_by(|a, b| a.video_id.cmp(&b.video_id));
+    assert_eq!(renamed.len(), 2);
+    assert_eq!(renamed[0].video_id, "a");
+    assert_eq!(renamed[0].old_file_path, r"C:\OldVideos\a.mp4");
+    assert_eq!(renamed[0].new_file_path, format!("{new_folder}\\a.mp4"));
+    assert_eq!(renamed[1].video_id, "b");
+    assert_eq!(renamed[1].old_file_path, r"C:\OldVideos\Sub\b.mp4");
+    assert_eq!(
+        renamed[1].new_file_path,
+        format!("{new_folder}\\Sub\\b.mp4")
+    );
+}
+
+#[test]
+fn renamed_videos_excludes_a_collision_skipped_row() {
+    let (dir, db) = init_temp_db();
+    let old_folder = r"C:\OldVideos".to_string();
+    let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
+
+    let mut conn = db.writer.lock().unwrap();
+    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4", "online");
+    insert_video(&conn, "free", r"C:\OldVideos\free.mp4", "online");
+    insert_video(
+        &conn,
+        "outside",
+        &format!("{new_folder}\\taken.mp4"),
+        "online",
+    );
+
+    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
+
+    assert_eq!(
+        outcome.renamed_videos.len(),
+        1,
+        "only the non-colliding row must be reported"
+    );
+    assert_eq!(outcome.renamed_videos[0].video_id, "free");
+    assert_eq!(
+        outcome.renamed_videos[0].old_file_path,
+        r"C:\OldVideos\free.mp4"
+    );
+    assert_eq!(
+        outcome.renamed_videos[0].new_file_path,
+        format!("{new_folder}\\free.mp4")
+    );
+}
+
 #[test]
 fn rename_of_an_already_empty_folder_is_a_no_op() {
     let (dir, db) = init_temp_db();

@@ -11,6 +11,9 @@
 //! rule, so calling them here means a manual retry counts exactly
 //! like an automatic one, with no risk of double-incrementing.
 
+use std::path::{Path, PathBuf};
+
+use gb_core::ports::ffmpeg::FfmpegAdapter;
 use tauri::State;
 
 use crate::adapters;
@@ -94,6 +97,17 @@ pub fn list_generation_failures(db: State<Db>) -> Result<GenerationFailuresDto, 
 /// returns `Ok(())`: a failed retry is not this command's error, it's
 /// exactly the outcome `list_generation_failures` (re-queried by the
 /// frontend after the event) is there to report.
+///
+/// This "always `Ok(())`, always notify" promise covers *every* failure mode
+/// downstream of the `reset_thumbnail_attempts` write above, including
+/// `crate::paths::app_data_dir()` itself failing (see `attempt_thumbnail_retry`,
+/// which is where that's handled) -- unlike `remove_watch_folder`/
+/// `rename_watch_folder`, whose own DB mutations *are* the command's main
+/// point and therefore must never proceed if `app_data_dir()` can't be
+/// resolved, this command's DB write (`reset_thumbnail_attempts`) is
+/// unconditionally safe to keep regardless of whether the thumbnail retry
+/// that follows can actually run, so there is nothing to protect by moving
+/// the `app_data_dir()` call earlier here.
 #[tauri::command]
 pub fn retry_thumbnail_generation(
     app: tauri::AppHandle,
@@ -108,27 +122,78 @@ pub fn retry_thumbnail_generation(
     let video = queries::find_video_by_id(&db.read_pool, &video_id).map_err(|e| e.to_string())?;
     match video {
         Some(video) => {
-            let thumbnails_dir = crate::paths::app_data_dir()
-                .map(|dir| dir.join("thumbnails"))
-                .map_err(|e| e.to_string())?;
-            let _ = std::fs::create_dir_all(&thumbnails_dir);
-
             let ffmpeg = adapters::ffmpeg::RealFfmpegAdapter;
-            if let Err(e) = thumbnail::worker::generate_thumbnail_for_video(
-                &ffmpeg,
+            attempt_thumbnail_retry(
                 db.inner(),
-                &thumbnails_dir,
+                &ffmpeg,
                 &video_id,
-                std::path::Path::new(&video.file_path),
-            ) {
-                log::warn!("manual thumbnail retry failed for {video_id}: {e}");
-            }
+                &video,
+                crate::paths::app_data_dir().map_err(|e| e.to_string()),
+            );
         }
         None => log::warn!("retry_thumbnail_generation: video {video_id} not found"),
     }
 
     TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
+}
+
+/// The actual thumbnail-retry attempt, factored out of the `#[tauri::command]`
+/// wrapper so its best-effort handling of an `app_dir` resolution failure is
+/// unit-testable without depending on `crate::paths::app_data_dir()`'s real
+/// `std::env::current_exe()` call (which cannot be made to fail
+/// deterministically in a test).
+///
+/// This function itself never returns an error and is never allowed to --
+/// `retry_thumbnail_generation`'s own doc comment promises "always returns
+/// `Ok(())`, a failed retry is not this command's error", and that promise
+/// must hold for *every* failure mode here, not just `generate_thumbnail_for_video`
+/// itself failing. In particular, `app_dir` being an `Err` (`crate::paths::
+/// app_data_dir()` failed) is treated the same way as any other best-effort
+/// thumbnail failure: logged and skipped, never propagated, never panicking
+/// -- regardless of whether it's called before or after some other DB write,
+/// since nothing downstream of it is allowed to fail this command either.
+fn attempt_thumbnail_retry(
+    db: &Db,
+    ffmpeg: &impl FfmpegAdapter,
+    video_id: &str,
+    video: &queries::VideoRow,
+    app_dir: Result<PathBuf, String>,
+) {
+    let app_dir = match app_dir {
+        Ok(dir) => dir,
+        Err(e) => {
+            log::warn!(
+                "manual thumbnail retry skipped for {video_id}: failed to resolve the app data \
+                 directory: {e}"
+            );
+            return;
+        }
+    };
+    let thumbnails_root = thumbnail::paths::thumbnails_root(&app_dir);
+    let watch_folders = match db.read_pool.get() {
+        Ok(conn) => queries::get_watch_folders(&conn).unwrap_or_default(),
+        Err(e) => {
+            log::warn!(
+                "failed to acquire a DB connection to read watch_folders for thumbnail retry \
+                 of {video_id}: {e}"
+            );
+            Vec::new()
+        }
+    };
+    let video_dir =
+        thumbnail::paths::video_thumbnail_dir(&thumbnails_root, &watch_folders, &video.file_path);
+    // `generate_thumbnail_for_video` itself `create_dir_all`s `video_dir` if
+    // it doesn't exist yet, so no separate call is needed here.
+    if let Err(e) = thumbnail::worker::generate_thumbnail_for_video(
+        ffmpeg,
+        db,
+        &video_dir,
+        video_id,
+        Path::new(&video.file_path),
+    ) {
+        log::warn!("manual thumbnail retry failed for {video_id}: {e}");
+    }
 }
 
 /// Metadata-pipeline counterpart of `retry_thumbnail_generation`: resets
@@ -252,6 +317,57 @@ mod tests {
         assert_eq!(
             attempts, 1,
             "the immediate retry attempt is exactly one attempt, not zero and not two"
+        );
+    }
+
+    /// Regression test for the best-effort contract `attempt_thumbnail_retry`'s
+    /// doc comment describes: an `app_dir` resolution failure (simulated here
+    /// via a plain `Err(...)`, standing in for `crate::paths::app_data_dir()`
+    /// itself failing -- not reproducible deterministically in a test, since
+    /// it wraps a real `std::env::current_exe()` call) must be a silent skip,
+    /// never propagated as an error and never allowed to reach
+    /// `generate_thumbnail_for_video` at all.
+    #[test]
+    fn attempt_thumbnail_retry_is_a_best_effort_skip_when_app_dir_resolution_fails() {
+        use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
+
+        let (_db_dir, db) = init_temp_db();
+        insert_test_video(&db, "vid-appdir-fail", "C:/videos/movie.mp4");
+        let video = queries::find_video_by_id(&db.read_pool, "vid-appdir-fail")
+            .unwrap()
+            .unwrap();
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        attempt_thumbnail_retry(
+            &db,
+            &ffmpeg,
+            "vid-appdir-fail",
+            &video,
+            Err("simulated app_data_dir failure".to_string()),
+        );
+
+        assert!(
+            ffmpeg.calls.lock().unwrap().is_empty(),
+            "generate_thumbnail_for_video (and therefore the ffmpeg adapter) must never be \
+             reached when app_dir resolution failed"
+        );
+
+        let conn = db.writer.lock().unwrap();
+        let attempts: i64 = conn
+            .query_row(
+                "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-appdir-fail'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            attempts, 0,
+            "a best-effort skip must not be counted as a failed generation attempt"
         );
     }
 

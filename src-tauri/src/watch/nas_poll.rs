@@ -6,7 +6,7 @@
 //! apply the missing-video verdict.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -65,6 +65,7 @@ const STOP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// adding a second timeout-supervision thread.
 pub fn run_nas_diff_scan(
     db: &Db,
+    thumbnails_root: &Path,
     folder: &str,
     stop_flag: &AtomicBool,
     notifier: &dyn CatalogNotifier,
@@ -146,7 +147,13 @@ pub fn run_nas_diff_scan(
                 // would do its own DB lookup per file) -- this is the
                 // two-stage diff's whole point.
                 if !matches!(classification, FileClassification::Unchanged) {
-                    match scan::process_detected_file(db, &entry_path, file_size, mtime) {
+                    match scan::process_detected_file(
+                        db,
+                        thumbnails_root,
+                        &entry_path,
+                        file_size,
+                        mtime,
+                    ) {
                         Ok(
                             scan::ProcessOutcome::Registered
                             | scan::ProcessOutcome::Reconciled
@@ -262,6 +269,7 @@ impl NasPollHandle {
 /// finishes on its own.
 pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     db: Db,
+    thumbnails_root: PathBuf,
     folder: String,
     interval: Duration,
     notifier: Arc<N>,
@@ -270,7 +278,9 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     let flag = Arc::clone(&stop_flag);
 
     thread::spawn(move || {
-        if let Err(err) = run_nas_diff_scan(&db, &folder, &flag, notifier.as_ref()) {
+        if let Err(err) =
+            run_nas_diff_scan(&db, &thumbnails_root, &folder, &flag, notifier.as_ref())
+        {
             log::error!("NAS diff scan failed for {folder}: {err}");
         }
 
@@ -283,7 +293,9 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
                 if flag.load(Ordering::SeqCst) {
                     break;
                 }
-                if let Err(err) = run_nas_diff_scan(&db, &folder, &flag, notifier.as_ref()) {
+                if let Err(err) =
+                    run_nas_diff_scan(&db, &thumbnails_root, &folder, &flag, notifier.as_ref())
+                {
                     log::error!("NAS diff scan failed for {folder}: {err}");
                 }
             }

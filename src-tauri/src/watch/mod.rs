@@ -12,7 +12,7 @@
 
 pub mod nas_poll;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,17 @@ use nas_poll::NasPollHandle;
 /// simply killed along with their thread by the OS, same reasoning.
 /// Reconfiguration mid-run (folder list changes) goes through `reconfigure`
 /// instead, which explicitly stops the old set before starting the new one.
+/// Bundles `Db` and the `thumbnails/` root together for `RealtimeWatchManager::
+/// reconfigure` -- keeps its own parameter count under
+/// `clippy::too_many_arguments`'s default threshold now that `thumbnails_root`
+/// sits alongside the folder-list/watcher/drive-type/notifier parameters
+/// already there, mirroring `wb_import::pipeline::WbImportPaths`'s reason for
+/// bundling.
+pub struct WatchContext {
+    pub db: Db,
+    pub thumbnails_root: PathBuf,
+}
+
 #[derive(Default)]
 pub struct RealtimeWatchManager {
     handles: Mutex<Vec<Box<dyn WatchHandle>>>,
@@ -52,13 +63,18 @@ impl RealtimeWatchManager {
     /// for an actually-remote folder would just never fire at all.
     pub fn reconfigure<N: CatalogNotifier + 'static>(
         &self,
-        db: Db,
+        ctx: WatchContext,
         folders: &[String],
         watcher: &impl FileWatcher,
         drive_type: &impl DriveTypeDetector,
         nas_poll_interval: Duration,
         notifier: Arc<N>,
     ) {
+        let WatchContext {
+            db,
+            thumbnails_root,
+        } = ctx;
+
         for mut handle in self.handles.lock().unwrap().drain(..) {
             handle.stop();
         }
@@ -83,13 +99,19 @@ impl RealtimeWatchManager {
             }
         }
 
-        let new_handles =
-            start_watching(db.clone(), &local_folders, watcher, Arc::clone(&notifier));
+        let new_handles = start_watching(
+            db.clone(),
+            thumbnails_root.clone(),
+            &local_folders,
+            watcher,
+            Arc::clone(&notifier),
+        );
         let new_pollers: Vec<NasPollHandle> = nas_folders
             .into_iter()
             .map(|folder| {
                 nas_poll::start_nas_polling(
                     db.clone(),
+                    thumbnails_root.clone(),
                     folder,
                     nas_poll_interval,
                     Arc::clone(&notifier),
@@ -125,11 +147,15 @@ pub fn reconfigure_real_watch_manager(
     app: &tauri::AppHandle,
     db: &Db,
     watch_manager: &RealtimeWatchManager,
+    thumbnails_root: &Path,
     folders: &[String],
     nas_poll_interval_secs: i64,
 ) {
     watch_manager.reconfigure(
-        db.clone(),
+        WatchContext {
+            db: db.clone(),
+            thumbnails_root: thumbnails_root.to_path_buf(),
+        },
         folders,
         &crate::adapters::watcher::RealFileWatcher,
         &crate::adapters::drive_type::RealDriveTypeDetector,
@@ -145,6 +171,7 @@ pub fn reconfigure_real_watch_manager(
 /// and skipped; it does not prevent the others from being watched.
 pub fn start_watching<N: CatalogNotifier + 'static>(
     db: Db,
+    thumbnails_root: PathBuf,
     folders: &[String],
     watcher: &impl FileWatcher,
     notifier: Arc<N>,
@@ -153,9 +180,11 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
         .iter()
         .filter_map(|folder| {
             let db = db.clone();
+            let thumbnails_root = thumbnails_root.clone();
             let notifier = Arc::clone(&notifier);
-            let on_event: Box<dyn Fn(WatchEvent) + Send + Sync> =
-                Box::new(move |event| handle_watch_event(&db, event, notifier.as_ref()));
+            let on_event: Box<dyn Fn(WatchEvent) + Send + Sync> = Box::new(move |event| {
+                handle_watch_event(&db, &thumbnails_root, event, notifier.as_ref())
+            });
             match watcher.watch(Path::new(folder), on_event) {
                 Ok(handle) => Some(handle),
                 Err(e) => {
@@ -174,7 +203,12 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
 /// single bad event to abort, so failures are logged and simply don't
 /// propagate any further (the same catch-and-continue policy as a scan,
 /// applied per-event rather than per-scan).
-fn handle_watch_event(db: &Db, event: WatchEvent, notifier: &dyn CatalogNotifier) {
+fn handle_watch_event(
+    db: &Db,
+    thumbnails_root: &Path,
+    event: WatchEvent,
+    notifier: &dyn CatalogNotifier,
+) {
     let file_name = match event.path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
         None => return,
@@ -216,7 +250,7 @@ fn handle_watch_event(db: &Db, event: WatchEvent, notifier: &dyn CatalogNotifier
                     return;
                 }
             };
-            match scan::process_detected_file(db, &event.path, file_size, mtime) {
+            match scan::process_detected_file(db, thumbnails_root, &event.path, file_size, mtime) {
                 Ok(
                     scan::ProcessOutcome::Registered
                     | scan::ProcessOutcome::Reconciled
@@ -290,15 +324,24 @@ mod tests {
     use gb_core::testing::fake_watcher::FakeFileWatcher;
     use std::fs;
 
+    /// A throwaway `thumbnails/` root for tests that don't exercise the
+    /// thumbnail-moving side of a reactivation -- just needs to be a valid,
+    /// empty directory.
+    fn temp_thumbs_root() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
     #[test]
     fn handle_watch_event_registers_a_created_video_file() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
 
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Created,
                 path: video_path.clone(),
@@ -316,12 +359,14 @@ mod tests {
     #[test]
     fn handle_watch_event_ignores_a_non_video_extension() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let text_path = scan_dir.path().join("notes.txt");
         fs::write(&text_path, b"not a video").unwrap();
 
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Created,
                 path: text_path,
@@ -340,11 +385,13 @@ mod tests {
     #[test]
     fn handle_watch_event_removed_transitions_a_known_online_video_to_offline() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Created,
                 path: video_path.clone(),
@@ -354,6 +401,7 @@ mod tests {
 
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Removed,
                 path: video_path,
@@ -375,11 +423,13 @@ mod tests {
     #[test]
     fn handle_watch_event_removed_ignores_a_path_with_no_known_row() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         // Never registered (e.g. a directory removal, or a video that was
         // never scanned) -- must be a harmless no-op, not an error.
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Removed,
                 path: scan_dir.path().join("never_registered.mp4"),
@@ -400,6 +450,7 @@ mod tests {
     #[test]
     fn handle_watch_event_notifies_on_a_created_registration() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
@@ -407,6 +458,7 @@ mod tests {
 
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Created,
                 path: video_path,
@@ -420,6 +472,7 @@ mod tests {
     #[test]
     fn handle_watch_event_does_not_notify_on_an_unchanged_rescan() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"stable bytes").unwrap();
@@ -429,12 +482,17 @@ mod tests {
         };
 
         // First event registers (and notifies) the row.
-        handle_watch_event(&db, event(), &FakeCatalogNotifier::default());
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            event(),
+            &FakeCatalogNotifier::default(),
+        );
 
         // A second event for the exact same, unchanged file must classify
         // as Unchanged (no DB write) and therefore must not notify.
         let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(&db, event(), &notifier);
+        handle_watch_event(&db, thumbs_root.path(), event(), &notifier);
 
         assert_eq!(
             notifier.calls(),
@@ -446,11 +504,13 @@ mod tests {
     #[test]
     fn handle_watch_event_removed_does_not_notify_for_an_untracked_path() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let notifier = FakeCatalogNotifier::default();
 
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Removed,
                 path: scan_dir.path().join("never_registered.mp4"),
@@ -468,11 +528,13 @@ mod tests {
     #[test]
     fn handle_watch_event_removed_notifies_when_a_known_online_video_goes_offline() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Created,
                 path: video_path.clone(),
@@ -483,6 +545,7 @@ mod tests {
         let notifier = FakeCatalogNotifier::default();
         handle_watch_event(
             &db,
+            thumbs_root.path(),
             WatchEvent {
                 kind: WatchEventKind::Removed,
                 path: video_path,
@@ -506,6 +569,7 @@ mod tests {
     #[test]
     fn created_removed_created_at_the_same_path_cycles_through_fake_watcher_preserving_identity() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
@@ -517,6 +581,7 @@ mod tests {
         let folders = vec![scan_dir.path().to_string_lossy().to_string()];
         start_watching(
             db.clone(),
+            thumbs_root.path().to_path_buf(),
             &folders,
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
@@ -564,6 +629,7 @@ mod tests {
     #[test]
     fn start_watching_calls_watch_once_per_folder_and_routes_events_to_handle_watch_event() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let scan_dir = tempfile::tempdir().unwrap();
         let video_path = scan_dir.path().join("movie.mp4");
         fs::write(&video_path, b"bytes").unwrap();
@@ -575,6 +641,7 @@ mod tests {
         let folders = vec![scan_dir.path().to_string_lossy().to_string()];
         let handles = start_watching(
             db.clone(),
+            thumbs_root.path().to_path_buf(),
             &folders,
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
@@ -601,6 +668,7 @@ mod tests {
     #[test]
     fn reconfigure_routes_local_and_removable_to_watching_and_network_to_polling() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let local_dir = tempfile::tempdir().unwrap();
         let removable_dir = tempfile::tempdir().unwrap();
         let nas_dir = tempfile::tempdir().unwrap();
@@ -628,7 +696,10 @@ mod tests {
         ];
 
         manager.reconfigure(
-            db,
+            WatchContext {
+                db,
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
             &folders,
             &watcher,
             &drive_type,
@@ -651,6 +722,7 @@ mod tests {
     #[test]
     fn reconfigure_falls_back_to_polling_when_drive_type_is_unknown_or_undetectable() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let unknown_dir = tempfile::tempdir().unwrap();
         let error_dir = tempfile::tempdir().unwrap();
 
@@ -677,7 +749,10 @@ mod tests {
         ];
 
         manager.reconfigure(
-            db,
+            WatchContext {
+                db,
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
             &folders,
             &watcher,
             &drive_type,
@@ -696,6 +771,7 @@ mod tests {
     #[test]
     fn reconfigure_replaces_the_previous_set_of_handles_and_pollers() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let local_dir = tempfile::tempdir().unwrap();
         let nas_dir = tempfile::tempdir().unwrap();
 
@@ -713,7 +789,10 @@ mod tests {
         let manager = RealtimeWatchManager::default();
 
         manager.reconfigure(
-            db.clone(),
+            WatchContext {
+                db: db.clone(),
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
             &[
                 local_dir.path().to_string_lossy().to_string(),
                 nas_dir.path().to_string_lossy().to_string(),
@@ -733,7 +812,10 @@ mod tests {
         // old background thread has actually exited yet (it may still be
         // finishing its current cycle in the background).
         manager.reconfigure(
-            db,
+            WatchContext {
+                db,
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
             &[],
             &watcher,
             &drive_type,
@@ -747,6 +829,7 @@ mod tests {
     #[test]
     fn nas_folder_gets_diff_scanned_through_reconfigure() {
         let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
         let nas_dir = tempfile::tempdir().unwrap();
         fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
 
@@ -761,7 +844,10 @@ mod tests {
         let manager = RealtimeWatchManager::default();
 
         manager.reconfigure(
-            db.clone(),
+            WatchContext {
+                db: db.clone(),
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
             &[nas_dir.path().to_string_lossy().to_string()],
             &watcher,
             &drive_type,
