@@ -6,6 +6,7 @@ pub mod properties_cmds;
 pub mod rating_cmds;
 pub mod scan_cmds;
 pub mod settings_cmds;
+pub mod tag_bar_cmds;
 pub mod tag_cmds;
 pub mod thumbnail_cmds;
 pub mod wb_import_cmds;

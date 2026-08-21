@@ -28,6 +28,7 @@ fn greet(name: &str) -> String {
 // handler can't silently drift apart.
 const MENU_ITEM_FOLDER_MANAGE: &str = "menu-folder-manage";
 const MENU_ITEM_WB_IMPORT: &str = "menu-wb-import";
+const MENU_ITEM_TAG_BAR_MANAGE: &str = "menu-tag-bar-manage";
 const MENU_ITEM_ABOUT: &str = "menu-about";
 // The "スタイル" menu. Only one style ("Default") exists today, so there is
 // nothing to select between yet -- the item exists so the menu bar has the
@@ -146,7 +147,7 @@ pub fn run() {
             );
             app.manage(watch_manager);
 
-            // Native menu bar. "ファイル" / "スタイル" /
+            // Native menu bar. "ファイル" / "タグ" / "スタイル" /
             // "ヘルプ" -- "表示" is deliberately not added yet (undecided).
             // Item clicks just emit a frontend event; the modals
             // themselves are handled by the frontend, so there's nothing
@@ -161,6 +162,18 @@ pub fn run() {
                 .item(&wb_import_item)
                 .separator()
                 .item(&quit_item)
+                .build()?;
+
+            // "タグ" -- its own top-level submenu (not nested under
+            // "ファイル") since it's not a file-management action; only one
+            // item exists today (the pinned-tags editor), but this gives
+            // future tag-related menu entries a home without further
+            // reshuffling "ファイル".
+            let tag_bar_manage_item =
+                MenuItemBuilder::with_id(MENU_ITEM_TAG_BAR_MANAGE, "タグバーの編集...")
+                    .build(app)?;
+            let tag_menu = SubmenuBuilder::new(app, "タグ")
+                .item(&tag_bar_manage_item)
                 .build()?;
 
             let style_default_item =
@@ -179,6 +192,7 @@ pub fn run() {
 
             let menu = MenuBuilder::new(app)
                 .item(&file_menu)
+                .item(&tag_menu)
                 .item(&style_menu)
                 .item(&help_menu)
                 .build()?;
@@ -203,6 +217,7 @@ pub fn run() {
                 let event_name = match event.id().as_ref() {
                     id if id == MENU_ITEM_FOLDER_MANAGE => "menu:open-folder-dialog",
                     id if id == MENU_ITEM_WB_IMPORT => "menu:open-wb-import-dialog",
+                    id if id == MENU_ITEM_TAG_BAR_MANAGE => "menu:open-tag-bar-dialog",
                     id if id == MENU_ITEM_ABOUT => "menu:about",
                     // "終了" is Tauri's PredefinedMenuItem::quit -- it's
                     // handled natively and never reaches this listener.
@@ -233,6 +248,8 @@ pub fn run() {
             commands::tag_cmds::remove_tag,
             commands::tag_cmds::list_tags_for_video,
             commands::tag_cmds::list_all_tags,
+            commands::tag_bar_cmds::get_tag_bar_pinned_tag_ids,
+            commands::tag_bar_cmds::set_tag_bar_pinned_tag_ids,
             commands::rating_cmds::set_rating,
             commands::properties_cmds::get_video_properties,
             commands::wb_import_cmds::pick_wb_file,

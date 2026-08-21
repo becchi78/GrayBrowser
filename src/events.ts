@@ -87,6 +87,14 @@ export function onMenuOpenWbImportDialog(callback: () => void): () => void {
 }
 
 /**
+ * Subscribes to menu:open-tag-bar-dialog, fired by the native "ファイル >
+ * タグバーの編集..." menu item.
+ */
+export function onMenuOpenTagBarDialog(callback: () => void): () => void {
+  return subscribe<void>("menu:open-tag-bar-dialog", callback);
+}
+
+/**
  * Subscribes to menu:about, fired by the native "ヘルプ > バージョン情報"
  * menu item.
  */

@@ -6,11 +6,13 @@ import { FolderSidebar } from "./components/FolderSidebar";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
-import { TagFilter } from "./components/TagFilter";
+import { TagBar } from "./components/TagBar";
+import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
 import {
   onMenuOpenFolderDialog,
+  onMenuOpenTagBarDialog,
   onMenuOpenWbImportDialog,
   onMenuStyleSelected,
 } from "./events";
@@ -35,6 +37,14 @@ function App() {
   // sidebar's own "フォルダ管理 ▸" link.
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
+  // TagBarEditDialog is reached only via the native menu ("タグ > タグ
+  // バーの編集..." -- its own top-level submenu, not nested under
+  // "ファイル", see lib.rs). tagBarRefreshKey mirrors `refreshKey`'s own
+  // role, scoped to just TagBar: bumped once the dialog saves a new pinned
+  // list, so TagBar re-fetches it (via its own `refreshKey` prop) without a
+  // full remount.
+  const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
+  const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
 
   useEffect(() => {
@@ -44,6 +54,11 @@ function App() {
       unlistenFolder();
       unlistenWbImport();
     };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onMenuOpenTagBarDialog(() => setTagBarDialogOpen(true));
+    return () => unlisten();
   }, []);
 
   useEffect(() => {
@@ -76,7 +91,7 @@ function App() {
         />
       </div>
       <div className="header-row-filters" data-testid="header-row-filters">
-        <TagFilter selected={tagIds} onChange={setTagIds} />
+        <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
       </div>
       <div className="main-area">
         <FolderSidebar
@@ -124,6 +139,11 @@ function App() {
         open={wbImportDialogOpen}
         onClose={() => setWbImportDialogOpen(false)}
         onImportComplete={() => setRefreshKey((k) => k + 1)}
+      />
+      <TagBarEditDialog
+        open={tagBarDialogOpen}
+        onClose={() => setTagBarDialogOpen(false)}
+        onChanged={() => setTagBarRefreshKey((k) => k + 1)}
       />
     </div>
   );

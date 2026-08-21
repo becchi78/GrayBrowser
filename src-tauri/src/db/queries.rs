@@ -664,6 +664,49 @@ pub fn set_nas_poll_interval_secs(conn: &Connection, secs: i64) -> anyhow::Resul
     Ok(())
 }
 
+const TAG_BAR_PINNED_TAGS_KEY: &str = "tag_bar_pinned_tags";
+
+pub fn get_tag_bar_pinned_tag_ids(conn: &Connection) -> anyhow::Result<Vec<i64>> {
+    match get_setting(conn, TAG_BAR_PINNED_TAGS_KEY)? {
+        Some(json) => Ok(serde_json::from_str(&json)?),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub fn set_tag_bar_pinned_tag_ids(conn: &Connection, tag_ids: &[i64]) -> anyhow::Result<()> {
+    let json = serde_json::to_string(tag_ids)?;
+    set_setting(conn, TAG_BAR_PINNED_TAGS_KEY, &json)?;
+    Ok(())
+}
+
+/// Reads the persisted tag-bar pin list and prunes ids of tags that no
+/// longer exist (`gb_core::tags::prune_missing_tag_ids`), writing the pruned
+/// list back only when pruning actually changed something. Deletion has no
+/// dedicated tag-bar unpin path exposed to the frontend yet, so this lazy,
+/// read-triggered cleanup is the only place stale ids ever get removed.
+///
+/// Skips the `tags` table lookup entirely when the persisted list is already
+/// empty -- the common case once nothing is pinned -- rather than querying
+/// `existing_tag_ids` just to filter nothing.
+pub fn get_tag_bar_pinned_tag_ids_self_healing(conn: &Connection) -> anyhow::Result<Vec<i64>> {
+    let pinned = get_tag_bar_pinned_tag_ids(conn)?;
+    if pinned.is_empty() {
+        return Ok(pinned);
+    }
+
+    let mut stmt = conn.prepare("SELECT id FROM tags")?;
+    let existing_tag_ids: std::collections::HashSet<i64> = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+
+    let pruned = gb_core::tags::prune_missing_tag_ids(pinned.clone(), &existing_tag_ids);
+    if pruned != pinned {
+        set_tag_bar_pinned_tag_ids(conn, &pruned)?;
+    }
+    Ok(pruned)
+}
+
 pub struct TagRow {
     pub id: i64,
     pub name: String,
