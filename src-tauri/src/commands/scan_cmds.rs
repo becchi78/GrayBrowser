@@ -189,6 +189,9 @@ pub async fn start_scan(
 /// falls under that folder (the folder sidebar) -- if the frontend never
 /// passes it, this argument is a no-op (matches every row, same as
 /// omitting it).
+/// `min_rating`, when present, restricts results to videos whose `rating` is
+/// at least that value (the rating bar) -- if the frontend never passes it,
+/// this argument is a no-op (matches every row, same as omitting it).
 #[tauri::command]
 pub fn list_videos(
     db: State<Db>,
@@ -197,6 +200,7 @@ pub fn list_videos(
     sort_direction: Option<SortDirectionParam>,
     tag_ids: Option<Vec<i64>>,
     folder_path: Option<String>,
+    min_rating: Option<u8>,
 ) -> Result<Vec<VideoDto>, String> {
     let terms = search
         .as_deref()
@@ -217,6 +221,7 @@ pub fn list_videos(
         direction,
         &tag_ids,
         folder_path.as_deref(),
+        min_rating,
     )
     .map(|rows| rows.into_iter().map(VideoDto::from_row).collect())
     .map_err(|e| e.to_string())

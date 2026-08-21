@@ -50,7 +50,7 @@ fn list(
     tag_ids: &[i64],
 ) -> Vec<String> {
     let terms = gb_core::search::parse_search_terms(search);
-    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, None)
+    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, None, None)
         .unwrap()
         .into_iter()
         .map(|v| v.id)

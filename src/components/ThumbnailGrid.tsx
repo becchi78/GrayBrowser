@@ -27,6 +27,8 @@ interface Props {
   tagIds: number[];
   /** `null` = "すべて" (no folder filter); see FolderSidebar. */
   folderPath: string | null;
+  /** `null` = "すべて表示" (no rating filter); see RatingBar. */
+  minRating: number | null;
 }
 
 export function ThumbnailGrid({
@@ -36,6 +38,7 @@ export function ThumbnailGrid({
   sortDirection,
   tagIds,
   folderPath,
+  minRating,
 }: Props) {
   const [videos, setVideos] = useState<VideoDto[]>([]);
   // Highlights the selected row -- the detail panel this used to open is
@@ -63,7 +66,14 @@ export function ThumbnailGrid({
 
     const tick = async () => {
       try {
-        const rows = await listVideos({ search, sortField, sortDirection, tagIds, folderPath });
+        const rows = await listVideos({
+          search,
+          sortField,
+          sortDirection,
+          tagIds,
+          folderPath,
+          minRating,
+        });
         if (cancelled) return;
         setVideos(rows);
         // Clears the selection highlight if the selected video disappeared
@@ -111,9 +121,9 @@ export function ThumbnailGrid({
       if (trailingTimer !== null) clearTimeout(trailingTimer);
     };
     // catalog:changed re-fetches always use the latest search/sort/tagIds/
-    // folderPath via closure, so those need to be dependencies too (not just
-    // refreshKey).
-  }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath]);
+    // folderPath/minRating via closure, so those need to be dependencies too
+    // (not just refreshKey).
+  }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath, minRating]);
 
   // Resets scroll to the top only when the *search query* changes -- not on
   // sort-order change (still viewing the same result set, just reordered)

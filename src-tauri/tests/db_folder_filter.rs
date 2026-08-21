@@ -41,6 +41,7 @@ fn list_under(pool: &r2d2::Pool<SqliteConnectionManager>, folder_path: &str) -> 
         SortDirection::Desc,
         &[],
         Some(folder_path),
+        None,
     )
     .unwrap()
     .into_iter()
@@ -137,6 +138,7 @@ fn no_folder_filter_returns_everything() {
         SortDirection::Desc,
         &[],
         None,
+        None,
     )
     .unwrap()
     .into_iter()
@@ -166,6 +168,7 @@ fn folder_filter_combines_with_a_search_term_as_an_and_condition() {
         SortDirection::Desc,
         &[],
         Some(r"C:\Videos"),
+        None,
     )
     .unwrap()
     .into_iter()
