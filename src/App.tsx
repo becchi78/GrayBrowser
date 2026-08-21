@@ -3,6 +3,7 @@ import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { FolderDialog } from "./components/FolderDialog";
 import { FolderSidebar } from "./components/FolderSidebar";
+import { RatingBar } from "./components/RatingBar";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
@@ -31,6 +32,9 @@ function App() {
   const [tagIds, setTagIds] = useState<number[]>([]);
   // `null` = "すべて" (no folder filter).
   const [folderPath, setFolderPath] = useState<string | null>(null);
+  // `null` = "すべて表示" (no rating filter). Independent filter axis from
+  // tagIds -- see RatingBar's own comment.
+  const [minRating, setMinRating] = useState<number | null>(null);
   // FolderDialog/WbImportDialog are reached only via the native menu
   // ("ファイル > フォルダ管理.../.wbインポート..." -- see the two
   // onMenuOpen*Dialog subscriptions below) or, for FolderDialog, the
@@ -92,6 +96,7 @@ function App() {
       </div>
       <div className="header-row-filters" data-testid="header-row-filters">
         <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
+        <RatingBar value={minRating} onChange={setMinRating} />
       </div>
       <div className="main-area">
         <FolderSidebar
@@ -112,6 +117,7 @@ function App() {
                 sortDirection={sortDirection}
                 tagIds={tagIds}
                 folderPath={folderPath}
+                minRating={minRating}
               />
             ),
           }[viewStyle]

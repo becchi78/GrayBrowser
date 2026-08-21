@@ -1,7 +1,7 @@
 {
   "name": "graybrowser",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts src/lib/tagBarLayout.test.ts src/lib/reorderablePinnedTags.test.ts e2e/sandboxGuard.test.mjs",
+    "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts src/lib/tagBarLayout.test.ts src/lib/reorderablePinnedTags.test.ts src/lib/ratingBar.test.ts e2e/sandboxGuard.test.mjs",
     "test:e2e": "node --test --test-concurrency=1 e2e/specs/tag-management.e2e.mjs e2e/specs/incremental-search.e2e.mjs e2e/specs/grid-visible-after-scan.e2e.mjs e2e/specs/layout-shrink-regression.e2e.mjs e2e/specs/tag-bar.e2e.mjs"
   },
   "dependencies": {

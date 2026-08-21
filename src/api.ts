@@ -26,6 +26,8 @@ export interface ListVideosOptions {
   tagIds?: number[];
   /** Restricts to videos under this watch folder; `null`/omitted = every folder ("すべて"). */
   folderPath?: string | null;
+  /** Restricts to videos whose rating is at least this value; `null`/omitted = every rating ("すべて表示"). */
+  minRating?: number | null;
 }
 
 // Keys are always present (explicit null rather than omitted) so Tauri's
@@ -49,6 +51,7 @@ export const listVideos = (opts?: ListVideosOptions) =>
     sortDirection: opts?.sortDirection ?? null,
     tagIds: opts?.tagIds ?? null,
     folderPath: opts?.folderPath ?? null,
+    minRating: opts?.minRating ?? null,
   });
 export const assignTag = (videoId: string, tagName: string) =>
   invoke<TagDto>("assign_tag", { videoId, tagName });

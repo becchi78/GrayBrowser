@@ -591,6 +591,7 @@ fn measure_median(
             sort_direction,
             tag_ids,
             None,
+            None,
         )
         .unwrap_or_else(|e| panic!("{label} query failed: {e}"));
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -775,6 +776,7 @@ fn measure_list_videos_equivalent_with_fsstat_median(
             sort_direction,
             tag_ids,
             None,
+            None,
         )
         .unwrap_or_else(|e| panic!("{label} query failed: {e}"));
         let thumbnail_ready: Vec<bool> = rows
@@ -811,6 +813,7 @@ fn measure_list_videos_equivalent_via_db_column_median(
             sort_field,
             sort_direction,
             tag_ids,
+            None,
             None,
         )
         .unwrap_or_else(|e| panic!("{label} query failed: {e}"));
@@ -1052,6 +1055,7 @@ fn run_folder_filter_bench_for(row_count: usize, seed: u64, results: &mut Vec<Be
             SortDirection::Desc,
             &no_tags,
             Some(FOLDER_FILTER_TARGET),
+            None,
         )
         .unwrap_or_else(|e| panic!("{label} query failed: {e}"));
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;

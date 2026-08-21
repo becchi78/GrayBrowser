@@ -131,11 +131,17 @@ button:disabled {
   font-size: 0.9em;
 }
 
-/* Row 2 (38px budget, tag bar chips). Same `flex-shrink: 0` rule as row
-   1. `TagBar` renders nothing (`null`) when the library has no tags yet,
-   so this wrapper naturally collapses to 0 height in that case -- no
-   special-casing needed here. */
+/* Row 2 (38px budget, tag bar chips + rating bar). Same `flex-shrink: 0`
+   rule as row 1. `TagBar` renders nothing (`null`) when the library has no
+   tags yet, so this wrapper naturally collapses to 0 height in that case --
+   no special-casing needed here (RatingBar, unlike TagBar, always renders,
+   so this row's height floor while `TagBar` is `null` is RatingBar's own
+   height). `display: flex` + `gap` lay `.tag-bar` (flexible, `flex: 1`) and
+   `.rating-bar` (fixed width, see below) out side by side. */
 .header-row-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
   flex-shrink: 0;
 }
 
@@ -162,6 +168,29 @@ button:disabled {
   flex-wrap: nowrap;
   gap: 0.4em;
   min-width: 0;
+  /* `.header-row-filters`のflexアイテムとして、隣の`.rating-bar`(固定幅)を
+     除いた残り全幅を使う。 */
+  flex: 1;
+}
+
+/* 単一の`<select>`のみを持つ固定幅ラッパー。`flex-shrink: 0`で`.tag-bar`側の
+   縮小に巻き込まれないようにし、`width: 8em`(:rootのfont-size: 16px基準で
+   128px)は`src/lib/ratingBar.ts`の`RATING_BAR_RESERVED_WIDTH_PX`(128)と
+   一致させること -- `tagBarLayout.ts`の`computeVisibleChipCount`がこの分を
+   TagBarの利用可能幅から差し引く計算の前提になっている。 */
+.rating-bar {
+  flex-shrink: 0;
+  width: 8em;
+}
+
+/* `.header-row-primary button, .header-row-primary input, .header-row-select`
+   と同じ理由(グローバルな`input, button`ルールのpadding/font-sizeがこの行の
+   高さを押し上げてしまうため)で、`.rating-bar select`にも同様のスコープ付き
+   オーバーライドを適用する。 */
+.rating-bar select {
+  width: 100%;
+  padding: 0.35em 0.8em;
+  font-size: 0.9em;
 }
 
 /* The chip row (「すべて解除」+ pinned/promoted chips) -- its own wrapper,
