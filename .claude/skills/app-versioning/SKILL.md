@@ -32,4 +32,4 @@ description: GrayBrowserのバージョン番号(SemVer)をPRごとに更新す�
 
 ## release-publishスキルとの関係
 
-このスキルはPRごとの開発版バージョン更新を扱う。実際にタグを作成しGitHub Releaseとして公開する手順、および`CHANGELOG.md`への記載は `release-publish` スキルの責務のままとし、ここでは扱わない。
+バージョンを上げたら、そのバージョンを上げたPRがマージされ次第、間を置かず `release-publish` スキルの手順に従って実際にリリースする(`CHANGELOG.md`への記載・タグ作成・GitHub Release公開まで)。バージョン番号を上げるだけでリリースを後回しにしない。
