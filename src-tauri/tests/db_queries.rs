@@ -388,3 +388,89 @@ fn nas_poll_interval_defaults_when_unset_and_round_trips_when_set() {
     queries::set_nas_poll_interval_secs(&conn, 120).unwrap();
     assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 120);
 }
+
+#[test]
+fn tag_bar_pinned_tag_ids_defaults_to_empty_when_unset() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    assert_eq!(
+        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
+        Vec::<i64>::new()
+    );
+}
+
+#[test]
+fn tag_bar_pinned_tag_ids_round_trips_through_set_and_get() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    queries::set_tag_bar_pinned_tag_ids(&conn, &[3, 1, 2]).unwrap();
+    assert_eq!(
+        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
+        vec![3, 1, 2]
+    );
+}
+
+#[test]
+fn tag_bar_pinned_tag_ids_self_healing_prunes_missing_ids_and_writes_back() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    // Two real tags plus two ids that don't correspond to any `tags` row.
+    conn.execute("INSERT INTO tags (id, name) VALUES (10, 'Action')", [])
+        .unwrap();
+    conn.execute("INSERT INTO tags (id, name) VALUES (20, 'Comedy')", [])
+        .unwrap();
+    queries::set_tag_bar_pinned_tag_ids(&conn, &[999, 10, 888, 20]).unwrap();
+
+    let healed = queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap();
+    assert_eq!(
+        healed,
+        vec![10, 20],
+        "self-healing must drop ids with no matching tags row while preserving order"
+    );
+
+    // The pruned list must have been written back: a plain (non-self-healing)
+    // read afterwards sees the already-pruned list, not the original one.
+    assert_eq!(
+        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
+        vec![10, 20]
+    );
+}
+
+#[test]
+fn tag_bar_pinned_tag_ids_self_healing_keeps_order_when_nothing_is_pruned() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    conn.execute("INSERT INTO tags (id, name) VALUES (5, 'Action')", [])
+        .unwrap();
+    conn.execute("INSERT INTO tags (id, name) VALUES (7, 'Comedy')", [])
+        .unwrap();
+    conn.execute("INSERT INTO tags (id, name) VALUES (9, 'Drama')", [])
+        .unwrap();
+    queries::set_tag_bar_pinned_tag_ids(&conn, &[9, 5, 7]).unwrap();
+
+    assert_eq!(
+        queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap(),
+        vec![9, 5, 7]
+    );
+}
+
+#[test]
+fn tag_bar_pinned_tag_ids_self_healing_skips_the_tags_table_when_persisted_list_is_empty() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    // No pinned list has ever been persisted. Drop the `tags` table entirely
+    // so any query against it fails loudly -- proving the empty-list early
+    // return really does skip the "look up existing tag ids" step rather
+    // than just happening to prune everything away.
+    conn.execute("DROP TABLE tags", []).unwrap();
+
+    assert_eq!(
+        queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap(),
+        Vec::<i64>::new()
+    );
+}

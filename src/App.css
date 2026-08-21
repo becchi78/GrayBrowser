@@ -131,8 +131,8 @@ button:disabled {
   font-size: 0.9em;
 }
 
-/* Row 2 (38px budget, tag filter chips). Same `flex-shrink: 0` rule as row
-   1. `TagFilter` renders nothing (`null`) when the library has no tags yet,
+/* Row 2 (38px budget, tag bar chips). Same `flex-shrink: 0` rule as row
+   1. `TagBar` renders nothing (`null`) when the library has no tags yet,
    so this wrapper naturally collapses to 0 height in that case -- no
    special-casing needed here. */
 .header-row-filters {
@@ -150,31 +150,175 @@ button:disabled {
   gap: 0.5em;
 }
 
-.tag-filter {
+/* Single fixed-height row (unlike the old `.tag-filter`'s `flex-wrap: wrap`
+   + `max-height: 10vh` scroll area) -- position: relative anchors
+   `.tag-bar-overflow-panel`'s popover (same pattern as `.status-bar`
+   anchoring `.status-panel`). `overflow: hidden` is a safety net, not the
+   primary mechanism: TagBar.tsx's own `computeVisibleChipCount` measurement
+   is what decides how many chips actually render, so this only guards
+   against the 38px budget ever being broken by a measurement edge case
+   (see that component's own comment on the "▾ always-available" trade-off)
+   instead of silently wrapping to a second row. */
+.tag-bar {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 0.4em;
-  /* Unbounded like `.folder-dialog-list` -- grows with the number of tags
-     in the library. Same self-contained shrink/scroll budget as the other
-     sibling sections. */
-  min-height: 0;
-  max-height: 10vh;
-  overflow: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
-/* `.header-row-primary`と同じ理由で、タグフィルタ行(`.header-row-filters`)
+/* `.header-row-primary`と同じ理由で、タグバー行(`.header-row-filters`)
    の高さを縮める -- チップのpadding/font-sizeを一段階小さくする。 */
-.tag-filter-chip {
+.tag-bar-chip {
+  flex-shrink: 0;
   border-radius: 999px;
   padding: 0.15em 0.6em;
   font-size: 0.8em;
   box-shadow: none;
   background-color: #e8e8e8;
+  /* 長いタグ名1つが計測幅を無制限に広げてバー全体を専有しないためのクランプ。
+     `title`属性でフルネームをツールチップ表示する(TagBar.tsx参照)。 */
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tag-filter-chip--active {
+.tag-bar-chip--active {
   background-color: #396cd8;
   color: #ffffff;
+}
+
+.tag-bar-clear-all,
+.tag-bar-overflow-toggle {
+  flex-shrink: 0;
+  padding: 0.15em 0.6em;
+  font-size: 0.8em;
+  box-shadow: none;
+}
+
+/* `.folder-sidebar-manage-link`と同じ「トグルではなく別画面を開く導線」の
+   見た目(斜体・やや薄い)。TagBarEditDialog(常設タグの選択・並べ替え)を
+   開く入口 -- ネイティブメニュー「ファイル > タグバーの編集...」からも
+   同じダイアログを開ける(lib.rsのMENU_ITEM_TAG_BAR_MANAGE参照)。 */
+.tag-bar-edit-link {
+  flex-shrink: 0;
+  padding: 0.15em 0.6em;
+  font-size: 0.8em;
+  box-shadow: none;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.tag-bar-overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tag-bar-overflow-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.4em;
+  width: max-content;
+  max-width: min(28em, 90vw);
+  max-height: 40vh;
+  overflow: auto;
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.5em;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 20;
+}
+
+.tag-bar-overflow-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+}
+
+/* TagBarEditDialog: 2-column "常設タグ / その他のタグ" layout, wider than
+   `.dialog`'s default `min(32em, 90vw)` so both columns have room to breathe
+   side by side rather than squeezing tag names down to their ellipsis. */
+.tag-bar-edit-dialog {
+  width: min(44em, 90vw);
+}
+
+.tag-bar-edit-columns {
+  display: flex;
+  gap: 1em;
+  min-height: 0;
+}
+
+.tag-bar-edit-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.tag-bar-edit-column h3 {
+  margin: 0;
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+.tag-bar-edit-empty {
+  opacity: 0.7;
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.tag-bar-edit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  /* Same self-contained scroll budget as `.folder-dialog-list`'s own
+     `max-height`/`overflow: auto` -- caps each column independently so a
+     long tag library doesn't grow the dialog itself past `.dialog`'s own
+     `max-height: 85vh`. */
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.tag-bar-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.3em 0;
+}
+
+.tag-bar-edit-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-bar-edit-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25em;
+}
+
+.tag-bar-edit-row-actions button {
+  padding: 0.15em 0.5em;
+  font-size: 0.85em;
+}
+
+.tag-bar-edit-error {
+  color: #8a1f1f;
+  font-size: 0.85em;
+  margin: 0;
 }
 
 /* MainArea, the `flex: 1` body row that hosts FolderSidebar + the video
@@ -1304,6 +1448,10 @@ button:disabled {
     color: #f3caca;
   }
 
+  .tag-bar-edit-error {
+    color: #f3caca;
+  }
+
   .duplicate-groups-error {
     color: #f3caca;
   }
@@ -1318,13 +1466,19 @@ button:disabled {
     color: #ccc;
   }
 
-  .tag-filter-chip {
+  .tag-bar-chip {
     background-color: #444;
   }
 
-  .tag-filter-chip--active {
+  .tag-bar-chip--active {
     background-color: #5a8ef0;
     color: #0f0f0f;
+  }
+
+  .tag-bar-overflow-panel {
+    background-color: #2f2f2f;
+    color: #f6f6f6;
+    border-color: #555;
   }
 
   .generation-failures-error {
