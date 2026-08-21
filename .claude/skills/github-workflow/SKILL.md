@@ -25,7 +25,7 @@ description: GrayBrowserリポジトリでのGit/GitHub操作全般のガイド�
 
 - Issueに対応する変更のPR本文には `Closes #<N>` を書く。
 - push前に、変更した領域に対応する検証（Rust変更なら `cargo build`/`cargo test`、フロントエンド変更なら `npm run lint`/`npm run typecheck`/`npm run test:unit` 等）を行う。
-- アプリ本体のコード変更を伴うPRを作成する前に、`app-versioning` スキルの分類基準に従ってバージョンを上げる。
+- アプリ本体のコード変更を伴うPRを作成する前に、`app-versioning` スキルの分類基準に従ってバージョンを上げる。そのPRがマージされたら、`release-publish` スキルの手順で実際にリリースする(CHANGELOG記載・タグ作成・GitHub Release公開まで)。バージョン番号を上げるだけで終わらせない。
 - PRを提出したら、`sandboxed-verification` スキルの手順（`e2e/run-sandboxed.ps1 -Mode manual`）で実アプリを起動し、変更が実際に動作することを人と一緒に確認する。lint/testなど機械的な検証だけで済ませず、UIやアプリの挙動に関わる変更では目視確認を省略しない。
 
 ## Issue起点の改善タスクの進め方
