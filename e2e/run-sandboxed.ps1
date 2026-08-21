@@ -74,10 +74,18 @@ try {
         $exePath = Join-Path $SandboxRoot "release\GrayBrowser.exe"
     }
     else {
-        Write-Host "Building debug (npm run build, then cargo build -p graybrowser)..."
+        Write-Host "Building debug (npm run build, then cargo build -p graybrowser --features tauri/custom-protocol)..."
         npm run build
         if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
-        cargo build -p graybrowser
+        # `tauri`'s own build.rs decides devUrl-vs-frontendDist purely from
+        # whether its `custom-protocol` feature is active in this build --
+        # unrelated to which command invoked cargo. A plain `cargo build`
+        # (no `custom-protocol`) compiles the binary to always dial the Vite
+        # dev server, which this script never starts, so the window shows
+        # WebView2's ERR_CONNECTION_REFUSED instead of the app (Issue #17).
+        # Passing the feature explicitly makes it load the `dist/` output
+        # from `npm run build` above, the same as a real `cargo tauri build`.
+        cargo build -p graybrowser --features tauri/custom-protocol
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
         $exePath = Join-Path $SandboxRoot "debug\graybrowser.exe"
     }
