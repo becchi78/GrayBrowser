@@ -37,11 +37,12 @@ function App() {
   // sidebar's own "フォルダ管理 ▸" link.
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
-  // TagBarEditDialog is reached only via the native menu ("ファイル > タグ
-  // バーの編集...") or TagBar's own "編集 ▸" link. tagBarRefreshKey mirrors
-  // `refreshKey`'s own role, scoped to just TagBar: bumped once the dialog
-  // saves a new pinned list, so TagBar re-fetches it (via its own
-  // `refreshKey` prop) without a full remount.
+  // TagBarEditDialog is reached only via the native menu ("タグ > タグ
+  // バーの編集..." -- its own top-level submenu, not nested under
+  // "ファイル", see lib.rs). tagBarRefreshKey mirrors `refreshKey`'s own
+  // role, scoped to just TagBar: bumped once the dialog saves a new pinned
+  // list, so TagBar re-fetches it (via its own `refreshKey` prop) without a
+  // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
@@ -90,12 +91,7 @@ function App() {
         />
       </div>
       <div className="header-row-filters" data-testid="header-row-filters">
-        <TagBar
-          selected={tagIds}
-          onChange={setTagIds}
-          refreshKey={tagBarRefreshKey}
-          onOpenEditDialog={() => setTagBarDialogOpen(true)}
-        />
+        <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
       </div>
       <div className="main-area">
         <FolderSidebar

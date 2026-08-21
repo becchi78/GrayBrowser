@@ -7,28 +7,28 @@ import type { TagDto } from "../types";
 interface Props {
   selected: number[];
   onChange: (tagIds: number[]) => void;
-  /** 編集モーダル保存後にparentがbumpする(FolderSidebarのrefreshKeyと同じ形。次フェーズで実際に使われる) */
+  /** 編集モーダル保存後にparentがbumpする(FolderSidebarのrefreshKeyと同じ形) */
   refreshKey?: number;
-  onOpenEditDialog: () => void;
 }
 
 // TagFilter.tsx（全タグを折り返し表示するフィルタ行）の後継。表示順序は
-// 固定: [すべて解除] [promoted...] [pinned...] [▾] [編集 ▸]。
+// 固定: [すべて解除] [promoted...] [pinned...] [▾]。常設タグの編集は
+// ネイティブメニュー「タグ > タグバーの編集...」からのみ開く
+// (src-tauri/src/lib.rsのMENU_ITEM_TAG_BAR_MANAGE参照) -- このバー自体には
+// 編集への導線は置かない。
 // promotedTagIds（選択したが未pinのタグ）専用stateは持たず、selectedと
 // pinnedTagIdsから毎レンダー導出する -- selectedから外れれば自動的に
 // promotedからも消えるので、二重管理・同期漏れの余地がない。
-export function TagBar({ selected, onChange, refreshKey, onOpenEditDialog }: Props) {
+export function TagBar({ selected, onChange, refreshKey }: Props) {
   const [allTags, setAllTags] = useState<TagDto[]>([]);
   const [pinnedTagIds, setPinnedTagIds] = useState<number[]>([]);
   const [windowInnerWidth, setWindowInnerWidth] = useState(() => window.innerWidth);
   const [chipWidthsPx, setChipWidthsPx] = useState<number[]>([]);
   const [clearAllWidthPx, setClearAllWidthPx] = useState(0);
-  const [editLinkWidthPx, setEditLinkWidthPx] = useState(0);
   const [overflowButtonWidthPx, setOverflowButtonWidthPx] = useState(0);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
   const clearAllRef = useRef<HTMLButtonElement>(null);
-  const editLinkRef = useRef<HTMLButtonElement>(null);
   const overflowProbeRef = useRef<HTMLButtonElement>(null);
   const measureRowRef = useRef<HTMLDivElement>(null);
 
@@ -120,9 +120,6 @@ export function TagBar({ selected, onChange, refreshKey, onOpenEditDialog }: Pro
     if (clearAllRef.current) {
       setClearAllWidthPx(clearAllRef.current.getBoundingClientRect().width);
     }
-    if (editLinkRef.current) {
-      setEditLinkWidthPx(editLinkRef.current.getBoundingClientRect().width);
-    }
     if (overflowProbeRef.current) {
       setOverflowButtonWidthPx(overflowProbeRef.current.getBoundingClientRect().width);
     }
@@ -136,14 +133,9 @@ export function TagBar({ selected, onChange, refreshKey, onOpenEditDialog }: Pro
     );
   }
 
-  // `computeVisibleChipCount`'s `clearAllWidthPx` parameter really just
-  // means "reserve this much space before the chips" -- folding the
-  // always-visible "編集 ▸" link's own width into it here reserves space for
-  // both always-present controls without changing that pure function's
-  // signature.
   const visibleCount = computeVisibleChipCount(
     windowInnerWidth,
-    clearAllWidthPx + editLinkWidthPx,
+    clearAllWidthPx,
     overflowButtonWidthPx,
     chipWidthsPx,
   );
@@ -157,35 +149,50 @@ export function TagBar({ selected, onChange, refreshKey, onOpenEditDialog }: Pro
 
   return (
     <div className="tag-bar" data-testid="tag-bar">
-      <button
-        type="button"
-        className="tag-bar-clear-all"
-        data-testid="tag-bar-clear-all"
-        ref={clearAllRef}
-        disabled={selected.length === 0}
-        onClick={() => onChange([])}
-      >
-        すべて解除
-      </button>
-      {displayedIds.map((id) => {
-        const tag = tagsById.get(id);
-        if (!tag) return null;
-        return (
-          <button
-            key={tag.id}
-            type="button"
-            className={
-              selected.includes(tag.id) ? "tag-bar-chip tag-bar-chip--active" : "tag-bar-chip"
-            }
-            title={tag.name}
-            onClick={() => toggle(tag.id)}
-            aria-pressed={selected.includes(tag.id)}
-            data-testid="tag-bar-chip"
-          >
-            {tag.name}
-          </button>
-        );
-      })}
+      {/* `.tag-bar-row` is the *only* element with `overflow: hidden` --
+          confirmed (real-machine repro + a minimal Edge-headless
+          before/after comparison) that giving that clip to `.tag-bar`
+          itself instead clips `.tag-bar-overflow-panel` below too: CSS
+          clips a descendant to its clipping ancestor's box regardless of
+          the descendant's own `position: absolute`, so a panel opening via
+          `top: 100%` off the bottom of a `.tag-bar`-scoped `overflow:
+          hidden` was always invisible, no matter how correct its own
+          `position`/`z-index`/React state was. Scoping the clip to just
+          this inner wrapper (which holds only the chip row, not the ▾
+          button/panel) keeps the "never wrap to a second line" safety net
+          (see this wrapper's own class in App.css) without clipping
+          anything that's meant to render outside the bar's own height. */}
+      <div className="tag-bar-row">
+        <button
+          type="button"
+          className="tag-bar-clear-all"
+          data-testid="tag-bar-clear-all"
+          ref={clearAllRef}
+          disabled={selected.length === 0}
+          onClick={() => onChange([])}
+        >
+          すべて解除
+        </button>
+        {displayedIds.map((id) => {
+          const tag = tagsById.get(id);
+          if (!tag) return null;
+          return (
+            <button
+              key={tag.id}
+              type="button"
+              className={
+                selected.includes(tag.id) ? "tag-bar-chip tag-bar-chip--active" : "tag-bar-chip"
+              }
+              title={tag.name}
+              onClick={() => toggle(tag.id)}
+              aria-pressed={selected.includes(tag.id)}
+              data-testid="tag-bar-chip"
+            >
+              {tag.name}
+            </button>
+          );
+        })}
+      </div>
       {overflowTags.length > 0 && (
         <div className="tag-bar-overflow">
           <button
@@ -225,15 +232,6 @@ export function TagBar({ selected, onChange, refreshKey, onOpenEditDialog }: Pro
           )}
         </div>
       )}
-      <button
-        type="button"
-        className="tag-bar-edit-link"
-        data-testid="tag-bar-edit-link"
-        ref={editLinkRef}
-        onClick={onOpenEditDialog}
-      >
-        編集 ▸
-      </button>
 
       {/* Hidden measurement row: real markup (same classes as the visible
           chips above, so `max-width`/ellipsis clamping is reflected in the

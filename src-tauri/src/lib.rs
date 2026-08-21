@@ -147,7 +147,7 @@ pub fn run() {
             );
             app.manage(watch_manager);
 
-            // Native menu bar. "ファイル" / "スタイル" /
+            // Native menu bar. "ファイル" / "タグ" / "スタイル" /
             // "ヘルプ" -- "表示" is deliberately not added yet (undecided).
             // Item clicks just emit a frontend event; the modals
             // themselves are handled by the frontend, so there's nothing
@@ -156,16 +156,24 @@ pub fn run() {
                 MenuItemBuilder::with_id(MENU_ITEM_FOLDER_MANAGE, "フォルダ管理...").build(app)?;
             let wb_import_item =
                 MenuItemBuilder::with_id(MENU_ITEM_WB_IMPORT, ".wbインポート...").build(app)?;
-            let tag_bar_manage_item =
-                MenuItemBuilder::with_id(MENU_ITEM_TAG_BAR_MANAGE, "タグバーの編集...")
-                    .build(app)?;
             let quit_item = PredefinedMenuItem::quit(app, Some("終了"))?;
             let file_menu = SubmenuBuilder::new(app, "ファイル")
                 .item(&folder_manage_item)
                 .item(&wb_import_item)
-                .item(&tag_bar_manage_item)
                 .separator()
                 .item(&quit_item)
+                .build()?;
+
+            // "タグ" -- its own top-level submenu (not nested under
+            // "ファイル") since it's not a file-management action; only one
+            // item exists today (the pinned-tags editor), but this gives
+            // future tag-related menu entries a home without further
+            // reshuffling "ファイル".
+            let tag_bar_manage_item =
+                MenuItemBuilder::with_id(MENU_ITEM_TAG_BAR_MANAGE, "タグバーの編集...")
+                    .build(app)?;
+            let tag_menu = SubmenuBuilder::new(app, "タグ")
+                .item(&tag_bar_manage_item)
                 .build()?;
 
             let style_default_item =
@@ -184,6 +192,7 @@ pub fn run() {
 
             let menu = MenuBuilder::new(app)
                 .item(&file_menu)
+                .item(&tag_menu)
                 .item(&style_menu)
                 .item(&help_menu)
                 .build()?;

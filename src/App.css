@@ -150,17 +150,37 @@ button:disabled {
   gap: 0.5em;
 }
 
-/* Single fixed-height row (unlike the old `.tag-filter`'s `flex-wrap: wrap`
-   + `max-height: 10vh` scroll area) -- position: relative anchors
-   `.tag-bar-overflow-panel`'s popover (same pattern as `.status-bar`
-   anchoring `.status-panel`). `overflow: hidden` is a safety net, not the
-   primary mechanism: TagBar.tsx's own `computeVisibleChipCount` measurement
-   is what decides how many chips actually render, so this only guards
-   against the 38px budget ever being broken by a measurement edge case
-   (see that component's own comment on the "▾ always-available" trade-off)
-   instead of silently wrapping to a second row. */
+/* Outer row: holds `.tag-bar-row` (the chip row, see below) and
+   `.tag-bar-overflow` (the ▾ toggle + its popover) side by side.
+   Deliberately does NOT have `overflow: hidden` itself -- see
+   `.tag-bar-row`'s own comment for why that clip must stay scoped to just
+   the chip row, not this element. */
 .tag-bar {
   position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.4em;
+  min-width: 0;
+}
+
+/* The chip row (「すべて解除」+ pinned/promoted chips) -- its own wrapper,
+   separate from `.tag-bar` itself, specifically so `overflow: hidden`
+   clips only this element's contents. `overflow: hidden` here is a safety
+   net, not the primary mechanism (TagBar.tsx's own `computeVisibleChipCount`
+   measurement is what decides how many chips actually render) -- it only
+   guards against the 38px row-height budget ever being broken by a
+   measurement edge case, instead of silently wrapping to a second row.
+   Real-machine repro (a minimal Edge-headless before/after comparison)
+   confirmed this same `overflow: hidden` on the *outer* `.tag-bar` used to
+   clip `.tag-bar-overflow-panel` too -- CSS clips a descendant to its
+   clipping ancestor's box regardless of the descendant's own `position:
+   absolute`, so a popover opening via `top: 100%` off the bottom of a
+   `.tag-bar`-scoped `overflow: hidden` was always invisible. `.tag-bar-
+   overflow` (the ▾ button/popover) is a *sibling* of this wrapper, not a
+   child, so it's never subject to this clip at all -- see TagBar.tsx's own
+   JSX structure comment. */
+.tag-bar-row {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
@@ -197,19 +217,6 @@ button:disabled {
   padding: 0.15em 0.6em;
   font-size: 0.8em;
   box-shadow: none;
-}
-
-/* `.folder-sidebar-manage-link`と同じ「トグルではなく別画面を開く導線」の
-   見た目(斜体・やや薄い)。TagBarEditDialog(常設タグの選択・並べ替え)を
-   開く入口 -- ネイティブメニュー「ファイル > タグバーの編集...」からも
-   同じダイアログを開ける(lib.rsのMENU_ITEM_TAG_BAR_MANAGE参照)。 */
-.tag-bar-edit-link {
-  flex-shrink: 0;
-  padding: 0.15em 0.6em;
-  font-size: 0.8em;
-  box-shadow: none;
-  font-style: italic;
-  opacity: 0.75;
 }
 
 .tag-bar-overflow {
