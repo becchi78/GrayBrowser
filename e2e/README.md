@@ -53,9 +53,13 @@ release ビルド（`npm run tauri build -- --no-bundle`、インストーラ生
 ./e2e/run-sandboxed.ps1 -Mode manual -Profile debug
 ```
 
-debug ビルド（`npm run build` → `cargo build -p graybrowser`）を作成し、
-アプリを起動する。ウィンドウを閉じるまでスクリプトは待機する。tauri-driver
-は起動しない。
+debug ビルド（`npm run build` → `cargo build -p graybrowser --features
+tauri/custom-protocol`）を作成し、アプリを起動する。`custom-protocol`
+featureを明示的に付与しない素の`cargo build`だと、Tauriが常にVite開発
+サーバー（`http://localhost:1420`）への接続を試みるようビルドされてしまい、
+このスクリプトはViteサーバーを起動しないためERR_CONNECTION_REFUSEDに
+なる（Issue #17）。ウィンドウを閉じるまでスクリプトは待機する。
+tauri-driverは起動しない。
 
 ### パラメータ
 
