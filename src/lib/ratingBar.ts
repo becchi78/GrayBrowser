@@ -2,14 +2,18 @@
 // 純粋関数/定数群。src/lib/tagBarLayout.ts・src/lib/sidebarResize.ts と同じ
 // パターン（コンポーネント側からimportして使う）。
 
-/** `<select>`の選択肢一覧。空文字列は「すべて表示」(フィルタなし)を表す。 */
+/**
+ * `<select>`の選択肢一覧。空文字列は「フィルタなし」を表し、ラベルは
+ * `StarRating`の入力用★列と同じ「★をN個並べる」表記に揃える(「N以上」の
+ * 文言を省き、★の個数自体がしきい値を表す)。
+ */
 export const RATING_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "すべて表示" },
-  { value: "1", label: "★1以上" },
-  { value: "2", label: "★2以上" },
-  { value: "3", label: "★3以上" },
-  { value: "4", label: "★4以上" },
-  { value: "5", label: "★5以上" },
+  { value: "", label: "ALL" },
+  { value: "1", label: "★" },
+  { value: "2", label: "★★" },
+  { value: "3", label: "★★★" },
+  { value: "4", label: "★★★★" },
+  { value: "5", label: "★★★★★" },
 ];
 
 /**
