@@ -10,7 +10,7 @@ Issue #`$1` に基づく改善タスクの着手手順を開始する。`.claude
 1. **読み込み**:
    - `gh issue view $1 --comments` で本文と全コメントを読む。
    - ラベル（カテゴリ: `bug`/`ux`/`test-infra`/`perf`/`documentation`、着手可否: `ready`/`blocked`）を確認する。`blocked` が付いている、または `ready` が付いていない場合は、その旨を明示してユーザーに続行してよいか確認する。
-   - Issueが参照指定している設計書（`doc/`配下）・関連資料を読む。
+   - Issueが参照指定している設計書（`docs/`配下）・関連資料を読む。
    - `CLAUDE.md`
 
 2. **現状確認**:
