@@ -13,7 +13,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 委譲を受けたら、まず以下を確認する。
 
 - `CLAUDE.md` — 技術スタック・コーディング規約・禁止事項
-- 委譲メッセージで指定された `doc/` 配下の設計書セクション（あれば）
+- 委譲メッセージで指定された `docs/` 配下の設計書セクション（あれば）
 - `.claude/skills/github-workflow/SKILL.md` — Git運用ルール
 
 ## 守るべき規約（CLAUDE.md より・違反しない）

@@ -1,6 +1,6 @@
 # `.wb` テストフィクスチャ
 
-旧WhiteBrowserの `.wb`（SQLite3）ファイルに関するテストフィクスチャ群。詳細な解析結果は [doc/wb-format.md](../../../doc/wb-format.md) を参照。
+旧WhiteBrowserの `.wb`（SQLite3）ファイルに関するテストフィクスチャ群。詳細な解析結果は [docs/wb-format.md](../../../docs/wb-format.md) を参照。
 
 ## `sample_small.wb`（コミット対象）
 

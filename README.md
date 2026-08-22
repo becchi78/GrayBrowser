@@ -77,11 +77,11 @@
 
 より詳しい使い方ガイドは、以下を順次追加予定です(準備中、リンク先は未作成):
 
-- [インストールと初期設定](doc/getting-started.md)(準備中)
-- [フォルダ登録・スキャンの詳細](doc/folder-scan.md)(準備中)
-- [タグ・レーティングの活用法](doc/tags-and-rating.md)(準備中)
-- [重複ファイルの管理](doc/duplicate-files.md)(準備中)
-- [旧WhiteBrowser(.wb)からの移行](doc/wb-import.md)(準備中)
+- [インストールと初期設定](docs/getting-started.md)(準備中)
+- [フォルダ登録・スキャンの詳細](docs/folder-scan.md)(準備中)
+- [タグ・レーティングの活用法](docs/tags-and-rating.md)(準備中)
+- [重複ファイルの管理](docs/duplicate-files.md)(準備中)
+- [旧WhiteBrowser(.wb)からの移行](docs/wb-import.md)(準備中)
 
 ## 開発者向けセットアップ
 

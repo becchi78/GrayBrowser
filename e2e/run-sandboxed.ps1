@@ -4,7 +4,7 @@
   に対して実行する。
 
 .DESCRIPTION
-  背景（doc/project-status.md 3.4節）: GB_APP_PATH 未設定のまま E2E / 実機確認
+  背景（`sandboxed-verification` スキル参照）: GB_APP_PATH 未設定のまま E2E / 実機確認
   を実行し、開発機の実データ（target/{debug,release}/GrayBrowser/app.db）に
   書き込みが発生する事故があった。このスクリプトは CARGO_TARGET_DIR を専用の
   サンドボックスディレクトリに切り替えてビルドすることで、既存の target/ には
@@ -52,8 +52,9 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 このスクリプトは Windows PowerShell 5.1 では実行できません（PowerShell 7 以上が必要です）。
 'pwsh' で実行し直してください（例: pwsh -File e2e\run-sandboxed.ps1）。
 GB_APP_PATH を手動で設定して回避しないでください。GB_APP_PATH は開発機の実データ
-（target/{debug,release}/GrayBrowser/app.db）への誤書き込み事故（doc/project-status.md
-3.4節）を防ぐための安全機構であり、手動設定はこの安全機構を無効化します。
+（target/{debug,release}/GrayBrowser/app.db）への誤書き込み事故（詳細は
+`sandboxed-verification` スキル参照）を防ぐための安全機構であり、手動設定はこの
+安全機構を無効化します。
 "@
     exit 1
 }

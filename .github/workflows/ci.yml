@@ -3,7 +3,7 @@ name: CI
 # PR時に自動実行するのはubuntu 1ジョブ（pr-checks）の最小CIのみ。
 # Windowsのフル検証（checks/build）とE2E（e2e）はworkflow_dispatchでの
 # 手動実行に限定する（Windowsランナーは単価が高いため）。ローカル検証は
-# 改訂後のdoc/git-workflow-rules.md R6に委ねる。
+# `github-workflow` スキルに委ねる。
 # checks/buildをworkflow_dispatch限定にした結果、push（main以外）で`if`が
 # 真になるジョブが1つも無くなったため、トップレベルのpushトリガー自体を
 # 削除している（ジョブが1つも走らない空のワークフロー実行を避けるため）。
@@ -21,8 +21,8 @@ jobs:
   # 0. PR時の最小CI（Issue #43）
   #
   # `.wb`トラックで`crates/gb-core/src/lib.rs`の`pub mod reconcile;`を実体
-  # 未コミットのまま巻き込みかけた事故（doc/git-workflow-rules.md R6の
-  # 存在理由）を、安価なubuntuランナーに機械的に検知させるための最小CI。
+  # 未コミットのまま巻き込みかけた事故を、安価なubuntuランナーに機械的に
+  # 検知させるための最小CI。
   # `gb-core`はOS非依存クレート（依存はxxhash-rust/blake3/thiserror/regex
   # の純粋クロスプラットフォームクレートのみ）なのでubuntu上でも検証でき、
   # 高価なWindowsランナー（checks/build/e2e、いずれもworkflow_dispatch
@@ -56,9 +56,9 @@ jobs:
 
       - name: cargo build (gb-core)
         # モジュール解決失敗（実体の無いpub mod宣言など）をclean checkout
-        # で機械的に検知するための明示ステップ。doc/git-workflow-rules.md
-        # 改訂後R6がRust変更時の検証コマンドとして明示している
-        # `cargo build -p gb-core`と同一のものをここに置く。
+        # で機械的に検知するための明示ステップ。`github-workflow`スキルが
+        # Rust変更時の検証コマンドとして明示している`cargo build -p gb-core`
+        # と同一のものをここに置く。
         run: cargo build -p gb-core --locked
 
       - name: cargo clippy (gb-core)
