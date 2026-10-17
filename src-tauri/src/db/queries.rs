@@ -219,12 +219,13 @@ pub fn get_video_properties(
 /// whose `file_path` falls *under* that folder (honoring folder boundaries,
 /// not a bare string prefix -- see `gb_core::paths::folder_like_prefix`'s
 /// doc comment for why a plain prefix match is wrong here) are returned.
-/// `min_rating` (the rating bar's filter) is a fifth, independently-ANDed
-/// filter: when `Some(n)`, only rows with `rating >= n` are returned. The
-/// frontend only ever sends `n >= 1` (there is no "show only unrated" mode),
-/// so unrated rows (`rating = 0`) are naturally excluded whenever this filter
-/// is active, with no special-casing needed here. An
-/// empty `search_terms`+`tag_ids`, `folder_path: None` and `min_rating: None`
+/// `rating` (the rating bar's filter) is a fifth, independently-ANDed
+/// filter: when `Some(n)`, only rows with `rating = n` exactly are returned
+/// (not "n or higher"). The frontend only ever sends `n >= 1` (there is no
+/// "show only unrated" mode), so unrated rows (`rating = 0`) are naturally
+/// excluded whenever this filter is active, with no special-casing needed
+/// here. An empty `search_terms`+`tag_ids`, `folder_path: None` and
+/// `rating: None`
 /// (the common "browse everything" case) degrades to the original unfiltered
 /// `list_videos` query this function replaces.
 pub fn list_videos_filtered(
@@ -234,7 +235,7 @@ pub fn list_videos_filtered(
     sort_direction: gb_core::sort::SortDirection,
     tag_ids: &[i64],
     folder_path: Option<&str>,
-    min_rating: Option<u8>,
+    rating: Option<u8>,
 ) -> anyhow::Result<Vec<VideoRow>> {
     let conn = pool.get()?;
 
@@ -269,9 +270,9 @@ pub fn list_videos_filtered(
         bound_params.push(Box::new(pattern));
     }
 
-    if let Some(min_rating) = min_rating {
-        clauses.push("rating >= ?".to_string());
-        bound_params.push(Box::new(min_rating as i64));
+    if let Some(rating) = rating {
+        clauses.push("rating = ?".to_string());
+        bound_params.push(Box::new(rating as i64));
     }
 
     let where_sql = if clauses.is_empty() {
