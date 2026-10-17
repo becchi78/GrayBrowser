@@ -471,3 +471,152 @@ fn search_and_tag_filter_combine() {
     );
     assert_eq!(ids, vec!["v1"]);
 }
+
+fn insert_at(conn: &Connection, id: &str, file_path: &str, file_size: i64, rating: i64) {
+    let file_name = file_path.rsplit('\\').next().unwrap();
+    conn.execute(
+        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, rating, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'hash', 'online', ?5, '2026-01-01 00:00:00')",
+        params![id, file_path, file_name, file_size, rating],
+    )
+    .unwrap();
+}
+
+fn list_filtered(
+    pool: &r2d2::Pool<SqliteConnectionManager>,
+    search: &str,
+    field: SortField,
+    direction: SortDirection,
+    tag_ids: &[i64],
+    folder: Option<&str>,
+    rating: Option<u8>,
+) -> Vec<String> {
+    let terms = gb_core::search::parse_search_terms(search);
+    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, folder, rating)
+        .unwrap()
+        .into_iter()
+        .map(|v| v.id)
+        .collect()
+}
+
+#[test]
+fn sort_by_file_size_orders_by_size_then_file_name() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        // Sizes are chosen so that string order ("10" < "9") differs from
+        // numeric order, and two rows share a size to exercise the tiebreak.
+        insert_at(&conn, "big", "D:\\videos\\m.mp4", 10_000_000_000, 0);
+        insert_at(&conn, "small", "D:\\videos\\n.mp4", 9, 0);
+        insert_at(&conn, "mid_b", "D:\\videos\\b.mp4", 500, 0);
+        insert_at(&conn, "mid_a", "D:\\videos\\z.mp4", 500, 0);
+        insert_at(&conn, "mid_c", "D:\\videos\\a.mp4", 500, 0);
+    }
+    let asc = list(
+        &db.read_pool,
+        "",
+        SortField::FileSize,
+        SortDirection::Asc,
+        &[],
+    );
+    assert_eq!(asc, vec!["small", "mid_c", "mid_b", "mid_a", "big"]);
+    // The tiebreak stays file_name ASC even when the size direction flips.
+    let desc = list(
+        &db.read_pool,
+        "",
+        SortField::FileSize,
+        SortDirection::Desc,
+        &[],
+    );
+    assert_eq!(desc, vec!["big", "mid_c", "mid_b", "mid_a", "small"]);
+}
+
+fn insert_folder_fixture(conn: &Connection) {
+    insert_at(conn, "root_z", "C:\\videos\\z.mp4", 1, 0);
+    insert_at(conn, "a_x", "C:\\videos\\a\\x.mp4", 1, 0);
+    insert_at(conn, "a_b", "C:\\videos\\a\\b.mp4", 1, 0);
+    insert_at(conn, "sub_c", "C:\\videos\\a\\sub\\c.mp4", 1, 0);
+    // Same folder name "a" under another drive: must not merge with C:\\videos\\a.
+    insert_at(conn, "d_a", "D:\\videos\\a\\a.mp4", 1, 0);
+}
+
+#[test]
+fn sort_by_folder_groups_by_full_directory_then_file_name() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_folder_fixture(&conn);
+    }
+    // Ordering by file_name alone would give d_a, a_b, sub_c, a_x, root_z, so
+    // this order can only come from the directory part.
+    let asc = list(
+        &db.read_pool,
+        "",
+        SortField::Folder,
+        SortDirection::Asc,
+        &[],
+    );
+    assert_eq!(asc, vec!["root_z", "a_b", "a_x", "sub_c", "d_a"]);
+    let desc = list(
+        &db.read_pool,
+        "",
+        SortField::Folder,
+        SortDirection::Desc,
+        &[],
+    );
+    assert_eq!(desc, vec!["d_a", "sub_c", "a_b", "a_x", "root_z"]);
+}
+
+#[test]
+fn new_sort_fields_combine_with_search_tag_folder_and_rating_filters() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_at(&conn, "keep_big", "C:\\videos\\a\\clip_b.mp4", 900, 4);
+        insert_at(&conn, "keep_small", "C:\\videos\\a\\clip_a.mp4", 100, 4);
+        insert_at(&conn, "keep_sub", "C:\\videos\\a\\sub\\clip_c.mp4", 500, 4);
+        insert_at(&conn, "other_rating", "C:\\videos\\a\\clip_d.mp4", 300, 2);
+        insert_at(&conn, "other_name", "C:\\videos\\a\\movie.mp4", 700, 4);
+        insert_at(&conn, "other_folder", "D:\\videos\\clip_e.mp4", 200, 4);
+    }
+    {
+        let mut conn = db.writer.lock().unwrap();
+        for id in [
+            "keep_big",
+            "keep_small",
+            "keep_sub",
+            "other_rating",
+            "other_folder",
+        ] {
+            queries::assign_tag_to_video(&mut conn, id, "fav").unwrap();
+        }
+        queries::assign_tag_to_video(&mut conn, "other_name", "else").unwrap();
+    }
+    let fav = {
+        let conn = db.writer.lock().unwrap();
+        conn.query_row("SELECT id FROM tags WHERE name = 'fav'", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap()
+    };
+    let by_size = list_filtered(
+        &db.read_pool,
+        "clip",
+        SortField::FileSize,
+        SortDirection::Desc,
+        &[fav],
+        Some("C:\\videos\\a"),
+        Some(4),
+    );
+    assert_eq!(by_size, vec!["keep_big", "keep_sub", "keep_small"]);
+    let by_folder = list_filtered(
+        &db.read_pool,
+        "clip",
+        SortField::Folder,
+        SortDirection::Desc,
+        &[fav],
+        Some("C:\\videos\\a"),
+        Some(4),
+    );
+    assert_eq!(by_folder, vec!["keep_sub", "keep_small", "keep_big"]);
+}

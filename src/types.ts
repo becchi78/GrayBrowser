@@ -39,7 +39,13 @@ export interface TagDto {
 // Mirrors src-tauri's SortFieldParam/SortDirectionParam (serde
 // rename_all = "snake_case") -- these are the only valid strings the
 // list_videos command accepts for sorting.
-export type SortField = "file_name" | "created_at" | "updated_date" | "rating";
+export type SortField =
+  | "file_name"
+  | "created_at"
+  | "updated_date"
+  | "rating"
+  | "file_size"
+  | "folder";
 export type SortDirection = "asc" | "desc";
 
 export interface VideoPropertiesDto {

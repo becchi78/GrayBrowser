@@ -5,6 +5,7 @@
 //! Policy: an index not shown to be
 //! used here must not ship in 0005_add_sort_indexes.sql.
 
+use gb_core::sort::{order_by_clause, SortDirection, SortField};
 use graybrowser_lib::db;
 use rusqlite::{params, Connection};
 
@@ -121,5 +122,26 @@ fn sort_by_mtime_with_nulls_pinned_last() {
             first_null > last_non_null,
             "all NULL mtimes must sort after every non-NULL mtime"
         );
+    }
+}
+
+/// "ファイルサイズ" and "フォルダ名" have no index: the plan is recorded here
+/// (both fall back to a full scan + temp b-tree sort) using the exact clause
+/// production builds, so whether an index is warranted is decided from the
+/// measured cost in `search_performance_bench.rs`, not assumed.
+#[test]
+fn sort_by_file_size_and_folder_plans_are_recorded() {
+    let (_dir, db) = init_temp_db_with_rows();
+    let conn = db.writer.lock().unwrap();
+    for field in [SortField::FileSize, SortField::Folder] {
+        for direction in [SortDirection::Asc, SortDirection::Desc] {
+            let clause = order_by_clause(field, direction);
+            let plan = query_plan(&conn, &format!("SELECT id FROM videos ORDER BY {clause}"));
+            assert!(
+                plan.contains("USE TEMP B-TREE FOR ORDER BY"),
+                "expected no index to back ORDER BY {clause}, got plan:
+{plan}"
+            );
+        }
     }
 }

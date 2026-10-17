@@ -15,6 +15,10 @@ pub enum SortField {
     /// concept at all.
     UpdatedDate,
     Rating,
+    FileSize,
+    /// The directory part of `file_path` (everything up to and including the
+    /// last separator), so same-named folders in different places stay apart.
+    Folder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +49,15 @@ pub fn order_by_clause(field: SortField, direction: SortDirection) -> String {
         SortField::CreatedAt => format!("created_at {dir}"),
         SortField::Rating => format!("rating {dir}"),
         SortField::UpdatedDate => format!("mtime IS NULL, mtime {dir}"),
+        // Many rows share a size or a folder, so `file_name` breaks ties to keep
+        // the order stable between refreshes.
+        SortField::FileSize => format!("file_size {dir}, file_name ASC"),
+        // `file_name` is always the tail of `file_path`, so dropping its length
+        // leaves the directory part without depending on the separator character
+        // (SQLite has no reverse-index string function).
+        SortField::Folder => format!(
+            "substr(file_path, 1, length(file_path) - length(file_name)) {dir}, file_name ASC"
+        ),
     }
 }
 
@@ -97,6 +110,30 @@ mod tests {
         assert_eq!(
             order_by_clause(SortField::UpdatedDate, SortDirection::Desc),
             "mtime IS NULL, mtime DESC"
+        );
+    }
+
+    #[test]
+    fn file_size_asc_and_desc_break_ties_by_file_name() {
+        assert_eq!(
+            order_by_clause(SortField::FileSize, SortDirection::Asc),
+            "file_size ASC, file_name ASC"
+        );
+        assert_eq!(
+            order_by_clause(SortField::FileSize, SortDirection::Desc),
+            "file_size DESC, file_name ASC"
+        );
+    }
+
+    #[test]
+    fn folder_asc_and_desc_sort_by_directory_part_then_file_name() {
+        assert_eq!(
+            order_by_clause(SortField::Folder, SortDirection::Asc),
+            "substr(file_path, 1, length(file_path) - length(file_name)) ASC, file_name ASC"
+        );
+        assert_eq!(
+            order_by_clause(SortField::Folder, SortDirection::Desc),
+            "substr(file_path, 1, length(file_path) - length(file_name)) DESC, file_name ASC"
         );
     }
 }
