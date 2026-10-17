@@ -144,7 +144,7 @@ pub fn run() {
             thumbnail::enqueue_missing_thumbnails(
                 db.clone(),
                 thumbnails_root.clone(),
-                queue,
+                queue.clone(),
                 std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                 std::sync::Arc::clone(&notifier),
             );
@@ -175,7 +175,31 @@ pub fn run() {
             // folder by drive type and is re-invoked (with the manager kept
             // alive across calls) whenever `pick_watch_folders` changes the
             // folder list -- see commands::settings_cmds::pick_watch_folders.
-            let watch_manager = watch::RealtimeWatchManager::default();
+            //
+            // Files the watchers/pollers register arrive with no thumbnail or
+            // metadata; the follow-up re-runs the same enqueue pair a scan
+            // does, once the burst of registrations settles.
+            let follow_up = {
+                let db = db.clone();
+                let thumbnails_root = thumbnails_root.clone();
+                let queue = queue.clone();
+                let notifier = std::sync::Arc::clone(&notifier);
+                std::sync::Arc::new(watch::follow_up::FollowUp::new(move || {
+                    thumbnail::enqueue_missing_thumbnails(
+                        db.clone(),
+                        thumbnails_root.clone(),
+                        queue.clone(),
+                        std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
+                        std::sync::Arc::clone(&notifier),
+                    );
+                    metadata::enqueue_missing_metadata_probes(
+                        db.clone(),
+                        std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
+                        std::sync::Arc::clone(&notifier),
+                    );
+                }))
+            };
+            let watch_manager = watch::RealtimeWatchManager::with_follow_up(follow_up);
             let (watch_folders, nas_poll_interval_secs) = {
                 let conn = db.read_pool.get()?;
                 (

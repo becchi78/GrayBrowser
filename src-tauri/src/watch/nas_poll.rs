@@ -22,6 +22,7 @@ use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
 use crate::scan::{self, mtime_from_metadata};
+use crate::watch::follow_up::FollowUp;
 
 /// How often `start_nas_polling`'s loop checks its stop flag while waiting
 /// for the next full `interval` to elapse -- bounds `NasPollHandle::stop`'s
@@ -63,12 +64,18 @@ const STOP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// inside the OS -- that is a structural limit of cooperative
 /// (flag-checking) cancellation, accepted in favor of not
 /// adding a second timeout-supervision thread.
+///
+/// Despite the NAS naming, this is the shared cheap diff-scan: local and
+/// removable folders also run it once per `reconfigure` (see
+/// `start_one_shot_diff_scan`) to pick up files added while the app was not
+/// running, which `notify` cannot report.
 pub fn run_nas_diff_scan(
     db: &Db,
     thumbnails_root: &Path,
     folder: &str,
     stop_flag: &AtomicBool,
     notifier: &dyn CatalogNotifier,
+    follow_up: &FollowUp,
 ) -> anyhow::Result<()> {
     if std::fs::read_dir(long_path::to_long_path(Path::new(folder))).is_err() {
         log::warn!("NAS root unreachable this cycle, skipping: {folder}");
@@ -158,7 +165,10 @@ pub fn run_nas_diff_scan(
                             scan::ProcessOutcome::Registered
                             | scan::ProcessOutcome::Reconciled
                             | scan::ProcessOutcome::PathFollowed { .. },
-                        ) => notifier.notify_changed(),
+                        ) => {
+                            notifier.notify_changed();
+                            follow_up.trigger();
+                        }
                         // Same reasoning as watch::handle_watch_event: the
                         // remaining outcomes (Unchanged shouldn't occur here
                         // given the classification check above,
@@ -256,6 +266,11 @@ impl NasPollHandle {
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
     }
+
+    #[cfg(test)]
+    pub(crate) fn stop_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop_flag)
+    }
 }
 
 /// Spawns a background thread that runs `run_nas_diff_scan` once
@@ -273,14 +288,20 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     folder: String,
     interval: Duration,
     notifier: Arc<N>,
+    follow_up: Arc<FollowUp>,
 ) -> NasPollHandle {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop_flag);
 
     thread::spawn(move || {
-        if let Err(err) =
-            run_nas_diff_scan(&db, &thumbnails_root, &folder, &flag, notifier.as_ref())
-        {
+        if let Err(err) = run_nas_diff_scan(
+            &db,
+            &thumbnails_root,
+            &folder,
+            &flag,
+            notifier.as_ref(),
+            &follow_up,
+        ) {
             log::error!("NAS diff scan failed for {folder}: {err}");
         }
 
@@ -293,9 +314,14 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
                 if flag.load(Ordering::SeqCst) {
                     break;
                 }
-                if let Err(err) =
-                    run_nas_diff_scan(&db, &thumbnails_root, &folder, &flag, notifier.as_ref())
-                {
+                if let Err(err) = run_nas_diff_scan(
+                    &db,
+                    &thumbnails_root,
+                    &folder,
+                    &flag,
+                    notifier.as_ref(),
+                    &follow_up,
+                ) {
                     log::error!("NAS diff scan failed for {folder}: {err}");
                 }
             }
@@ -303,4 +329,99 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     });
 
     NasPollHandle { stop_flag }
+}
+
+/// Runs `run_nas_diff_scan` once on a background thread, without the periodic
+/// repeat. Used for local/removable folders, where `notify` covers changes
+/// while the app runs but not files added while it was closed. Cheap because
+/// unchanged files are filtered by mtime/size; the caller starts this after
+/// registering the realtime watch so no change falls into the gap between the
+/// scan's walk and the watch becoming active.
+pub fn start_one_shot_diff_scan<N: CatalogNotifier + 'static>(
+    db: Db,
+    thumbnails_root: PathBuf,
+    folder: String,
+    notifier: Arc<N>,
+    follow_up: Arc<FollowUp>,
+) -> NasPollHandle {
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop_flag);
+
+    thread::spawn(move || {
+        if let Err(err) = run_nas_diff_scan(
+            &db,
+            &thumbnails_root,
+            &folder,
+            &flag,
+            notifier.as_ref(),
+            &follow_up,
+        ) {
+            log::error!("startup diff scan failed for {folder}: {err}");
+        }
+    });
+
+    NasPollHandle { stop_flag }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+    use crate::events::FakeCatalogNotifier;
+
+    #[test]
+    fn diff_scan_triggers_follow_up_for_a_new_file() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("movie.mp4"), b"bytes").unwrap();
+        // Quiet period far longer than the test so the worker never consumes
+        // the pending flag before it is asserted.
+        let follow_up =
+            FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {});
+
+        run_nas_diff_scan(
+            &db,
+            thumbs_root.path(),
+            &dir.path().to_string_lossy(),
+            &AtomicBool::new(false),
+            &FakeCatalogNotifier::default(),
+            &follow_up,
+        )
+        .unwrap();
+
+        assert!(follow_up.has_pending());
+    }
+
+    #[test]
+    fn diff_scan_does_not_trigger_follow_up_when_nothing_changed() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("movie.mp4"), b"bytes").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        run_nas_diff_scan(
+            &db,
+            thumbs_root.path(),
+            &folder,
+            &AtomicBool::new(false),
+            &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
+        )
+        .unwrap();
+
+        let follow_up =
+            FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {});
+        run_nas_diff_scan(
+            &db,
+            thumbs_root.path(),
+            &folder,
+            &AtomicBool::new(false),
+            &FakeCatalogNotifier::default(),
+            &follow_up,
+        )
+        .unwrap();
+
+        assert!(!follow_up.has_pending());
+    }
 }

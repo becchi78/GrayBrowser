@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use graybrowser_lib::db;
 use graybrowser_lib::events::FakeCatalogNotifier;
+use graybrowser_lib::watch::follow_up::FollowUp;
 use graybrowser_lib::watch::nas_poll::{run_nas_diff_scan, start_nas_polling};
 
 fn init_temp_db() -> (tempfile::TempDir, db::Db) {
@@ -54,6 +55,7 @@ fn registers_new_files_found_on_the_simulated_nas() {
         &nas_dir.path().to_string_lossy(),
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -81,6 +83,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     let quick_hash_before: String = {
@@ -95,6 +98,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     let (quick_hash_after, count): (String, i64) = {
@@ -131,6 +135,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     fs::remove_file(&video_path).unwrap();
@@ -140,6 +145,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -179,6 +185,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     fs::remove_file(&paths[0]).unwrap();
@@ -188,6 +195,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -227,6 +235,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -240,6 +249,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -272,6 +282,7 @@ fn stop_returns_almost_immediately_regardless_of_the_poller_thread() {
         folder,
         Duration::from_secs(600),
         Arc::new(FakeCatalogNotifier::default()),
+        Arc::new(FollowUp::noop()),
     );
     // Let the background thread actually get going before measuring --
     // this test is about stop()'s own latency, not thread-startup latency.
@@ -303,6 +314,7 @@ fn a_pre_set_stop_flag_prevents_any_processing_this_cycle() {
         &folder,
         &AtomicBool::new(true),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -334,6 +346,7 @@ fn run_nas_diff_scan_notifies_when_a_new_file_is_registered() {
         &folder,
         &AtomicBool::new(false),
         &notifier,
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -354,6 +367,7 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -364,6 +378,7 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
         &folder,
         &AtomicBool::new(false),
         &notifier,
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -393,6 +408,7 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     fs::remove_file(&paths[0]).unwrap();
@@ -404,6 +420,7 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
         &folder,
         &AtomicBool::new(false),
         &notifier,
+        &FollowUp::noop(),
     )
     .unwrap();
 
@@ -428,6 +445,7 @@ fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
         &folder,
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
+        &FollowUp::noop(),
     )
     .unwrap();
     drop(nas_dir);
@@ -439,6 +457,7 @@ fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
         &folder,
         &AtomicBool::new(false),
         &notifier,
+        &FollowUp::noop(),
     )
     .unwrap();
 
