@@ -7,6 +7,7 @@ import {
   playVideo,
   refreshDuplicateGroups,
 } from "../api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { onDedupUpdated } from "../events";
 import { fileDeleteDisabledReason } from "../lib/duplicateDelete";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
@@ -18,6 +19,11 @@ const KIND_LABELS: Record<DuplicateGroupKind, string> = {
   path_collision_confirmed: "パス衝突・内容確認済み",
   path_collision_unconfirmed: "パス衝突・内容未確認",
 };
+
+interface PendingAction {
+  kind: "unregister" | "file";
+  member: DuplicateGroupMember;
+}
 
 interface Props {
   refreshKey: number;
@@ -35,6 +41,9 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [fileDeleteErrors, setFileDeleteErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     listDuplicateGroups().then(setGroups).catch(console.error);
@@ -64,21 +73,42 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
     }
   }
 
-  async function handleDelete(member: DuplicateGroupMember) {
-    const confirmed = window.confirm(
-      "このカタログ登録を解除しますか？\n" +
-        "※元の動画ファイルは削除されません。カタログへの登録のみ解除されます。",
-    );
-    if (!confirmed) {
+  // 確認が済むまでバックエンドを呼ばないため、操作はいったん state に
+  // 保留し、確認モーダルの確定ボタンでだけ実行する。window.confirm は
+  // 使えない（ConfirmDialog の冒頭コメント参照）。
+  async function runPendingAction() {
+    if (!pending || busy) {
       return;
     }
+    const { kind, member } = pending;
+    setBusy(true);
     try {
-      await deleteDuplicateVideo(member.video_id);
+      if (kind === "unregister") {
+        await deleteDuplicateVideo(member.video_id);
+      } else {
+        await deleteDuplicateVideoAndFile(member.video_id);
+      }
       removeMemberFromGroups(member.video_id);
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      if (kind === "unregister") {
+        setError(String(e));
+      } else {
+        setFileDeleteErrors((prev) => ({ ...prev, [member.video_id]: String(e) }));
+      }
+    } finally {
+      setBusy(false);
+      setPending(null);
     }
+  }
+
+  function requestFileDelete(member: DuplicateGroupMember) {
+    setFileDeleteErrors((prev) => {
+      const next = { ...prev };
+      delete next[member.video_id];
+      return next;
+    });
+    setPending({ kind: "file", member });
   }
 
   function removeMemberFromGroups(videoId: string) {
@@ -92,21 +122,6 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
     );
   }
 
-  // 失敗は呼び出し元の行に表示させるため、ここでは握りつぶさず投げ直す。
-  async function handleDeleteFile(member: DuplicateGroupMember) {
-    const confirmed = window.confirm(
-      "この動画ファイルをゴミ箱に移動し、カタログからも削除しますか？\n\n" +
-        `ファイル名: ${member.file_name}\n` +
-        `パス: ${member.file_path}\n\n` +
-        "ゴミ箱に移動します（ゴミ箱から元に戻せます）。",
-    );
-    if (!confirmed) {
-      return;
-    }
-    await deleteDuplicateVideoAndFile(member.video_id);
-    removeMemberFromGroups(member.video_id);
-  }
-
   const totalMembers = groups.reduce((sum, g) => sum + g.members.length, 0);
 
   useEffect(() => {
@@ -116,6 +131,13 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
     // local delete) caused it. `onCountChange` is always a stable
     // useState setter passed by StatusBar.
   }, [totalMembers, onCountChange]);
+
+  // パネルを閉じたまま保留中の確認だけが残らないようにする。
+  useEffect(() => {
+    if (!open && !busy) {
+      setPending(null);
+    }
+  }, [open, busy]);
 
   if (!open) {
     return null;
@@ -137,24 +159,59 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
             <DuplicateGroupItem
               key={index}
               group={group}
-              onDelete={handleDelete}
-              onDeleteFile={handleDeleteFile}
+              busy={busy}
+              fileDeleteErrors={fileDeleteErrors}
+              onDelete={(member) => setPending({ kind: "unregister", member })}
+              onDeleteFile={requestFileDelete}
             />
           ))}
         </ul>
       )}
+      <ConfirmDialog
+        open={pending !== null}
+        title={pending?.kind === "file" ? "ファイルも削除" : "登録解除"}
+        confirmLabel={pending?.kind === "file" ? "ゴミ箱に移動して削除" : "登録を解除する"}
+        danger={pending?.kind === "file"}
+        busy={busy}
+        onConfirm={runPendingAction}
+        onCancel={() => setPending(null)}
+      >
+        {pending?.kind === "file" && (
+          <>
+            <p>この動画ファイルをゴミ箱に移動し、カタログからも削除します。</p>
+            <p>
+              <strong>ファイル名:</strong> {pending.member.file_name}
+            </p>
+            <p className="confirm-dialog-path">{pending.member.file_path}</p>
+            <p>ゴミ箱に移動します（ゴミ箱から元に戻せます）。</p>
+          </>
+        )}
+        {pending?.kind === "unregister" && (
+          <>
+            <p>このカタログ登録を解除します。</p>
+            <p className="confirm-dialog-path">{pending.member.file_path}</p>
+            <p>
+              元の動画ファイルは削除されません。GrayBrowser上のタグ・評価などカタログの情報は失われます。
+            </p>
+          </>
+        )}
+      </ConfirmDialog>
     </section>
   );
 }
 
 function DuplicateGroupItem({
   group,
+  busy,
+  fileDeleteErrors,
   onDelete,
   onDeleteFile,
 }: {
   group: DuplicateGroup;
+  busy: boolean;
+  fileDeleteErrors: Record<string, string>;
   onDelete: (member: DuplicateGroupMember) => void;
-  onDeleteFile: (member: DuplicateGroupMember) => Promise<void>;
+  onDeleteFile: (member: DuplicateGroupMember) => void;
 }) {
   // 登録日時の古い順に並べる。先に登録された方が「元」である可能性が高く、
   // 毎回同じ順序で並ぶので見比べるときに位置が入れ替わらない。
@@ -176,6 +233,8 @@ function DuplicateGroupItem({
             member={member}
             diff={diff}
             fileDeleteDisabledReason={fileDeleteDisabledReason(member, group)}
+            busy={busy}
+            deleteFileError={fileDeleteErrors[member.video_id] ?? null}
             onDelete={() => onDelete(member)}
             onDeleteFile={() => onDeleteFile(member)}
           />
@@ -193,34 +252,22 @@ function DuplicateGroupMemberRow({
   member,
   diff,
   fileDeleteDisabledReason,
+  busy,
+  deleteFileError,
   onDelete,
   onDeleteFile,
 }: {
   member: DuplicateGroupMember;
   diff: DuplicateDiff;
   fileDeleteDisabledReason: string | null;
+  busy: boolean;
+  deleteFileError: string | null;
   onDelete: () => void;
-  onDeleteFile: () => Promise<void>;
+  onDeleteFile: () => void;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
-  const [deleteFileError, setDeleteFileError] = useState<string | null>(null);
-  // 二重実行を防ぐ。成功すると行ごと消えるが、失敗・取消では解除が必要。
-  const [deletingFile, setDeletingFile] = useState(false);
   const isOffline = member.status === "offline";
-
-  async function handleDeleteFile() {
-    setDeleteFileError(null);
-    setDeletingFile(true);
-    try {
-      await onDeleteFile();
-    } catch (e) {
-      console.error(e);
-      setDeleteFileError(String(e));
-    } finally {
-      setDeletingFile(false);
-    }
-  }
 
   async function handlePlay() {
     if (isOffline) return;
@@ -324,18 +371,18 @@ function DuplicateGroupMemberRow({
         type="button"
         className="duplicate-group-member-delete"
         onClick={onDelete}
-        disabled={deletingFile}
+        disabled={busy}
       >
         登録解除
       </button>
       <button
         type="button"
         className="duplicate-group-member-delete-file"
-        onClick={handleDeleteFile}
-        disabled={fileDeleteDisabledReason !== null || deletingFile}
+        onClick={onDeleteFile}
+        disabled={fileDeleteDisabledReason !== null || busy}
         title="ファイルをゴミ箱に移動し、カタログからも削除します"
       >
-        {deletingFile ? "削除中..." : "ファイルも削除"}
+        ファイルも削除
       </button>
     </li>
   );

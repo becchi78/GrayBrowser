@@ -1449,6 +1449,27 @@ button.search-box-clear {
   overflow-wrap: anywhere;
 }
 
+.confirm-dialog-body p {
+  margin: 0 0 0.5em;
+}
+
+.confirm-dialog-path {
+  font-family: monospace;
+  font-size: 0.9em;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-confirm--danger {
+  color: #ffffff;
+  background-color: #b00020;
+  border-color: #b00020;
+}
+
+.confirm-dialog-confirm--danger:disabled {
+  opacity: 0.6;
+}
+
 .wb-import-dialog-row {
   display: flex;
   align-items: center;
@@ -1700,6 +1721,11 @@ button.search-box-clear {
   .dialog {
     background-color: #2f2f2f;
     color: #f6f6f6;
+  }
+
+  .confirm-dialog-confirm--danger {
+    background-color: #c0392b;
+    border-color: #c0392b;
   }
 
   .wb-import-result-success {
