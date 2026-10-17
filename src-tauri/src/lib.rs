@@ -302,6 +302,7 @@ pub fn run() {
             commands::scan_cmds::list_skipped_files,
             commands::thumbnail_cmds::toggle_thumbnail_pause,
             commands::thumbnail_cmds::get_thumbnails,
+            commands::thumbnail_cmds::get_thumbnail_progress,
             commands::player_cmds::play_video,
             commands::tag_cmds::assign_tag,
             commands::tag_cmds::remove_tag,

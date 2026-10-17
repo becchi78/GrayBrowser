@@ -12,6 +12,27 @@ pub fn toggle_thumbnail_pause(queue: State<ThumbnailQueueHandle>, paused: bool) 
     queue.set_paused(paused);
 }
 
+#[derive(serde::Serialize)]
+pub struct ThumbnailProgressDto {
+    pub done: u32,
+    pub total: u32,
+}
+
+/// Current generation progress, for the status bar to read once on mount:
+/// the startup queue can begin emitting before the frontend subscribes.
+#[tauri::command]
+pub fn get_thumbnail_progress(queue: State<ThumbnailQueueHandle>) -> ThumbnailProgressDto {
+    progress_dto(&queue)
+}
+
+fn progress_dto(queue: &ThumbnailQueueHandle) -> ThumbnailProgressDto {
+    let s = queue.progress_snapshot();
+    ThumbnailProgressDto {
+        done: s.done,
+        total: s.total,
+    }
+}
+
 /// Reads all 6 `thumbnails/<folder-subdir>/[video_id]_0..5.webp` files and
 /// returns them as `data:` URLs (in slot order), or `None` if even one of
 /// the 6 hasn't been generated yet (or `video_id` doesn't resolve to a known

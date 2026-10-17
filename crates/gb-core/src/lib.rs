@@ -18,6 +18,7 @@ pub mod search;
 pub mod sort;
 pub mod tags;
 pub mod thumbnail_policy;
+pub mod thumbnail_progress;
 pub mod watch_folders;
 pub mod wb_anonymize;
 pub mod wb_import;
