@@ -1124,8 +1124,25 @@ button.search-box-clear {
 }
 
 .duplicate-group-member-delete,
+.duplicate-group-member-delete-file,
 .duplicate-group-member-play {
   flex-shrink: 0;
+}
+
+/* ファイルを実際に消す操作。「登録解除」と取り違えて誤クリックしないよう、
+   赤系の見た目にして左に余白を取り、離して置く。 */
+.duplicate-group-member-delete-file {
+  margin-left: 1em;
+  color: #b00020;
+  border-color: #b00020;
+  font-weight: bold;
+}
+
+.duplicate-group-member-delete-file:disabled {
+  color: inherit;
+  border-color: transparent;
+  font-weight: normal;
+  opacity: 0.5;
 }
 
 /* サムネイルのクリックで再生できることを示す。オフラインのメンバーには
@@ -1606,6 +1623,16 @@ button.search-box-clear {
 
   .duplicate-group {
     border-color: #555;
+  }
+
+  .duplicate-group-member-delete-file {
+    color: #f3caca;
+    border-color: #c75a6a;
+  }
+
+  .duplicate-group-member-delete-file:disabled {
+    color: inherit;
+    border-color: transparent;
   }
 
   .duplicate-group-member-diff {

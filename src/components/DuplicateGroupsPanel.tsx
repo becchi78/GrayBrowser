@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   deleteDuplicateVideo,
+  deleteDuplicateVideoAndFile,
   getThumbnails,
   listDuplicateGroups,
   playVideo,
   refreshDuplicateGroups,
 } from "../api";
 import { onDedupUpdated } from "../events";
+import { fileDeleteDisabledReason } from "../lib/duplicateDelete";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
@@ -72,18 +74,37 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
     }
     try {
       await deleteDuplicateVideo(member.video_id);
-      setGroups((prev) =>
-        prev
-          .map((g) => ({
-            ...g,
-            members: g.members.filter((m) => m.video_id !== member.video_id),
-          }))
-          .filter((g) => g.members.length > 0),
-      );
+      removeMemberFromGroups(member.video_id);
     } catch (e) {
       console.error(e);
       setError(String(e));
     }
+  }
+
+  function removeMemberFromGroups(videoId: string) {
+    setGroups((prev) =>
+      prev
+        .map((g) => ({
+          ...g,
+          members: g.members.filter((m) => m.video_id !== videoId),
+        }))
+        .filter((g) => g.members.length > 0),
+    );
+  }
+
+  // 失敗は呼び出し元の行に表示させるため、ここでは握りつぶさず投げ直す。
+  async function handleDeleteFile(member: DuplicateGroupMember) {
+    const confirmed = window.confirm(
+      "この動画ファイルをゴミ箱に移動し、カタログからも削除しますか？\n\n" +
+        `ファイル名: ${member.file_name}\n` +
+        `パス: ${member.file_path}\n\n` +
+        "ゴミ箱に移動します（ゴミ箱から元に戻せます）。",
+    );
+    if (!confirmed) {
+      return;
+    }
+    await deleteDuplicateVideoAndFile(member.video_id);
+    removeMemberFromGroups(member.video_id);
   }
 
   const totalMembers = groups.reduce((sum, g) => sum + g.members.length, 0);
@@ -117,6 +138,7 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
               key={index}
               group={group}
               onDelete={handleDelete}
+              onDeleteFile={handleDeleteFile}
             />
           ))}
         </ul>
@@ -128,9 +150,11 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
 function DuplicateGroupItem({
   group,
   onDelete,
+  onDeleteFile,
 }: {
   group: DuplicateGroup;
   onDelete: (member: DuplicateGroupMember) => void;
+  onDeleteFile: (member: DuplicateGroupMember) => Promise<void>;
 }) {
   // 登録日時の古い順に並べる。先に登録された方が「元」である可能性が高く、
   // 毎回同じ順序で並ぶので見比べるときに位置が入れ替わらない。
@@ -151,7 +175,9 @@ function DuplicateGroupItem({
             key={member.video_id}
             member={member}
             diff={diff}
+            fileDeleteDisabledReason={fileDeleteDisabledReason(member, group)}
             onDelete={() => onDelete(member)}
+            onDeleteFile={() => onDeleteFile(member)}
           />
         ))}
       </ul>
@@ -166,15 +192,35 @@ function diffClass(differs: boolean): string | undefined {
 function DuplicateGroupMemberRow({
   member,
   diff,
+  fileDeleteDisabledReason,
   onDelete,
+  onDeleteFile,
 }: {
   member: DuplicateGroupMember;
   diff: DuplicateDiff;
+  fileDeleteDisabledReason: string | null;
   onDelete: () => void;
+  onDeleteFile: () => Promise<void>;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
+  const [deleteFileError, setDeleteFileError] = useState<string | null>(null);
+  // 二重実行を防ぐ。成功すると行ごと消えるが、失敗・取消では解除が必要。
+  const [deletingFile, setDeletingFile] = useState(false);
   const isOffline = member.status === "offline";
+
+  async function handleDeleteFile() {
+    setDeleteFileError(null);
+    setDeletingFile(true);
+    try {
+      await onDeleteFile();
+    } catch (e) {
+      console.error(e);
+      setDeleteFileError(String(e));
+    } finally {
+      setDeletingFile(false);
+    }
+  }
 
   async function handlePlay() {
     if (isOffline) return;
@@ -259,6 +305,12 @@ function DuplicateGroupMemberRow({
           <span className="duplicate-group-member-play-note">オフラインのため再生できません</span>
         )}
         {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
+        {fileDeleteDisabledReason && (
+          <span className="duplicate-group-member-play-note">{fileDeleteDisabledReason}</span>
+        )}
+        {deleteFileError && (
+          <span className="duplicate-group-member-play-error">{deleteFileError}</span>
+        )}
       </div>
       <button
         type="button"
@@ -268,8 +320,22 @@ function DuplicateGroupMemberRow({
       >
         再生
       </button>
-      <button type="button" className="duplicate-group-member-delete" onClick={onDelete}>
+      <button
+        type="button"
+        className="duplicate-group-member-delete"
+        onClick={onDelete}
+        disabled={deletingFile}
+      >
         登録解除
+      </button>
+      <button
+        type="button"
+        className="duplicate-group-member-delete-file"
+        onClick={handleDeleteFile}
+        disabled={fileDeleteDisabledReason !== null || deletingFile}
+        title="ファイルをゴミ箱に移動し、カタログからも削除します"
+      >
+        {deletingFile ? "削除中..." : "ファイルも削除"}
       </button>
     </li>
   );

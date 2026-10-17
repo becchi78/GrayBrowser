@@ -96,6 +96,8 @@ export const listDuplicateGroups = () => invoke<DuplicateGroup[]>("list_duplicat
 export const refreshDuplicateGroups = () => invoke<void>("refresh_duplicate_groups");
 export const deleteDuplicateVideo = (videoId: string) =>
   invoke<void>("delete_duplicate_video", { videoId });
+export const deleteDuplicateVideoAndFile = (videoId: string) =>
+  invoke<void>("delete_duplicate_video_and_file", { videoId });
 export const listGenerationFailures = () =>
   invoke<GenerationFailuresDto>("list_generation_failures");
 export const retryThumbnailGeneration = (videoId: string) =>
