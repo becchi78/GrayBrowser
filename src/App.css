@@ -161,7 +161,9 @@ button:disabled {
   padding-right: 2em;
 }
 
-.search-box-clear {
+/* 汎用の`button:active`の背景指定より詳細度を上げて、押下中も✕の背景が
+   灰色にならないようにする。 */
+button.search-box-clear {
   position: absolute;
   right: 0.3em;
   top: 50%;
