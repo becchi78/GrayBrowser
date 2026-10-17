@@ -5,7 +5,7 @@
 /**
  * `<select>`の選択肢一覧。空文字列は「フィルタなし」を表し、ラベルは
  * `StarRating`の入力用★列と同じ「★をN個並べる」表記に揃える(「N以上」の
- * 文言を省き、★の個数自体がしきい値を表す)。
+ * 文言を省き、★の個数自体が絞り込む評価(その評価と一致するもののみ)を表す)。
  */
 export const RATING_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "ALL" },
@@ -17,7 +17,7 @@ export const RATING_FILTER_OPTIONS: { value: string; label: string }[] = [
 ];
 
 /**
- * `<select>`のonChangeイベントで受け取る生の文字列値を、`minRating`
+ * `<select>`のonChangeイベントで受け取る生の文字列値を、`rating`
  * (number | null)に変換する。空文字列("すべて表示")はnull、それ以外は
  * Numberに変換する。
  */
