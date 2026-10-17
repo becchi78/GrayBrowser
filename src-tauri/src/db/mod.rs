@@ -1,6 +1,7 @@
 //! SQLite access: a single writer connection (WAL mode, migrated at startup)
 //! plus an `r2d2` read-only connection pool.
 
+pub mod backup;
 pub mod migrations;
 pub mod queries;
 
@@ -27,9 +28,13 @@ pub struct Db {
 /// *after* migrations succeed -- a half-migrated database should never be
 /// handed out to readers.
 pub fn init(db_path: &Path) -> anyhow::Result<Db> {
+    let existed = db_path.is_file();
     let mut conn = rusqlite::Connection::open(db_path)?;
     disable_foreign_keys(&mut conn)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    if existed {
+        backup_before_migration(&conn, db_path);
+    }
     migrations::run_migrations(&mut conn)?;
     let writer = Arc::new(Mutex::new(conn));
 
@@ -38,6 +43,38 @@ pub fn init(db_path: &Path) -> anyhow::Result<Db> {
     let read_pool = r2d2::Pool::builder().build(manager)?;
 
     Ok(Db { writer, read_pool })
+}
+
+/// Takes a `premigrate` backup when `conn` holds an existing database with
+/// migrations still to apply. A failure is only logged: the migration runs in
+/// a transaction and rolls back on error, and refusing to start (e.g. because
+/// the disk is full) would be worse than starting without the extra copy.
+fn backup_before_migration(conn: &rusqlite::Connection, db_path: &Path) {
+    let current = match backup::current_schema_version(conn) {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("pre-migration backup skipped: cannot read schema version: {e}");
+            return;
+        }
+    };
+    // Version 0 is an empty file with nothing worth preserving.
+    if current == 0
+        || gb_core::migrations::pending_migrations(current, migrations::MIGRATIONS).is_empty()
+    {
+        return;
+    }
+    let Some(app_dir) = db_path.parent() else {
+        return;
+    };
+    match backup::create_backup(
+        conn,
+        &backup::backups_dir(app_dir),
+        gb_core::backup::BackupKind::Premigrate,
+        backup::unix_now(),
+    ) {
+        Ok(path) => log::info!("pre-migration backup written: {}", path.display()),
+        Err(e) => log::error!("pre-migration backup failed: {e:#}"),
+    }
 }
 
 /// Explicitly turns `PRAGMA foreign_keys` off.
