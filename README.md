@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/becchi78/GrayBrowser/actions/workflows/ci.yml/badge.svg)](https://github.com/becchi78/GrayBrowser/actions/workflows/ci.yml)
-![Status](https://img.shields.io/badge/status-alpha%20(0.5.1)-orange.svg)
+![Status](https://img.shields.io/badge/status-alpha%20(0.5.2)-orange.svg)
 
 大量のローカル動画ファイルを高速にスキャン・カタログ化し、タグ付け・レーティング・検索で整理できる、Windows向けのローカル動画管理デスクトップアプリです。
 
@@ -12,7 +12,7 @@
 
 ## ⚠️ 開発版に関する注意
 
-現在のバージョンは **0.5.1(開発版)** です。破壊的変更や未発見の不具合が含まれる可能性があります。「ファイル > データベースをバックアップ」で手動バックアップを取れるので、大切な動画ファイルを扱う前に取得しておくことを推奨します(詳細は[docs/backup.md](docs/backup.md))。本番的な運用(このアプリのカタログ情報を唯一の管理手段にする等)は現時点では推奨しません。
+現在のバージョンは **0.5.2(開発版)** です。破壊的変更や未発見の不具合が含まれる可能性があります。「ファイル > データベースをバックアップ」で手動バックアップを取れるので、大切な動画ファイルを扱う前に取得しておくことを推奨します(詳細は[docs/backup.md](docs/backup.md))。本番的な運用(このアプリのカタログ情報を唯一の管理手段にする等)は現時点では推奨しません。
 
 ## 目次
 
