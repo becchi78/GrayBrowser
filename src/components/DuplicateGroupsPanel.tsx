@@ -8,7 +8,6 @@ import {
 import { onDedupUpdated } from "../events";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
-import { splitDirAndFileName } from "../lib/paths";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
 
 const KIND_LABELS: Record<DuplicateGroupKind, string> = {
@@ -208,18 +207,9 @@ function DuplicateGroupMemberRow({
         )}
       </div>
       <div className="duplicate-group-member-info">
-        {(() => {
-          const { dir, name } = splitDirAndFileName(member.file_path);
-          return (
-            <span
-              className="file-path-row duplicate-group-member-path"
-              title={member.file_path}
-            >
-              <span className="file-path-dir">{dir}</span>
-              <span className="file-path-file">{name}</span>
-            </span>
-          );
-        })()}
+        <span className="duplicate-group-member-path" title={member.file_path}>
+          {member.file_path}
+        </span>
         {isOffline && (
           <span className="duplicate-group-member-meta">
             <span className="thumbnail-offline-badge">オフライン</span>

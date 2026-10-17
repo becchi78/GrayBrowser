@@ -1019,14 +1019,13 @@ button:disabled {
   opacity: 0.75;
 }
 
-/* 重複パネルではパス行がファイル名の唯一の表示なので、ファイル名側を
-   通常の文字サイズ・濃さ・太めに戻し、ディレクトリ側だけを補助情報として
-   小さく薄いままにする。共用の `.file-path-*` は GenerationFailuresPanel
-   も使うため、ここで上書きするだけにとどめる。 */
-.duplicate-group-member-path .file-path-file {
-  font-size: 1em;
-  opacity: 1;
-  font-weight: 500;
+/* 重複パネルのパスはディレクトリとファイル名を分けず1本の文字列として
+   表示する。分けると残り幅の配分でファイル名との間に空きが出るため。
+   ファイル名が唯一の識別情報なので省略記号では切らず、長いパスは折り返す。 */
+.duplicate-group-member-path {
+  font-size: 0.8em;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
 }
 
 .duplicate-group-member-meta {
