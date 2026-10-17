@@ -864,15 +864,18 @@ button.search-box-clear {
 
 /* `.video-row-thumbnails-wrap`（上記、position: relative）に対して絶対配置し、
    内側の`.video-row-thumbnails`が横スクロールしても常に同じ位置に留まる。
-   `pointer-events: none`でクリックを透過させ、VideoRow.tsx側のselect/play判定
-   （`.video-row-thumbnails`のonClick/onDoubleClick）をそのまま機能させる。 */
+   マウスで選択・コピーできるようクリックを受け取る。その代わり、全幅を覆うと
+   サムネイル上端のクリック（行選択）・ダブルクリック（再生）を奪ってしまうため、
+   `right: auto`と`max-width: 100%`で文字の幅だけに縮める。 */
 .video-row-filename-overlay {
   position: absolute;
   /* 上端に配置(下端は見えにくい/オフラインバッジと将来競合しうるため)。
      `border-radius`もそれに合わせて上側の角のみ丸める。 */
   top: 0;
   left: 0;
-  right: 0;
+  right: auto;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 0.15em 0.4em;
   /* 背景は透明。ただしサムネイル画像が明るい色の場合に白文字が読みにくく
      なるため、背景の代わりにtext-shadow(黒の縁取り)で最低限の視認性を
@@ -888,7 +891,9 @@ button.search-box-clear {
   overflow: hidden;
   text-overflow: ellipsis;
   border-radius: 4px 4px 0 0;
-  pointer-events: none;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
 }
 
 .skipped-files-panel {

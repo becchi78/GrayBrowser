@@ -29,6 +29,12 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 
    出力先(ワークスペース直下の`target/`): `target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe`
 
+   ビルド後、配布するインストーラーのSHA256ハッシュを算出しておく(手順7のリリースノートに記載する):
+
+   ```powershell
+   Get-FileHash -Algorithm SHA256 target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe
+   ```
+
 5. **動作確認**: 生成されたインストーラーを実機で実際にインストールし、起動確認を行う(`sandboxed-verification`スキルの手順に従い、実データを汚さないサンドボックス環境で確認する)。
 
 6. **タグを作成しpush**:
@@ -43,10 +49,26 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
    ```bash
    gh release create v<version> "target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe" \
      --title "v<version>" \
-     --notes "変更内容の要約"
+     --notes-file <リリースノートのファイル>
    ```
 
-   `--notes`は`CHANGELOG.md`に書いた当該バージョンの内容を要約・転記する(二重管理を避けるため、CHANGELOGを一次情報とする)。
+   リリースノートのファイルは、誤ってコミットしないよう、リポジトリ外の一時ディレクトリに作成し、公開後に削除する。内容は次のテンプレートに沿って作成する。変更点は`CHANGELOG.md`に書いた当該バージョンの内容を転記する(二重管理を避けるため、CHANGELOGを一次情報とする)。SHA256は手順4で算出した値を記載する。
+
+   ```markdown
+   ## 変更点
+
+   <CHANGELOG.mdの当該バージョンの内容を転記>
+
+   ## インストールについて
+
+   インストーラーはコード署名をしていないため、実行時に Windows SmartScreen の警告が表示される場合があります。「詳細情報」→「実行」の順にクリックして進めてください。ダウンロードは、このリポジトリの Releases ページのファイルから行ってください。
+
+   ダウンロードしたファイルは、PowerShell の `Get-FileHash -Algorithm SHA256 <ファイル名>` で算出したハッシュが、下記の値と一致することを確認できます。
+
+   ## SHA256
+
+   `GrayBrowser_<version>_x64-setup.exe`: `<SHA256ハッシュ>`
+   ```
 
 ## 注意事項
 

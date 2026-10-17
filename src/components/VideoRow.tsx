@@ -160,14 +160,18 @@ export function VideoRow({ video, cache, isSelected, onSelect }: Props) {
             ⚠ オフライン
           </span>
         )}
-        {/* `pointer-events: none`（App.css側）でクリックを透過させ、
-            すぐ下の`.video-row-thumbnails`のselect/play判定をそのまま維持する。
-            title属性はここではなく`.video-row-thumbnails`側に持たせる:
-            `pointer-events: none`の要素はブラウザのヒットテスト対象から外れ
-            mouseoverを一切受け取れないため、この要素自身のtitleはツールチッ
-            プとして表示されない（背後の`.video-row-thumbnails`がホバー対象
-            になり、HTML仕様上その祖先のtitleが使われる）。 */}
-        <span className="video-row-filename-overlay" data-testid="video-row-filename">
+        {/* ファイル名はマウスで選択してコピーできるよう、クリックを受け取る
+            （App.css側で文字幅だけに縮め、サムネイル上端を覆わない）。
+            このラベルは`.video-row-thumbnails`の兄弟要素でイベントが伝播しない
+            ため、行選択はここで明示的に呼ぶ。ダブルクリックは再生に結びつけず、
+            ブラウザ標準の単語選択を優先する。ラベルがホバーを受け取るので、
+            title属性もこの要素自身に持たせる。 */}
+        <span
+          className="video-row-filename-overlay"
+          data-testid="video-row-filename"
+          title={video.file_name}
+          onClick={() => onSelect(video)}
+        >
           {video.file_name}
         </span>
       </div>
