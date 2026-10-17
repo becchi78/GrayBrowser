@@ -5,6 +5,7 @@
 
 pub mod backup;
 pub mod dedup;
+pub mod file_delete_policy;
 pub mod filename_validation;
 pub mod hash;
 pub mod migrations;

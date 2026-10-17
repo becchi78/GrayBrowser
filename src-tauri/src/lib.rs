@@ -320,6 +320,7 @@ pub fn run() {
             commands::dedup_cmds::list_duplicate_groups,
             commands::dedup_cmds::refresh_duplicate_groups,
             commands::dedup_cmds::delete_duplicate_video,
+            commands::dedup_cmds::delete_duplicate_video_and_file,
             commands::generation_retry_cmds::list_generation_failures,
             commands::generation_retry_cmds::retry_thumbnail_generation,
             commands::generation_retry_cmds::retry_metadata_probe
