@@ -55,6 +55,8 @@ function App() {
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
+  const [videoCount, setVideoCount] = useState(0);
+  const [jumpRequest, setJumpRequest] = useState<{ percent: number; seq: number } | null>(null);
 
   useEffect(() => {
     getInfoPaneCollapsed()
@@ -152,6 +154,8 @@ function App() {
                 folderPath={folderPath}
                 rating={rating}
                 infoCollapsed={infoPaneCollapsed}
+                jumpRequest={jumpRequest}
+                onCountChange={setVideoCount}
               />
             ),
           }[viewStyle]
@@ -160,7 +164,11 @@ function App() {
       {/* The always-visible status bar. The 未登録/重複/生成失敗 badges and
           their panels now live inside StatusBar itself -- see that
           component's own comment. */}
-      <StatusBar refreshKey={refreshKey} />
+      <StatusBar
+        refreshKey={refreshKey}
+        videoCount={videoCount}
+        onJump={(percent) => setJumpRequest((prev) => ({ percent, seq: (prev?.seq ?? 0) + 1 }))}
+      />
 
       {/* FfmpegNotice is not part of the dialog list, so it stays a
           top-level, always-visible notice (unlike FolderControls/

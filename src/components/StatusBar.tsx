@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getThumbnailProgress } from "../api";
 import { onThumbnailProgress } from "../events";
+import { JUMP_PERCENTS } from "../lib/jumpToPercent";
 import { formatThumbnailProgress } from "../lib/thumbnailProgress";
 import type { ThumbnailProgress } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
@@ -23,13 +24,18 @@ type PanelKind = "unregistered" | "duplicates" | "failed";
 
 interface Props {
   refreshKey: number;
+  /** Rows in the currently displayed list; the jump button is disabled at 0. */
+  videoCount: number;
+  onJump: (percent: number) => void;
 }
 
-export function StatusBar({ refreshKey }: Props) {
+export function StatusBar({ refreshKey, videoCount, onJump }: Props) {
   const [openPanel, setOpenPanel] = useState<PanelKind | null>(null);
   const [unregisteredCount, setUnregisteredCount] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const jumpRef = useRef<HTMLDivElement>(null);
   const [thumbnailProgress, setThumbnailProgress] =
     useState<ThumbnailProgress | null>(null);
 
@@ -54,8 +60,38 @@ export function StatusBar({ refreshKey }: Props) {
     ? formatThumbnailProgress(thumbnailProgress)
     : null;
 
+  // The list can empty out (e.g. a search with no hits) while the menu is open.
+  // Resetting the state itself (not just hiding the menu) keeps it from
+  // reopening on its own once results come back.
+  if (jumpOpen && videoCount === 0) {
+    setJumpOpen(false);
+  }
+  const jumpMenuOpen = jumpOpen && videoCount > 0;
+
+  useEffect(() => {
+    if (!jumpMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!jumpRef.current?.contains(e.target as Node)) setJumpOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setJumpOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [jumpMenuOpen]);
+
   function toggle(kind: PanelKind) {
+    setJumpOpen(false);
     setOpenPanel((prev) => (prev === kind ? null : kind));
+  }
+
+  function toggleJump() {
+    setOpenPanel(null);
+    setJumpOpen((prev) => !prev);
   }
 
   return (
@@ -95,6 +131,38 @@ export function StatusBar({ refreshKey }: Props) {
           >
             {thumbnailProgressText}
           </span>
+        )}
+      </div>
+      <div className="status-jump" ref={jumpRef}>
+        <button
+          type="button"
+          className="status-badge"
+          data-testid="status-jump-button"
+          aria-haspopup="menu"
+          aria-expanded={jumpMenuOpen}
+          disabled={videoCount === 0}
+          onClick={toggleJump}
+        >
+          ジャンプ
+        </button>
+        {jumpMenuOpen && (
+          <div className="status-jump-menu" role="menu" data-testid="status-jump-menu">
+            {JUMP_PERCENTS.map((percent) => (
+              <button
+                key={percent}
+                type="button"
+                role="menuitem"
+                className="status-jump-item"
+                data-testid={`status-jump-item-${percent}`}
+                onClick={() => {
+                  setJumpOpen(false);
+                  onJump(percent);
+                }}
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
         )}
       </div>
       <SkippedFilesPanel
