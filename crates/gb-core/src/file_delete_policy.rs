@@ -19,11 +19,21 @@ pub enum FileState {
     Regular { size: u64 },
 }
 
+/// Whether the group's members are known to have identical content. File
+/// size and quick hash matching alone do not prove a file is a copy, so only
+/// a content-verified group may lead to deleting a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupContent {
+    Confirmed,
+    Unconfirmed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileDeleteFacts<'a> {
     /// The `videos.status` value; only `"online"` passes.
     pub status: &'a str,
     pub drive: DriveKind,
+    pub group_content: GroupContent,
     /// Online members of the video's duplicate group, including the target
     /// itself.
     pub online_members_in_group: usize,
@@ -39,6 +49,8 @@ pub enum DeleteRefusal {
     Offline,
     #[error("ゴミ箱に移動できない場所です。エクスプローラーで直接削除してください")]
     TrashUnavailable,
+    #[error("内容の一致が確認できていないグループのため、ファイルは削除できません")]
+    ContentNotConfirmed,
     #[error("グループ内で到達できる最後の1件のため、ファイルは削除できません")]
     LastOnlineInGroup,
     #[error("登録フォルダの外にあるファイルは削除できません")]
@@ -57,6 +69,9 @@ pub fn check_file_delete_allowed(facts: &FileDeleteFacts) -> Result<(), DeleteRe
     // the OS may permanently delete without telling us.
     if facts.drive != DriveKind::Local {
         return Err(DeleteRefusal::TrashUnavailable);
+    }
+    if facts.group_content != GroupContent::Confirmed {
+        return Err(DeleteRefusal::ContentNotConfirmed);
     }
     if facts.online_members_in_group <= 1 {
         return Err(DeleteRefusal::LastOnlineInGroup);
@@ -84,6 +99,7 @@ mod tests {
         FileDeleteFacts {
             status: "online",
             drive: DriveKind::Local,
+            group_content: GroupContent::Confirmed,
             online_members_in_group: 2,
             under_registered_folder: true,
             file: FileState::Regular { size: 100 },
@@ -133,6 +149,18 @@ mod tests {
                 "{drive:?}"
             );
         }
+    }
+
+    #[test]
+    fn refuses_a_group_whose_content_is_not_confirmed() {
+        let f = FileDeleteFacts {
+            group_content: GroupContent::Unconfirmed,
+            ..ok_facts()
+        };
+        assert_eq!(
+            check_file_delete_allowed(&f),
+            Err(DeleteRefusal::ContentNotConfirmed)
+        );
     }
 
     #[test]
@@ -204,6 +232,7 @@ mod tests {
         let f = FileDeleteFacts {
             status: "offline",
             drive: DriveKind::Network,
+            group_content: GroupContent::Unconfirmed,
             online_members_in_group: 0,
             under_registered_folder: false,
             file: FileState::Missing,

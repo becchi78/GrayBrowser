@@ -4,14 +4,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use gb_core::file_delete_policy::{check_file_delete_allowed, FileDeleteFacts, FileState};
+use gb_core::file_delete_policy::{
+    check_file_delete_allowed, FileDeleteFacts, FileState, GroupContent,
+};
 use gb_core::ports::drive_type::{DriveKind, DriveTypeDetector};
 use gb_core::ports::trash::FileTrasher;
 use tauri::State;
 
 use crate::adapters::long_path;
 use crate::db::Db;
-use crate::dedup::{self, DuplicateGroup, DuplicateGroupsState};
+use crate::dedup::{self, DuplicateGroup, DuplicateGroupKind, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
 
 /// Returns the most recently detected duplicate groups
@@ -133,6 +135,17 @@ pub fn delete_duplicate_video(
 /// survivor and both be recycled.
 static FILE_DELETE_LOCK: Mutex<()> = Mutex::new(());
 
+/// Exhaustive on purpose (no wildcard arm): a kind added later must be
+/// classified here explicitly instead of silently becoming deletable.
+fn group_content_of(kind: &DuplicateGroupKind) -> GroupContent {
+    match kind {
+        DuplicateGroupKind::QuickHashConfirmed | DuplicateGroupKind::PathCollisionConfirmed => {
+            GroupContent::Confirmed
+        }
+        DuplicateGroupKind::PathCollisionUnconfirmed => GroupContent::Unconfirmed,
+    }
+}
+
 /// Moves the video's source file to the recycle bin and then removes its
 /// catalog entry. Every decision input comes from the DB row and the file
 /// system, never from the caller: the only caller-supplied value is
@@ -158,13 +171,19 @@ pub fn delete_video_with_file(
         .map_err(|e| format!("動画の情報を取得できませんでした: {e}"))?
         .ok_or_else(|| "動画がカタログに見つかりません".to_string())?;
 
-    let online_members_in_group = dedup::refresh_group_members(db, groups)
+    let groups = dedup::refresh_group_members(db, groups);
+    let group = groups
         .iter()
         .find(|g| g.members.iter().any(|m| m.video_id == video_id))
-        .map(|g| g.members.iter().filter(|m| m.status == "online").count())
         .ok_or_else(|| {
             "重複グループに見つかりません。重複を再検出してからやり直してください".to_string()
         })?;
+    let online_members_in_group = group
+        .members
+        .iter()
+        .filter(|m| m.status == "online")
+        .count();
+    let group_content = group_content_of(&group.kind);
 
     let watch_folders = db
         .read_pool
@@ -192,6 +211,7 @@ pub fn delete_video_with_file(
     check_file_delete_allowed(&FileDeleteFacts {
         status: &row.status,
         drive,
+        group_content,
         online_members_in_group,
         under_registered_folder,
         file,
@@ -353,8 +373,12 @@ mod tests {
     }
 
     fn group(ids: &[&str]) -> Vec<DuplicateGroup> {
+        group_of_kind(DuplicateGroupKind::QuickHashConfirmed, ids)
+    }
+
+    fn group_of_kind(kind: DuplicateGroupKind, ids: &[&str]) -> Vec<DuplicateGroup> {
         vec![DuplicateGroup {
-            kind: DuplicateGroupKind::QuickHashConfirmed,
+            kind,
             members: ids
                 .iter()
                 .map(|id| DuplicateGroupMember {
@@ -536,6 +560,46 @@ mod tests {
 
     fn local() -> Result<DriveKind, DriveTypeError> {
         Ok(DriveKind::Local)
+    }
+
+    #[test]
+    fn refuses_a_group_whose_content_is_not_confirmed() {
+        refusal_case(
+            |env| {
+                two_online(env);
+                (
+                    group_of_kind(DuplicateGroupKind::PathCollisionUnconfirmed, &["a", "b"]),
+                    local(),
+                )
+            },
+            "a",
+            "内容の一致が確認できていない",
+        );
+    }
+
+    #[test]
+    fn allows_both_content_confirmed_group_kinds() {
+        for kind in [
+            DuplicateGroupKind::QuickHashConfirmed,
+            DuplicateGroupKind::PathCollisionConfirmed,
+        ] {
+            let env = Env::new();
+            two_online(&env);
+            let drive = AnyDrive(local());
+            let trasher = trash_ok();
+            let notifier = FakeCatalogNotifier::default();
+            run(
+                &env,
+                group_of_kind(kind, &["a", "b"]),
+                &drive,
+                &trasher,
+                &notifier,
+                "a",
+            )
+            .unwrap();
+            assert_eq!(trasher.calls.lock().unwrap().len(), 1);
+            assert!(!env.row_exists("a"));
+        }
     }
 
     #[test]

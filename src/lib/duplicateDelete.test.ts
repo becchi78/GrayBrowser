@@ -22,8 +22,11 @@ function member(id: string, status: string): DuplicateGroupMember {
   };
 }
 
-function group(members: DuplicateGroupMember[]): DuplicateGroup {
-  return { kind: "quick_hash_confirmed", members };
+function group(
+  members: DuplicateGroupMember[],
+  kind: string = "quick_hash_confirmed",
+): DuplicateGroup {
+  return { kind: kind as DuplicateGroup["kind"], members };
 }
 
 test("他にオンラインのメンバーがいれば有効", () => {
@@ -65,4 +68,27 @@ test("status が想定外の値なら無効側に倒す", () => {
   );
   const b = member("b", "online");
   assert.equal(fileDeleteDisabledReason(b, group([member("a", "ONLINE"), b])), LAST);
+});
+
+test("内容未確認のグループ(パス衝突・内容未確認)は無効", () => {
+  const a = member("a", "online");
+  assert.equal(
+    fileDeleteDisabledReason(a, group([a, member("b", "online")], "path_collision_unconfirmed")),
+    "内容の一致が確認できていないため削除できません",
+  );
+});
+
+test("内容確認済みの2種類のグループは有効", () => {
+  const a = member("a", "online");
+  for (const kind of ["quick_hash_confirmed", "path_collision_confirmed"]) {
+    assert.equal(fileDeleteDisabledReason(a, group([a, member("b", "online")], kind)), null, kind);
+  }
+});
+
+test("未知の kind は無効側に倒す", () => {
+  const a = member("a", "online");
+  assert.equal(
+    fileDeleteDisabledReason(a, group([a, member("b", "online")], "something_new")),
+    "内容の一致が確認できていないため削除できません",
+  );
 });
