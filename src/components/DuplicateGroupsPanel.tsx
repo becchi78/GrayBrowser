@@ -208,11 +208,13 @@ function DuplicateGroupMemberRow({
         )}
       </div>
       <div className="duplicate-group-member-info">
-        <span className="duplicate-group-member-name">{member.file_name}</span>
         {(() => {
           const { dir, name } = splitDirAndFileName(member.file_path);
           return (
-            <span className="file-path-row" title={member.file_path}>
+            <span
+              className="file-path-row duplicate-group-member-path"
+              title={member.file_path}
+            >
               <span className="file-path-dir">{dir}</span>
               <span className="file-path-file">{name}</span>
             </span>
@@ -224,16 +226,24 @@ function DuplicateGroupMemberRow({
           </span>
         )}
         <dl className="duplicate-group-member-props">
-          <dt>サイズ</dt>
-          <dd className={diffClass(diff.file_size)}>{formatFileSize(member.file_size)}</dd>
-          <dt>再生時間</dt>
-          <dd className={diffClass(diff.duration)}>{formatDuration(member.duration)}</dd>
-          <dt>解像度</dt>
-          <dd className={diffClass(diff.resolution)}>
-            {formatResolution(member.width, member.height)}
-          </dd>
-          <dt>登録日時</dt>
-          <dd>{member.created_at}</dd>
+          <div>
+            <dt>サイズ</dt>
+            <dd className={diffClass(diff.file_size)}>{formatFileSize(member.file_size)}</dd>
+          </div>
+          <div>
+            <dt>再生時間</dt>
+            <dd className={diffClass(diff.duration)}>{formatDuration(member.duration)}</dd>
+          </div>
+          <div>
+            <dt>解像度</dt>
+            <dd className={diffClass(diff.resolution)}>
+              {formatResolution(member.width, member.height)}
+            </dd>
+          </div>
+          <div>
+            <dt>登録日時</dt>
+            <dd>{member.created_at}</dd>
+          </div>
         </dl>
       </div>
       <button type="button" className="duplicate-group-member-delete" onClick={onDelete}>

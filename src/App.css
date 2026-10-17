@@ -985,16 +985,6 @@ button:disabled {
   flex: 1;
 }
 
-.duplicate-group-member-name {
-  font-weight: 500;
-  /* No longer truncated -- the file name is the core piece of
-     information this row exists to show, so if the panel is too narrow
-     to fit it on one line, it wraps instead of losing characters off the
-     end. `SkippedFilesPanel`'s `.skipped-file-name` already worked this
-     way (it never had an overflow/ellipsis rule to begin with); this just
-     brings the other two panels in line with it. */
-}
-
 /* Shared by DuplicateGroupsPanel's `-path` row and
    GenerationFailuresPanel's `-path` row (`.file-path-*`, not
    `.duplicate-group-*`/`.generation-failure-*`, since both panels render
@@ -1029,6 +1019,16 @@ button:disabled {
   opacity: 0.75;
 }
 
+/* 重複パネルではパス行がファイル名の唯一の表示なので、ファイル名側を
+   通常の文字サイズ・濃さ・太めに戻し、ディレクトリ側だけを補助情報として
+   小さく薄いままにする。共用の `.file-path-*` は GenerationFailuresPanel
+   も使うため、ここで上書きするだけにとどめる。 */
+.duplicate-group-member-path .file-path-file {
+  font-size: 1em;
+  opacity: 1;
+  font-weight: 500;
+}
+
 .duplicate-group-member-meta {
   display: flex;
   align-items: center;
@@ -1037,14 +1037,20 @@ button:disabled {
   opacity: 0.8;
 }
 
-/* ラベルと値を2列で縦に並べる。メンバー間で同じ項目が同じ幅・順序に
-   並ぶので、行をまたいで見比べやすい。 */
+/* ラベルと値のペアを横に並べ、パネル幅が足りないときだけ折り返す。
+   縦に積むとメンバー1件あたりの高さが増えて、グループ内を見比べる
+   ときのスクロールが増えるため。項目の順序は全メンバーで同じ。 */
 .duplicate-group-member-props {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.1em 0.75em;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1em 1em;
   margin: 0.2em 0 0;
   font-size: 0.85em;
+}
+
+.duplicate-group-member-props > div {
+  display: flex;
+  gap: 0.4em;
 }
 
 .duplicate-group-member-props dt {
@@ -1128,8 +1134,8 @@ button:disabled {
 
 .generation-failure-name {
   font-weight: 500;
-  /* Same "don't truncate the file name, wrap instead" change as
-     `.duplicate-group-member-name` above. */
+  /* The file name is the core piece of information this row exists to
+     show, so it is not truncated; it wraps instead. */
 }
 
 /* `-path` row itself uses the shared `.file-path-row`/
