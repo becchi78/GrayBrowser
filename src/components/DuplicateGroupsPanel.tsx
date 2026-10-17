@@ -172,7 +172,7 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
       )}
       <ConfirmDialog
         open={pending !== null}
-        title={pending?.kind === "file" ? "ファイルも削除" : "登録解除"}
+        title={pending?.kind === "file" ? "ファイルを削除" : "登録解除"}
         confirmLabel={pending?.kind === "file" ? "ゴミ箱に移動して削除" : "登録を解除する"}
         danger={pending?.kind === "file"}
         busy={busy}
@@ -181,12 +181,10 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
       >
         {pending?.kind === "file" && (
           <>
-            <p>この動画ファイルをゴミ箱に移動し、カタログからも削除します。</p>
             <p>
-              <strong>ファイル名:</strong> {pending.member.file_name}
+              この動画ファイルをゴミ箱に移動し、カタログからも削除します（ゴミ箱から元に戻せます）。
             </p>
             <p className="confirm-dialog-path">{pending.member.file_path}</p>
-            <p>ゴミ箱に移動します（ゴミ箱から元に戻せます）。</p>
           </>
         )}
         {pending?.kind === "unregister" && (
@@ -385,7 +383,7 @@ function DuplicateGroupMemberRow({
         disabled={fileDeleteDisabledReason !== null || busy}
         title="ファイルをゴミ箱に移動し、カタログからも削除します"
       >
-        ファイルも削除
+        ファイルを削除
       </button>
     </li>
   );
