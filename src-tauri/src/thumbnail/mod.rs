@@ -211,10 +211,37 @@ fn run_thumbnail_queue<F, N>(
                     return;
                 }
             };
-        if pending.is_empty() {
-            return;
-        }
+        process_pending(
+            db,
+            thumbnails_dir,
+            watch_folders,
+            queue,
+            ffmpeg,
+            notifier,
+            pending,
+        );
+    }
+}
 
+/// Generates the given videos on a small worker pool. `pending` is a
+/// snapshot that may already be stale (another queue can finish a video
+/// after it was listed), so each worker re-checks the files after claiming.
+fn process_pending<F, N>(
+    db: Db,
+    thumbnails_dir: PathBuf,
+    watch_folders: Vec<String>,
+    queue: ThumbnailQueueHandle,
+    ffmpeg: Arc<F>,
+    notifier: Arc<N>,
+    pending: Vec<(String, PathBuf)>,
+) where
+    F: FfmpegAdapter + 'static,
+    N: CatalogNotifier + 'static,
+{
+    if pending.is_empty() {
+        return;
+    }
+    {
         let worker_count = WORKER_THREAD_COUNT.min(pending.len());
         let pending = Arc::new(std::sync::Mutex::new(pending.into_iter()));
 
@@ -244,6 +271,20 @@ fn run_thumbnail_queue<F, N>(
                         &watch_folders,
                         &path.to_string_lossy(),
                     );
+                    // The claim only serializes runs; it can be won right
+                    // after another queue finished this very video.
+                    if (0..worker::THUMBNAILS_PER_VIDEO)
+                        .all(|i| paths::slot_path(&video_dir, &id, i).exists())
+                    {
+                        log::debug!("thumbnail worker: {id} is already complete, skipping");
+                        if let Err(e) = crate::db::queries::mark_thumbnail_ready(
+                            &db.writer.lock().unwrap(),
+                            &id,
+                        ) {
+                            log::warn!("failed to backfill thumbnail_ready for {id}: {e}");
+                        }
+                        continue;
+                    }
                     match worker::generate_thumbnail_for_video(
                         ffmpeg.as_ref(),
                         &db,
@@ -371,6 +412,38 @@ mod tests {
         assert!(six_finals_exist(&unassigned_dir(thumbs.path()), "vid-race"));
         assert_eq!(thumbnail_ready_flag(&db, "vid-race"), 1);
         assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_already_complete_video_in_a_stale_pending_list_is_not_regenerated() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        let dir = unassigned_dir(thumbs.path());
+        insert_test_video(&db, "vid-done", "C:/videos/done.mp4");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..worker::THUMBNAILS_PER_VIDEO {
+            std::fs::write(dir.join(format!("vid-done_{i}.webp")), b"original").unwrap();
+        }
+        let ffmpeg = available_ffmpeg(Duration::ZERO);
+        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            Vec::new(),
+            ThumbnailQueueHandle::default(),
+            Arc::clone(&ffmpeg),
+            Arc::clone(&notifier),
+            vec![("vid-done".to_string(), PathBuf::from("C:/videos/done.mp4"))],
+        );
+
+        assert_eq!(extract_count_for(&ffmpeg, "vid-done"), 0);
+        for i in 0..worker::THUMBNAILS_PER_VIDEO {
+            let bytes = std::fs::read(dir.join(format!("vid-done_{i}.webp"))).unwrap();
+            assert_eq!(bytes, b"original", "slot {i} must not be overwritten");
+        }
+        assert_eq!(thumbnail_ready_flag(&db, "vid-done"), 1);
+        assert_eq!(notifier.0.load(Ordering::SeqCst), 0);
     }
 
     #[test]
