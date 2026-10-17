@@ -11,11 +11,15 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 
 ## 手順
 
-1. **バージョンを上げる**(通常は不要): `app-versioning`スキルにより、対象PRのマージ時点で`src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml`・`package.json`のバージョンは既に上がっているはず。3ファイルを確認し、まだ上がっていない場合のみここで更新する。
+1. **バージョンを上げる**(通常は不要): `app-versioning`スキルの「リリース単位」に従い、`src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml`・`package.json`のバージョンが既に上がっていることを確認する。
+   - 個別リリース: 対象PRのマージ時点で上がっているはず。
+   - まとめリリース: リリース用PRで更新済みのはず。
 
-2. **CHANGELOGを更新する**: `CHANGELOG.md`の先頭(`# Changelog`の直後)に`## [<version>] - <date>`見出しを追加し、カテゴリ(追加/変更/修正/削除)ごとに利用者視点で分かる変更点を箇条書きする。内部リファクタ等、利用者に関係ない変更は割愛してよい。
+   まだ上がっていない場合のみ、PR経由で更新する(バージョン更新だけのPRは、`app-versioning`の「コード変更なしは版を上げない」の例外、すなわちリリース用PRに当たる)。
 
-3. **README.mdを確認・更新する**: 今回のバージョンで加わった変更が、ユーザーが直接体感する機能(「主な機能」等に載せるべきもの)であれば追記する。内部実装のみの変更(ファイル配置の変更等、ユーザーから見えないもの)であれば更新不要。
+2. **CHANGELOGを更新する**(`main`へ直接コミットできないため、PR経由。個別リリースでは別PRで実施、まとめリリースではリリース用PRに含める): `CHANGELOG.md`の先頭(`# Changelog`の直後)に`## [<version>] - <date>`見出しを追加し、カテゴリ(追加/変更/修正/削除)ごとに利用者視点で分かる変更点を箇条書きする。内部リファクタ等、利用者に関係ない変更は割愛してよい。
+
+3. **README.mdを確認・更新する**(手順2と同じくPR経由): 今回のバージョンで加わった変更が、ユーザーが直接体感する機能(「主な機能」等に載せるべきもの)であれば追記する。内部実装のみの変更(ファイル配置の変更等、ユーザーから見えないもの)であれば更新不要。
 
 4. **ビルド**:
 
@@ -23,7 +27,7 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
    npm run tauri build
    ```
 
-   出力先: `src-tauri/target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe`
+   出力先(ワークスペース直下の`target/`): `target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe`
 
 5. **動作確認**: 生成されたインストーラーを実機で実際にインストールし、起動確認を行う(`sandboxed-verification`スキルの手順に従い、実データを汚さないサンドボックス環境で確認する)。
 
@@ -37,7 +41,7 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 7. **リリースを作成しインストーラーを添付**:
 
    ```bash
-   gh release create v<version> "src-tauri/target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe" \
+   gh release create v<version> "target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe" \
      --title "v<version>" \
      --notes "変更内容の要約"
    ```
