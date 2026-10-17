@@ -18,7 +18,10 @@ use crate::wb_import::pipeline::{self, WbImportPaths};
 /// command body -- same pattern as `settings_cmds::pick_watch_folders`'s
 /// `RealFolderPicker::new(app.clone())` -- rather than a managed `State`,
 /// since it's stateless and only ever used for the duration of one dialog.
-#[tauri::command]
+///
+/// `async` so it runs off the main thread: a sync command runs on the UI
+/// thread on Windows, and the blocking dialog call would freeze the window.
+#[tauri::command(async)]
 pub fn pick_wb_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let picker = adapters::wb_file::RealWbFilePicker::new(app);
     picker
@@ -32,7 +35,10 @@ pub fn pick_wb_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
 /// keeps only the first selected folder -- the legacy thumbnail folder is a
 /// single directory, so a user picking more than one just means "use the
 /// first" rather than an error.
-#[tauri::command]
+///
+/// `async` for the same reason as `pick_wb_file`: keeps the blocking dialog
+/// off the UI thread.
+#[tauri::command(async)]
 pub fn pick_wb_thumbnail_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let picker = adapters::dialog::RealFolderPicker::new(app);
     picker
