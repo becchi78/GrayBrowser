@@ -98,6 +98,16 @@ fn remove_video_from_catalog(
     crate::db::queries::delete_video_cascade(&mut conn, video_id).map_err(|e| e.to_string())
 }
 
+/// File name and path for log lines. Looked up before a delete, since the row
+/// is gone afterwards; a lookup failure only degrades the log text.
+fn log_identity(db: &Db, video_id: &str) -> (String, String) {
+    crate::db::queries::find_video_by_id(&db.read_pool, video_id)
+        .ok()
+        .flatten()
+        .map(|row| (row.file_name, row.file_path))
+        .unwrap_or_else(|| ("(unknown)".to_string(), "(unknown)".to_string()))
+}
+
 fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
     crate::paths::app_data_dir()
         .ok()
@@ -123,9 +133,12 @@ pub fn delete_duplicate_video(
     db: State<Db>,
     video_id: String,
 ) -> Result<(), String> {
+    // Read before the delete: the row (and its name) is gone afterwards.
+    let (file_name, _) = log_identity(&db, &video_id);
     let thumbnails_root = thumbnails_root_from_app_dir();
     remove_video_from_catalog(&db, thumbnails_root.as_deref(), &video_id)?;
     TauriCatalogNotifier::new(app).notify_changed();
+    log::info!("unregistered duplicate video {video_id} ({file_name}) from the catalog");
     Ok(())
 }
 
@@ -240,6 +253,7 @@ pub fn delete_duplicate_video_and_file(
     state: State<DuplicateGroupsState>,
     video_id: String,
 ) -> Result<(), String> {
+    let (file_name, file_path) = log_identity(&db, &video_id);
     let thumbnails_root = thumbnails_root_from_app_dir();
     let result = delete_video_with_file(
         &db,
@@ -251,8 +265,12 @@ pub fn delete_duplicate_video_and_file(
         &video_id,
     );
     match &result {
-        Ok(()) => log::info!("moved the file of duplicate video {video_id} to the recycle bin"),
-        Err(e) => log::warn!("did not delete the file of duplicate video {video_id}: {e}"),
+        Ok(()) => log::info!(
+            "moved the file of duplicate video {video_id} to the recycle bin: {file_name} ({file_path})"
+        ),
+        Err(e) => log::warn!(
+            "did not delete the file of duplicate video {video_id}: {file_name} ({file_path}): {e}"
+        ),
     }
     result
 }
