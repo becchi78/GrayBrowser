@@ -1102,8 +1102,25 @@ button:disabled {
   padding: 0 0.3em;
 }
 
-.duplicate-group-member-delete {
+.duplicate-group-member-delete,
+.duplicate-group-member-play {
   flex-shrink: 0;
+}
+
+/* サムネイルのクリックで再生できることを示す。オフラインのメンバーには
+   このクラスを付けず、通常の矢印カーソルのままにする。 */
+.duplicate-group-member-thumb--playable {
+  cursor: pointer;
+}
+
+.duplicate-group-member-play-note {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.duplicate-group-member-play-error {
+  font-size: 0.85em;
+  color: #b00020;
 }
 
 .generation-failures-panel {
@@ -1561,7 +1578,8 @@ button:disabled {
     color: #f3caca;
   }
 
-  .duplicate-groups-error {
+  .duplicate-groups-error,
+  .duplicate-group-member-play-error {
     color: #f3caca;
   }
 
