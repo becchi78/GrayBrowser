@@ -63,6 +63,19 @@
 
 [Releases](https://github.com/becchi78/GrayBrowser/releases/latest) ページから最新のインストーラー(`GrayBrowser_x.y.z_x64-setup.exe`)をダウンロードし、実行してください。管理者権限は不要です(ユーザー単位でインストールされます)。
 
+### Windows SmartScreen の警告について
+
+インストーラーはコード署名をしていないため、実行時に Windows SmartScreen の警告(「Windows によって PC が保護されました」)が表示される場合があります。ダウンロード元がこのリポジトリの [Releases](https://github.com/becchi78/GrayBrowser/releases) ページのファイルであることを確認したうえで、次の手順で進めてください。
+
+1. 警告画面の「詳細情報」をクリックします。
+2. 表示された「実行」ボタンをクリックします。
+
+ダウンロードしたファイルが改ざんされていないかは、Releases ページのリリースノートに記載した SHA256 ハッシュと照合して確認できます。PowerShell で次のコマンドを実行し、出力されたハッシュがリリースノートの値と一致することを確認してください。
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\GrayBrowser_x.y.z_x64-setup.exe
+```
+
 > 開発版のため、現時点ではリリースが存在しない場合があります。ソースからのビルドは [開発者向けセットアップ](#開発者向けセットアップ) を参照してください。
 
 ## 使い方
