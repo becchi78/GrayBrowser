@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   value: string;
@@ -13,6 +13,7 @@ const DEBOUNCE_MS = 200;
 // duplicated here.
 export function SearchBox({ value, onChange }: Props) {
   const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -24,15 +25,37 @@ export function SearchBox({ value, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
+  // クリアは明示操作なのでデバウンスを待たず即座に一覧へ反映する。
+  // 後から走るデバウンスのタイマーは draft === value になっていて何もしない。
+  function handleClear() {
+    setDraft("");
+    onChange("");
+    inputRef.current?.focus();
+  }
+
   return (
-    <input
-      type="text"
-      className="search-box"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      placeholder="検索..."
-      aria-label="検索"
-      data-testid="header-search-input"
-    />
+    <div className="search-box-wrap">
+      <input
+        ref={inputRef}
+        type="text"
+        className="search-box"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="検索..."
+        aria-label="検索"
+        data-testid="header-search-input"
+      />
+      {draft !== "" && (
+        <button
+          type="button"
+          className="search-box-clear"
+          onClick={handleClear}
+          aria-label="検索をクリア"
+          data-testid="header-search-clear"
+        >
+          ✕
+        </button>
+      )}
+    </div>
   );
 }
