@@ -719,6 +719,24 @@ pub fn get_tag_bar_pinned_tag_ids_self_healing(conn: &Connection) -> anyhow::Res
     Ok(pruned)
 }
 
+const INFO_PANE_COLLAPSED_KEY: &str = "info_pane_collapsed";
+
+/// Unset and unrecognized values both read as `false` (expanded): a corrupt
+/// or hand-edited value must never leave the info column hidden with no
+/// obvious cause.
+pub fn get_info_pane_collapsed(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(get_setting(conn, INFO_PANE_COLLAPSED_KEY)?.as_deref() == Some("1"))
+}
+
+pub fn set_info_pane_collapsed(conn: &Connection, collapsed: bool) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        INFO_PANE_COLLAPSED_KEY,
+        if collapsed { "1" } else { "0" },
+    )?;
+    Ok(())
+}
+
 pub struct TagRow {
     pub id: i64,
     pub name: String,

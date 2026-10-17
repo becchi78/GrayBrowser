@@ -131,13 +131,10 @@ button:disabled {
   font-size: 0.9em;
 }
 
-/* Row 2 (38px budget, tag bar chips + rating bar). Same `flex-shrink: 0`
-   rule as row 1. `TagBar` renders nothing (`null`) when the library has no
-   tags yet, so this wrapper naturally collapses to 0 height in that case --
-   no special-casing needed here (RatingBar, unlike TagBar, always renders,
-   so this row's height floor while `TagBar` is `null` is RatingBar's own
-   height). `display: flex` + `gap` lay `.tag-bar` (flexible, `flex: 1`) and
-   `.rating-bar` (fixed width, see below) out side by side. */
+/* Row 2 (38px budget, tag bar chips only). Same `flex-shrink: 0` rule as
+   row 1. `TagBar` renders nothing (`null`) when the library has no tags yet,
+   so this wrapper naturally collapses to 0 height in that case -- no
+   special-casing needed here. */
 .header-row-filters {
   display: flex;
   align-items: center;
@@ -188,6 +185,18 @@ button.search-box-clear {
   gap: 0.5em;
 }
 
+/* 行の右端に置く。押下状態は枠線色と薄い背景で示し、ライト/ダークどちらでも読めるよう
+   半透明の青を使う。 */
+.info-pane-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.info-pane-toggle[aria-pressed="true"] {
+  border-color: #396cd8;
+  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+}
+
 /* Outer row: holds `.tag-bar-row` (the chip row, see below) and
    `.tag-bar-overflow` (the ▾ toggle + its popover) side by side.
    Deliberately does NOT have `overflow: hidden` itself -- see
@@ -200,29 +209,21 @@ button.search-box-clear {
   flex-wrap: nowrap;
   gap: 0.4em;
   min-width: 0;
-  /* `.header-row-filters`のflexアイテムとして、隣の`.rating-bar`(固定幅)を
-     除いた残り全幅を使う。 */
+  /* `.header-row-filters`の唯一のflexアイテムとして行の全幅を使う。 */
   flex: 1;
 }
 
-/* 単一の`<select>`のみを持つ固定幅ラッパー。`flex-shrink: 0`で`.tag-bar`側の
-   縮小に巻き込まれないようにし、`width: 8em`(:rootのfont-size: 16px基準で
-   128px)は`src/lib/ratingBar.ts`の`RATING_BAR_RESERVED_WIDTH_PX`(128)と
-   一致させること -- `tagBarLayout.ts`の`computeVisibleChipCount`がこの分を
-   TagBarの利用可能幅から差し引く計算の前提になっている。 */
+/* 単一の`<select>`のみを持つ固定幅ラッパー。ヘッダー1行目で検索欄(flex: 1)
+   と並ぶため、`flex-shrink: 0`で窓が狭いときに潰れないようにする。
+   padding/font-sizeは`.header-row-primary select`が既に掛かるのでここでは
+   指定しない(二重指定による高さのずれを避ける)。 */
 .rating-bar {
   flex-shrink: 0;
   width: 8em;
 }
 
-/* `.header-row-primary button, .header-row-primary input, .header-row-select`
-   と同じ理由(グローバルな`input, button`ルールのpadding/font-sizeがこの行の
-   高さを押し上げてしまうため)で、`.rating-bar select`にも同様のスコープ付き
-   オーバーライドを適用する。 */
 .rating-bar select {
   width: 100%;
-  padding: 0.35em 0.8em;
-  font-size: 0.9em;
 }
 
 /* The chip row (「すべて解除」+ pinned/promoted chips) -- its own wrapper,
@@ -775,6 +776,13 @@ button.search-box-clear {
      `VIDEO_LIST_MIN_WIDTH_PX` must match this column's width -- see those
      rules' own comments. */
   font-size: 0.85em;
+}
+
+/* 情報列を全行まとめて隠す。`.video-row`はflexなので、消えた300px分は
+   `.video-row-thumbnails-wrap`(内容幅まで伸び、足りなければ内部で横スクロール)
+   が使う。`.video-list`のmin-widthは据え置き(`sidebarResize.ts`と整合させるため)。 */
+.video-list--info-collapsed .video-row-info {
+  display: none;
 }
 
 /* Real-data measurement: `StarRating`/`TagEditor` reuse the global

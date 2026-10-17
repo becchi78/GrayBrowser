@@ -11,6 +11,7 @@ import { TagBar } from "./components/TagBar";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
+import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } from "./api";
 import {
   onMenuOpenFolderDialog,
   onMenuOpenTagBarDialog,
@@ -50,6 +51,21 @@ function App() {
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
+  const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
+
+  useEffect(() => {
+    getInfoPaneCollapsed()
+      .then(setInfoPaneCollapsed)
+      .catch((e) => console.error(e));
+  }, []);
+
+  const toggleInfoPane = () => {
+    const next = !infoPaneCollapsed;
+    // Optimistic: the UI flips immediately; a failed save only costs
+    // persistence across restarts, so it is logged rather than reverted.
+    setInfoPaneCollapsed(next);
+    saveInfoPaneCollapsed(next).catch((e) => console.error(e));
+  };
 
   useEffect(() => {
     const unlistenFolder = onMenuOpenFolderDialog(() => setFolderDialogOpen(true));
@@ -85,6 +101,7 @@ function App() {
           the DOM) is the title-bar equivalent now. */}
       <div className="header-row-primary" data-testid="header-row-primary">
         <SearchBox value={search} onChange={setSearch} />
+        <RatingBar value={rating} onChange={setRating} />
         <SortControl
           field={sortField}
           direction={sortDirection}
@@ -93,10 +110,18 @@ function App() {
             setSortDirection(direction);
           }}
         />
+        <button
+          type="button"
+          className="info-pane-toggle"
+          data-testid="info-pane-toggle"
+          aria-pressed={infoPaneCollapsed}
+          onClick={toggleInfoPane}
+        >
+          {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
+        </button>
       </div>
       <div className="header-row-filters" data-testid="header-row-filters">
         <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
-        <RatingBar value={rating} onChange={setRating} />
       </div>
       <div className="main-area">
         <FolderSidebar
@@ -118,6 +143,7 @@ function App() {
                 tagIds={tagIds}
                 folderPath={folderPath}
                 rating={rating}
+                infoCollapsed={infoPaneCollapsed}
               />
             ),
           }[viewStyle]

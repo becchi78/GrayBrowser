@@ -1,6 +1,7 @@
 pub mod dedup_cmds;
 pub mod ffmpeg_cmds;
 pub mod generation_retry_cmds;
+pub mod info_pane_cmds;
 pub mod player_cmds;
 pub mod properties_cmds;
 pub mod rating_cmds;

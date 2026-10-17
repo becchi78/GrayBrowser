@@ -29,6 +29,8 @@ interface Props {
   folderPath: string | null;
   /** `null` = "すべて表示" (no rating filter); see RatingBar. */
   rating: number | null;
+  /** Hides every row's right-hand info column (CSS only; rows still mount it). */
+  infoCollapsed: boolean;
 }
 
 export function ThumbnailGrid({
@@ -39,6 +41,7 @@ export function ThumbnailGrid({
   tagIds,
   folderPath,
   rating,
+  infoCollapsed,
 }: Props) {
   const [videos, setVideos] = useState<VideoDto[]>([]);
   // Highlights the selected row -- the detail panel this used to open is
@@ -159,7 +162,11 @@ export function ThumbnailGrid({
   }
 
   return (
-    <div ref={parentRef} className="video-list" data-testid="video-list">
+    <div
+      ref={parentRef}
+      className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
+      data-testid="video-list"
+    >
       <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
         {virtualRows.map((virtualRow) => {
           const video = videos[virtualRow.index];
