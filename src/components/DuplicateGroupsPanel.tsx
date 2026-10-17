@@ -7,7 +7,7 @@ import {
 } from "../api";
 import { onDedupUpdated } from "../events";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
-import { formatDuration, formatFileSize, formatMtime } from "../lib/format";
+import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import { splitDirAndFileName } from "../lib/paths";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
 
@@ -163,10 +163,6 @@ function diffClass(differs: boolean): string | undefined {
   return differs ? "duplicate-group-member-diff" : undefined;
 }
 
-function formatRating(rating: number): string {
-  return rating > 0 ? "★".repeat(rating) : "未評価";
-}
-
 function DuplicateGroupMemberRow({
   member,
   diff,
@@ -232,14 +228,10 @@ function DuplicateGroupMemberRow({
           <dd className={diffClass(diff.file_size)}>{formatFileSize(member.file_size)}</dd>
           <dt>再生時間</dt>
           <dd className={diffClass(diff.duration)}>{formatDuration(member.duration)}</dd>
-          <dt>評価</dt>
-          <dd className={diffClass(diff.rating)}>{formatRating(member.rating)}</dd>
-          <dt>タグ</dt>
-          <dd className={diffClass(diff.tags)}>
-            {member.tags.length > 0 ? member.tags.join(", ") : "なし"}
+          <dt>解像度</dt>
+          <dd className={diffClass(diff.resolution)}>
+            {formatResolution(member.width, member.height)}
           </dd>
-          <dt>更新日時</dt>
-          <dd className={diffClass(diff.mtime)}>{formatMtime(member.mtime)}</dd>
           <dt>登録日時</dt>
           <dd>{member.created_at}</dd>
         </dl>

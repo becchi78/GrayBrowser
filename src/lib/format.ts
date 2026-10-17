@@ -14,10 +14,6 @@ export function formatFileSize(bytes: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
 }
 
-// mtime はバックエンドが Unix エポック秒で返す。取得できなかった場合は null。
-export function formatMtime(epochSeconds: number | null): string {
-  if (epochSeconds === null) return "不明";
-  const d = new Date(epochSeconds * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+export function formatResolution(width: number | null, height: number | null): string {
+  return width !== null && height !== null ? `${width} × ${height}` : "不明";
 }

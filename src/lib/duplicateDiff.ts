@@ -3,17 +3,13 @@ import type { DuplicateGroupMember } from "../types";
 export interface DuplicateDiff {
   file_size: boolean;
   duration: boolean;
-  rating: boolean;
-  tags: boolean;
-  mtime: boolean;
+  resolution: boolean;
 }
 
 const NO_DIFF: DuplicateDiff = {
   file_size: false,
   duration: false,
-  rating: false,
-  tags: false,
-  mtime: false,
+  resolution: false,
 };
 
 // null を含む項目は「同じ」とは言えないため不一致扱いにする。オフライン等で
@@ -23,9 +19,11 @@ function differs<T extends number | null>(values: T[]): boolean {
   return values.some((v) => v !== values[0]);
 }
 
-// タグはバックエンドが名前順で返すが、比較は順序に依存させない。
-function tagsKey(tags: string[]): string {
-  return JSON.stringify([...tags].sort());
+// 幅と高さは組で1つの値として比べる。片方だけ一致しても同じ解像度とは言えず、
+// どちらかが null なら表示も「不明」になるため不一致扱いにそろえる。
+function resolutionDiffers(members: DuplicateGroupMember[]): boolean {
+  if (members.some((m) => m.width === null || m.height === null)) return true;
+  return members.some((m) => m.width !== members[0].width || m.height !== members[0].height);
 }
 
 /**
@@ -34,12 +32,9 @@ function tagsKey(tags: string[]): string {
  */
 export function computeDuplicateDiff(members: DuplicateGroupMember[]): DuplicateDiff {
   if (members.length < 2) return { ...NO_DIFF };
-  const tagKeys = members.map((m) => tagsKey(m.tags));
   return {
     file_size: differs(members.map((m) => m.file_size)),
     duration: differs(members.map((m) => m.duration)),
-    rating: differs(members.map((m) => m.rating)),
-    tags: tagKeys.some((k) => k !== tagKeys[0]),
-    mtime: differs(members.map((m) => m.mtime)),
+    resolution: resolutionDiffers(members),
   };
 }

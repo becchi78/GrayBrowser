@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getThumbnails, getVideoProperties, playVideo } from "../api";
-import { formatDuration, formatFileSize } from "../lib/format";
+import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { StarRating } from "./StarRating";
@@ -21,10 +21,6 @@ const THUMBNAILS_PER_VIDEO = 6;
 function formatBitrate(bps: number | null): string {
   if (bps === null) return "不明";
   return `${(bps / 1_000_000).toFixed(1)} Mbps`;
-}
-
-function formatResolution(width: number | null, height: number | null): string {
-  return width !== null && height !== null ? `${width} × ${height}` : "不明";
 }
 
 function formatFps(fps: number | null): string {

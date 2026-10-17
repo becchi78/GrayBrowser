@@ -46,16 +46,17 @@ pub struct DuplicateGroupMember {
     pub status: String,
     pub created_at: String,
     pub duration: Option<i64>,
-    pub rating: i64,
-    pub mtime: Option<i64>,
-    /// Tag names in `tags.name` order.
-    pub tags: Vec<String>,
+    /// `None` until the background probe has run for this video (or when
+    /// ffprobe could not determine it).
+    pub width: Option<i64>,
+    pub height: Option<i64>,
 }
 
 impl DuplicateGroupMember {
-    /// Tags live in a separate table, so a bare `VideoRow` cannot produce a
-    /// complete member on its own (hence no `From<VideoRow>`).
-    fn from_row(row: queries::VideoRow, tags: Vec<String>) -> Self {
+    /// Resolution lives in the lazily-fetched properties columns, so a bare
+    /// `VideoRow` cannot produce a complete member on its own (hence no
+    /// `From<VideoRow>`).
+    fn from_row(row: queries::VideoRow, width: Option<i64>, height: Option<i64>) -> Self {
         Self {
             video_id: row.id,
             file_path: row.file_path,
@@ -64,9 +65,8 @@ impl DuplicateGroupMember {
             status: row.status,
             created_at: row.created_at,
             duration: row.duration,
-            rating: row.rating,
-            mtime: row.mtime,
-            tags,
+            width,
+            height,
         }
     }
 }
@@ -150,15 +150,18 @@ fn hydrate_members(db: &Db, ids: &[String]) -> Vec<DuplicateGroupMember> {
     ids.iter()
         .filter_map(|id| match queries::find_video_by_id(&db.read_pool, id) {
             Ok(Some(row)) => {
-                // A tag lookup failure degrades to "no tags shown" rather
-                // than hiding a real duplicate member from the user.
-                let tags = queries::list_tags_for_video(&db.read_pool, id)
-                    .map(|tags| tags.into_iter().map(|t| t.name).collect())
-                    .unwrap_or_else(|e| {
-                        log::warn!("dedup: failed to load tags for video {id}: {e}");
-                        Vec::new()
-                    });
-                Some(DuplicateGroupMember::from_row(row, tags))
+                // A properties lookup failure degrades to "resolution
+                // unknown" rather than hiding a real duplicate member from
+                // the user.
+                let (width, height) = match queries::get_video_properties(&db.read_pool, id) {
+                    Ok(Some(p)) => (p.width, p.height),
+                    Ok(None) => (None, None),
+                    Err(e) => {
+                        log::warn!("dedup: failed to load properties for video {id}: {e}");
+                        (None, None)
+                    }
+                };
+                Some(DuplicateGroupMember::from_row(row, width, height))
             }
             Ok(None) => None,
             Err(e) => {
@@ -171,11 +174,11 @@ fn hydrate_members(db: &Db, ids: &[String]) -> Vec<DuplicateGroupMember> {
         .collect()
 }
 
-/// Re-reads every member's row (and tags) from the DB while keeping the
+/// Re-reads every member's row (and resolution) from the DB while keeping the
 /// snapshot's group structure and order. The snapshot is only rebuilt by a
-/// detection pass, so rating/tag edits made afterwards would otherwise show
-/// stale values. Members deleted since the snapshot are dropped, and groups
-/// left with no members are dropped entirely.
+/// detection pass, so a probe finishing afterwards would otherwise leave the
+/// resolution stuck at "unknown". Members deleted since the snapshot are
+/// dropped, and groups left with no members are dropped entirely.
 pub fn refresh_group_members(db: &Db, groups: Vec<DuplicateGroup>) -> Vec<DuplicateGroup> {
     groups
         .into_iter()
@@ -511,20 +514,22 @@ mod tests {
         assert_eq!(unconfirmed_group.members.len(), 2);
     }
 
-    fn set_metadata(db: &Db, id: &str, duration: Option<i64>, rating: i64, mtime: Option<i64>) {
+    fn set_duration(db: &Db, id: &str, duration: Option<i64>) {
         let conn = db.writer.lock().unwrap();
         conn.execute(
-            "UPDATE videos SET duration = ?1, rating = ?2, mtime = ?3 WHERE id = ?4",
-            rusqlite::params![duration, rating, mtime, id],
+            "UPDATE videos SET duration = ?1 WHERE id = ?2",
+            rusqlite::params![duration, id],
         )
         .unwrap();
     }
 
-    fn assign_tags(db: &Db, id: &str, names: &[&str]) {
-        let mut conn = db.writer.lock().unwrap();
-        for name in names {
-            queries::assign_tag_to_video(&mut conn, id, name).unwrap();
-        }
+    fn set_probed_resolution(db: &Db, id: &str, width: i64, height: i64) {
+        let conn = db.writer.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET width = ?1, height = ?2, probed_at = datetime('now') WHERE id = ?3",
+            rusqlite::params![width, height, id],
+        )
+        .unwrap();
     }
 
     fn group_of(db: &Db, ids: &[&str]) -> DuplicateGroup {
@@ -536,47 +541,41 @@ mod tests {
     }
 
     #[test]
-    fn hydrated_members_carry_metadata_and_tags_sorted_by_name() {
+    fn hydrated_members_carry_duration_and_resolution() {
         let (_db_dir, db) = init_temp_db();
         crate::db::test_support::insert_test_video(&db, "v1", "/a/v1.mp4");
-        set_metadata(&db, "v1", Some(125), 4, Some(1_700_000_000));
-        assign_tags(&db, "v1", &["zebra", "apple", "mango"]);
+        set_duration(&db, "v1", Some(125));
+        set_probed_resolution(&db, "v1", 1920, 1080);
 
         let members = hydrate_members(&db, &["v1".to_string()]);
         assert_eq!(members.len(), 1);
         let m = &members[0];
         assert_eq!(m.duration, Some(125));
-        assert_eq!(m.rating, 4);
-        assert_eq!(m.mtime, Some(1_700_000_000));
-        assert_eq!(m.tags, vec!["apple", "mango", "zebra"]);
+        assert_eq!(m.width, Some(1920));
+        assert_eq!(m.height, Some(1080));
     }
 
     #[test]
-    fn hydrated_members_keep_null_duration_and_mtime_and_empty_tags() {
+    fn hydrated_members_keep_null_duration_and_unprobed_resolution_as_none() {
         let (_db_dir, db) = init_temp_db();
         crate::db::test_support::insert_test_video(&db, "v1", "/a/v1.mp4");
 
         let members = hydrate_members(&db, &["v1".to_string()]);
         let m = &members[0];
         assert_eq!(m.duration, None);
-        assert_eq!(m.mtime, None);
-        assert_eq!(m.rating, 0);
-        assert!(m.tags.is_empty());
+        assert_eq!(m.width, None);
+        assert_eq!(m.height, None);
     }
 
     #[test]
-    fn refresh_group_members_reflects_rating_and_tag_changes() {
+    fn refresh_group_members_reflects_resolution_probed_after_the_snapshot() {
         let (_db_dir, db) = init_temp_db();
         crate::db::test_support::insert_test_video(&db, "v1", "/a/v1.mp4");
         crate::db::test_support::insert_test_video(&db, "v2", "/a/v2.mp4");
         let snapshot = vec![group_of(&db, &["v1", "v2"])];
-        assert_eq!(snapshot[0].members[0].rating, 0);
+        assert_eq!(snapshot[0].members[0].width, None);
 
-        {
-            let conn = db.writer.lock().unwrap();
-            queries::set_rating(&conn, "v1", 5).unwrap();
-        }
-        assign_tags(&db, "v2", &["fresh"]);
+        set_probed_resolution(&db, "v1", 1280, 720);
 
         let refreshed = refresh_group_members(&db, snapshot);
         assert_eq!(refreshed.len(), 1);
@@ -590,8 +589,9 @@ mod tests {
             .map(|m| m.video_id.as_str())
             .collect();
         assert_eq!(ids, vec!["v1", "v2"]);
-        assert_eq!(refreshed[0].members[0].rating, 5);
-        assert_eq!(refreshed[0].members[1].tags, vec!["fresh"]);
+        assert_eq!(refreshed[0].members[0].width, Some(1280));
+        assert_eq!(refreshed[0].members[0].height, Some(720));
+        assert_eq!(refreshed[0].members[1].width, None);
     }
 
     #[test]
