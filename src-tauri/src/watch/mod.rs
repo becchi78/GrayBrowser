@@ -10,6 +10,7 @@
 //! `pick_watch_folders` changes the folder list, so a newly added folder is
 //! picked up without an app restart.
 
+pub mod follow_up;
 pub mod nas_poll;
 
 use std::path::{Path, PathBuf};
@@ -25,6 +26,7 @@ use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
 use crate::scan::{self, mtime_from_metadata};
+use follow_up::FollowUp;
 use nas_poll::NasPollHandle;
 
 /// Holds the live watch subscriptions/pollers for as long as the app runs.
@@ -46,13 +48,32 @@ pub struct WatchContext {
     pub thumbnails_root: PathBuf,
 }
 
-#[derive(Default)]
 pub struct RealtimeWatchManager {
     handles: Mutex<Vec<Box<dyn WatchHandle>>>,
     nas_pollers: Mutex<Vec<NasPollHandle>>,
+    /// One-shot startup scans of local/removable folders. Kept apart from
+    /// `nas_pollers` so that count keeps meaning "network folders polled";
+    /// stopped by the next `reconfigure` the same way.
+    startup_scans: Mutex<Vec<NasPollHandle>>,
+    follow_up: Arc<FollowUp>,
+}
+
+impl Default for RealtimeWatchManager {
+    fn default() -> Self {
+        Self::with_follow_up(Arc::new(FollowUp::noop()))
+    }
 }
 
 impl RealtimeWatchManager {
+    pub fn with_follow_up(follow_up: Arc<FollowUp>) -> Self {
+        Self {
+            handles: Mutex::default(),
+            nas_pollers: Mutex::default(),
+            startup_scans: Mutex::default(),
+            follow_up,
+        }
+    }
+
     /// Stops whatever this manager currently holds, classifies each folder
     /// in `folders` by drive type, and starts a fresh set: local/removable
     /// folders get realtime `notify` watching (via `start_watching`),
@@ -61,6 +82,11 @@ impl RealtimeWatchManager {
     /// from `drive_type`) falls back to polling -- the safer default, since
     /// polling still eventually detects changes, while assuming "local"
     /// for an actually-remote folder would just never fire at all.
+    ///
+    /// Local/removable folders additionally get one diff scan right after the
+    /// watch is registered, to pick up files added while the app was closed.
+    /// Since `reconfigure` runs on every folder-list change, that rescans all
+    /// local folders each time; the mtime/size filter keeps it cheap.
     pub fn reconfigure<N: CatalogNotifier + 'static>(
         &self,
         ctx: WatchContext,
@@ -80,6 +106,9 @@ impl RealtimeWatchManager {
         }
         for poller in self.nas_pollers.lock().unwrap().drain(..) {
             poller.stop();
+        }
+        for scan in self.startup_scans.lock().unwrap().drain(..) {
+            scan.stop();
         }
 
         let mut local_folders = Vec::new();
@@ -105,7 +134,22 @@ impl RealtimeWatchManager {
             &local_folders,
             watcher,
             Arc::clone(&notifier),
+            Arc::clone(&self.follow_up),
         );
+        // After start_watching, so a file created between the scan's walk and
+        // the watch becoming active cannot be missed.
+        let new_scans: Vec<NasPollHandle> = local_folders
+            .into_iter()
+            .map(|folder| {
+                nas_poll::start_one_shot_diff_scan(
+                    db.clone(),
+                    thumbnails_root.clone(),
+                    folder,
+                    Arc::clone(&notifier),
+                    Arc::clone(&self.follow_up),
+                )
+            })
+            .collect();
         let new_pollers: Vec<NasPollHandle> = nas_folders
             .into_iter()
             .map(|folder| {
@@ -115,12 +159,14 @@ impl RealtimeWatchManager {
                     folder,
                     nas_poll_interval,
                     Arc::clone(&notifier),
+                    Arc::clone(&self.follow_up),
                 )
             })
             .collect();
 
         *self.handles.lock().unwrap() = new_handles;
         *self.nas_pollers.lock().unwrap() = new_pollers;
+        *self.startup_scans.lock().unwrap() = new_scans;
     }
 
     pub fn active_handle_count(&self) -> usize {
@@ -175,6 +221,7 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
     folders: &[String],
     watcher: &impl FileWatcher,
     notifier: Arc<N>,
+    follow_up: Arc<FollowUp>,
 ) -> Vec<Box<dyn WatchHandle>> {
     folders
         .iter()
@@ -182,8 +229,9 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
             let db = db.clone();
             let thumbnails_root = thumbnails_root.clone();
             let notifier = Arc::clone(&notifier);
+            let follow_up = Arc::clone(&follow_up);
             let on_event: Box<dyn Fn(WatchEvent) + Send + Sync> = Box::new(move |event| {
-                handle_watch_event(&db, &thumbnails_root, event, notifier.as_ref())
+                handle_watch_event(&db, &thumbnails_root, event, notifier.as_ref(), &follow_up)
             });
             match watcher.watch(Path::new(folder), on_event) {
                 Ok(handle) => Some(handle),
@@ -208,6 +256,7 @@ fn handle_watch_event(
     thumbnails_root: &Path,
     event: WatchEvent,
     notifier: &dyn CatalogNotifier,
+    follow_up: &FollowUp,
 ) {
     let file_name = match event.path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
@@ -255,7 +304,10 @@ fn handle_watch_event(
                     scan::ProcessOutcome::Registered
                     | scan::ProcessOutcome::Reconciled
                     | scan::ProcessOutcome::PathFollowed { .. },
-                ) => notifier.notify_changed(),
+                ) => {
+                    notifier.notify_changed();
+                    follow_up.trigger();
+                }
                 // Unchanged/SkippedInvalidName/SkippedUnreadable/
                 // BlockedByCollision (this branch never actually
                 // writes -- see scan::mod's register_new_path doc comment)
@@ -347,6 +399,7 @@ mod tests {
                 path: video_path.clone(),
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -372,6 +425,7 @@ mod tests {
                 path: text_path,
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -397,6 +451,7 @@ mod tests {
                 path: video_path.clone(),
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         handle_watch_event(
@@ -407,6 +462,7 @@ mod tests {
                 path: video_path,
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -435,6 +491,7 @@ mod tests {
                 path: scan_dir.path().join("never_registered.mp4"),
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -464,6 +521,7 @@ mod tests {
                 path: video_path,
             },
             &notifier,
+            &FollowUp::noop(),
         );
 
         assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
@@ -487,12 +545,19 @@ mod tests {
             thumbs_root.path(),
             event(),
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         // A second event for the exact same, unchanged file must classify
         // as Unchanged (no DB write) and therefore must not notify.
         let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(&db, thumbs_root.path(), event(), &notifier);
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            event(),
+            &notifier,
+            &FollowUp::noop(),
+        );
 
         assert_eq!(
             notifier.calls(),
@@ -516,6 +581,7 @@ mod tests {
                 path: scan_dir.path().join("never_registered.mp4"),
             },
             &notifier,
+            &FollowUp::noop(),
         );
 
         assert_eq!(
@@ -540,6 +606,7 @@ mod tests {
                 path: video_path.clone(),
             },
             &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
         );
 
         let notifier = FakeCatalogNotifier::default();
@@ -551,6 +618,7 @@ mod tests {
                 path: video_path,
             },
             &notifier,
+            &FollowUp::noop(),
         );
 
         assert_eq!(
@@ -585,6 +653,7 @@ mod tests {
             &folders,
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
+            Arc::new(FollowUp::noop()),
         );
 
         let event = |kind| WatchEvent {
@@ -645,6 +714,7 @@ mod tests {
             &folders,
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
+            Arc::new(FollowUp::noop()),
         );
 
         assert_eq!(handles.len(), 1);
@@ -878,5 +948,163 @@ mod tests {
             count, 1,
             "the initial diff-scan should register the file within 5s"
         );
+    }
+
+    /// A `FollowUp` that never fires during a test, so `has_pending` can be
+    /// asserted deterministically.
+    fn parked_follow_up() -> FollowUp {
+        FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {})
+    }
+
+    fn created_event(path: &Path) -> WatchEvent {
+        WatchEvent {
+            kind: WatchEventKind::Created,
+            path: path.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn handle_watch_event_triggers_follow_up_on_a_new_registration() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let video_path = scan_dir.path().join("movie.mp4");
+        fs::write(&video_path, b"bytes").unwrap();
+        let follow_up = parked_follow_up();
+
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            &FakeCatalogNotifier::default(),
+            &follow_up,
+        );
+
+        assert!(follow_up.has_pending());
+    }
+
+    #[test]
+    fn handle_watch_event_does_not_trigger_follow_up_when_unchanged() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let video_path = scan_dir.path().join("movie.mp4");
+        fs::write(&video_path, b"bytes").unwrap();
+        let notifier = FakeCatalogNotifier::default();
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            &notifier,
+            &FollowUp::noop(),
+        );
+
+        let follow_up = parked_follow_up();
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            &notifier,
+            &follow_up,
+        );
+
+        assert!(!follow_up.has_pending());
+    }
+
+    #[test]
+    fn handle_watch_event_does_not_trigger_follow_up_on_removal() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let video_path = scan_dir.path().join("movie.mp4");
+        fs::write(&video_path, b"bytes").unwrap();
+        let notifier = FakeCatalogNotifier::default();
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            &notifier,
+            &FollowUp::noop(),
+        );
+
+        let follow_up = parked_follow_up();
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            WatchEvent {
+                kind: WatchEventKind::Removed,
+                path: video_path,
+            },
+            &notifier,
+            &follow_up,
+        );
+
+        assert!(!follow_up.has_pending());
+    }
+
+    #[test]
+    fn local_folder_gets_a_startup_diff_scan_that_is_stopped_by_the_next_reconfigure() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let local_dir = tempfile::tempdir().unwrap();
+        fs::write(local_dir.path().join("movie.mp4"), b"bytes").unwrap();
+
+        let mut drive_type = FakeDriveTypeDetector::default();
+        drive_type
+            .results
+            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
+        let watcher = FakeFileWatcher {
+            watch_result: Ok(()),
+            ..Default::default()
+        };
+        let manager = RealtimeWatchManager::default();
+        let ctx = || WatchContext {
+            db: db.clone(),
+            thumbnails_root: thumbs_root.path().to_path_buf(),
+        };
+
+        manager.reconfigure(
+            ctx(),
+            &[local_dir.path().to_string_lossy().to_string()],
+            &watcher,
+            &drive_type,
+            Duration::from_secs(600),
+            Arc::new(FakeCatalogNotifier::default()),
+        );
+
+        assert_eq!(manager.active_handle_count(), 1);
+        assert_eq!(manager.active_nas_poller_count(), 0);
+        assert_eq!(manager.startup_scans.lock().unwrap().len(), 1);
+        let stop_flag = manager.startup_scans.lock().unwrap()[0].stop_flag();
+        assert!(!stop_flag.load(std::sync::atomic::Ordering::SeqCst));
+
+        let mut count: i64 = 0;
+        for _ in 0..50 {
+            count = db
+                .writer
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+                .unwrap();
+            if count == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            count, 1,
+            "the startup scan should register the file within 5s"
+        );
+
+        manager.reconfigure(
+            ctx(),
+            &[],
+            &watcher,
+            &drive_type,
+            Duration::from_secs(600),
+            Arc::new(FakeCatalogNotifier::default()),
+        );
+        assert!(stop_flag.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(manager.startup_scans.lock().unwrap().len(), 0);
     }
 }
