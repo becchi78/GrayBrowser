@@ -12,6 +12,7 @@
 
 pub mod follow_up;
 pub mod nas_poll;
+pub mod unreadable_retry;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -28,6 +29,7 @@ use crate::events::CatalogNotifier;
 use crate::scan::{self, mtime_from_metadata};
 use follow_up::FollowUp;
 use nas_poll::NasPollHandle;
+use unreadable_retry::{RetryOutcome, UnreadableRetry};
 
 /// Holds the live watch subscriptions/pollers for as long as the app runs.
 /// Managed via `app.manage()`. No explicit shutdown wiring at process exit:
@@ -55,6 +57,9 @@ pub struct RealtimeWatchManager {
     /// `nas_pollers` so that count keeps meaning "network folders polled";
     /// stopped by the next `reconfigure` the same way.
     startup_scans: Mutex<Vec<NasPollHandle>>,
+    /// The retry worker of the current watch set; dropping it (on the next
+    /// `reconfigure`) stops its thread.
+    unreadable_retry: Mutex<Option<Arc<UnreadableRetry>>>,
     follow_up: Arc<FollowUp>,
 }
 
@@ -70,6 +75,7 @@ impl RealtimeWatchManager {
             handles: Mutex::default(),
             nas_pollers: Mutex::default(),
             startup_scans: Mutex::default(),
+            unreadable_retry: Mutex::default(),
             follow_up,
         }
     }
@@ -110,6 +116,7 @@ impl RealtimeWatchManager {
         for scan in self.startup_scans.lock().unwrap().drain(..) {
             scan.stop();
         }
+        self.unreadable_retry.lock().unwrap().take();
 
         let mut local_folders = Vec::new();
         let mut nas_folders = Vec::new();
@@ -128,7 +135,7 @@ impl RealtimeWatchManager {
             }
         }
 
-        let new_handles = start_watching(
+        let (new_handles, new_retry) = start_watching(
             db.clone(),
             thumbnails_root.clone(),
             &local_folders,
@@ -167,6 +174,7 @@ impl RealtimeWatchManager {
         *self.handles.lock().unwrap() = new_handles;
         *self.nas_pollers.lock().unwrap() = new_pollers;
         *self.startup_scans.lock().unwrap() = new_scans;
+        *self.unreadable_retry.lock().unwrap() = Some(new_retry);
     }
 
     pub fn active_handle_count(&self) -> usize {
@@ -215,6 +223,9 @@ pub fn reconfigure_real_watch_manager(
 /// `RealtimeWatchManager::reconfigure`) -- every folder passed in gets a
 /// realtime subscription. A folder that fails to start watching is logged
 /// and skipped; it does not prevent the others from being watched.
+///
+/// The returned `UnreadableRetry` is shared by all the folders' callbacks; its
+/// worker stops once the caller and every callback have dropped it.
 pub fn start_watching<N: CatalogNotifier + 'static>(
     db: Db,
     thumbnails_root: PathBuf,
@@ -222,16 +233,31 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
     watcher: &impl FileWatcher,
     notifier: Arc<N>,
     follow_up: Arc<FollowUp>,
-) -> Vec<Box<dyn WatchHandle>> {
-    folders
+) -> (Vec<Box<dyn WatchHandle>>, Arc<UnreadableRetry>) {
+    let retry = {
+        let (db, thumbnails_root) = (db.clone(), thumbnails_root.clone());
+        let (notifier, follow_up) = (Arc::clone(&notifier), Arc::clone(&follow_up));
+        Arc::new(UnreadableRetry::new(move |path| {
+            process_changed_file(&db, &thumbnails_root, path, notifier.as_ref(), &follow_up)
+        }))
+    };
+    let handles = folders
         .iter()
         .filter_map(|folder| {
             let db = db.clone();
             let thumbnails_root = thumbnails_root.clone();
             let notifier = Arc::clone(&notifier);
             let follow_up = Arc::clone(&follow_up);
+            let retry = Arc::clone(&retry);
             let on_event: Box<dyn Fn(WatchEvent) + Send + Sync> = Box::new(move |event| {
-                handle_watch_event(&db, &thumbnails_root, event, notifier.as_ref(), &follow_up)
+                handle_watch_event(
+                    &db,
+                    &thumbnails_root,
+                    event,
+                    notifier.as_ref(),
+                    &follow_up,
+                    &retry,
+                )
             });
             match watcher.watch(Path::new(folder), on_event) {
                 Ok(handle) => Some(handle),
@@ -241,7 +267,74 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
                 }
             }
         })
-        .collect()
+        .collect();
+    (handles, retry)
+}
+
+/// The per-file step shared by a live `Created`/`Modified` event and the
+/// deferred re-evaluation of a file that was locked earlier, so both have the
+/// same side effects (`notify_changed`, `follow_up.trigger()`).
+fn process_changed_file(
+    db: &Db,
+    thumbnails_root: &Path,
+    path: &Path,
+    notifier: &dyn CatalogNotifier,
+    follow_up: &FollowUp,
+) -> RetryOutcome {
+    // Known, accepted limitation: a large file still being written
+    // (a copy in progress) can fire several Created/Modified events
+    // before it's complete. Each one that reaches here computes
+    // quick_hash (head 1MB + tail 1MB + file_size) against whatever
+    // bytes exist *at that instant* -- necessarily different from
+    // the final value while the tail is still being written. This
+    // self-corrects on the *next* event once the copy finishes: no
+    // debounce is implemented, `process_detected_file` is
+    // idempotent and simply re-classifies/rehashes on each call.
+    // But if the final Created/Modified event for a given copy is
+    // ever missed (e.g. the app closes mid-copy, or a burst of
+    // events gets dropped upstream), a stale/incomplete quick_hash
+    // can persist in the DB -- this then undermines path-follow
+    // (which matches moved files by quick_hash+file_size). Same
+    // category of known limitation as the mtime-preserving-copy gap
+    // in `scan::reconcile_known_path`.
+    //
+    // A copy that holds the destination exclusively (Explorer does) makes the
+    // file unreadable instead, so it surfaces as `SkippedUnreadable`; the
+    // caller retries those until the lock is released.
+    let metadata = match std::fs::metadata(long_path::to_long_path(path)) {
+        Ok(m) => m,
+        Err(_) => return RetryOutcome::Gone, // vanished already; a later event or the next scan will catch it
+    };
+    let file_size = metadata.len();
+    let mtime = match mtime_from_metadata(&metadata) {
+        Ok(secs) => secs,
+        Err(e) => {
+            log::warn!("skipping watch event for {}: {e}", path.display());
+            return RetryOutcome::Done;
+        }
+    };
+    match scan::process_detected_file(db, thumbnails_root, path, file_size, mtime) {
+        Ok(
+            scan::ProcessOutcome::Registered
+            | scan::ProcessOutcome::Reconciled
+            | scan::ProcessOutcome::PathFollowed { .. },
+        ) => {
+            notifier.notify_changed();
+            follow_up.trigger();
+            RetryOutcome::Done
+        }
+        // Locked by a writer (e.g. a copy in progress): the caller retries
+        // later, as no further event is guaranteed once the lock is released.
+        Ok(scan::ProcessOutcome::SkippedUnreadable) => RetryOutcome::StillUnreadable,
+        // Unchanged/SkippedInvalidName/BlockedByCollision (this branch never
+        // actually writes -- see scan::mod's register_new_path doc comment)
+        // -- nothing changed in the catalog, so no emit.
+        Ok(_) => RetryOutcome::Done,
+        Err(e) => {
+            log::error!("failed to process watch event for {}: {e}", path.display());
+            RetryOutcome::Done
+        }
+    }
 }
 
 /// Routes one normalized watch event to the shared per-file pipeline
@@ -257,6 +350,7 @@ fn handle_watch_event(
     event: WatchEvent,
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
+    retry: &UnreadableRetry,
 ) {
     let file_name = match event.path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
@@ -271,57 +365,14 @@ fn handle_watch_event(
 
     match event.kind {
         WatchEventKind::Created | WatchEventKind::Modified => {
-            // Known, accepted limitation: a large file still being written
-            // (a copy in progress) can fire several Created/Modified events
-            // before it's complete. Each one that reaches here computes
-            // quick_hash (head 1MB + tail 1MB + file_size) against whatever
-            // bytes exist *at that instant* -- necessarily different from
-            // the final value while the tail is still being written. This
-            // self-corrects on the *next* event once the copy finishes: no
-            // debounce is implemented, `process_detected_file` is
-            // idempotent and simply re-classifies/rehashes on each call.
-            // But if the final Created/Modified event for a given copy is
-            // ever missed (e.g. the app closes mid-copy, or a burst of
-            // events gets dropped upstream), a stale/incomplete quick_hash
-            // can persist in the DB -- this then undermines path-follow
-            // (which matches moved files by quick_hash+file_size). Same
-            // category of known limitation as the mtime-preserving-copy gap
-            // in `scan::reconcile_known_path`.
-            let metadata = match std::fs::metadata(long_path::to_long_path(&event.path)) {
-                Ok(m) => m,
-                Err(_) => return, // vanished already; a later event or the next scan will catch it
-            };
-            let file_size = metadata.len();
-            let mtime = match mtime_from_metadata(&metadata) {
-                Ok(secs) => secs,
-                Err(e) => {
-                    log::warn!("skipping watch event for {}: {e}", event.path.display());
-                    return;
-                }
-            };
-            match scan::process_detected_file(db, thumbnails_root, &event.path, file_size, mtime) {
-                Ok(
-                    scan::ProcessOutcome::Registered
-                    | scan::ProcessOutcome::Reconciled
-                    | scan::ProcessOutcome::PathFollowed { .. },
-                ) => {
-                    notifier.notify_changed();
-                    follow_up.trigger();
-                }
-                // Unchanged/SkippedInvalidName/SkippedUnreadable/
-                // BlockedByCollision (this branch never actually
-                // writes -- see scan::mod's register_new_path doc comment)
-                // -- nothing changed in the catalog, so no emit.
-                Ok(_) => {}
-                Err(e) => {
-                    log::error!(
-                        "failed to process watch event for {}: {e}",
-                        event.path.display()
-                    );
-                }
+            if process_changed_file(db, thumbnails_root, &event.path, notifier, follow_up)
+                == RetryOutcome::StillUnreadable
+            {
+                retry.defer(&event.path);
             }
         }
         WatchEventKind::Removed => {
+            retry.remove(&event.path);
             // No broken-enumeration guard needed here (unlike
             // reconcile_missing_videos'/run_nas_diff_scan's use of
             // decide_missing_video_ids): a `notify` Removed event is a
@@ -400,6 +451,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -426,6 +478,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -452,6 +505,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         handle_watch_event(
@@ -463,6 +517,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -492,6 +547,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let conn = db.writer.lock().unwrap();
@@ -522,6 +578,7 @@ mod tests {
             },
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
@@ -546,6 +603,7 @@ mod tests {
             event(),
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         // A second event for the exact same, unchanged file must classify
@@ -557,6 +615,7 @@ mod tests {
             event(),
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         assert_eq!(
@@ -582,6 +641,7 @@ mod tests {
             },
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         assert_eq!(
@@ -607,6 +667,7 @@ mod tests {
             },
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let notifier = FakeCatalogNotifier::default();
@@ -619,6 +680,7 @@ mod tests {
             },
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         assert_eq!(
@@ -708,7 +770,7 @@ mod tests {
             ..Default::default()
         };
         let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-        let handles = start_watching(
+        let (handles, _retry) = start_watching(
             db.clone(),
             thumbs_root.path().to_path_buf(),
             &folders,
@@ -978,6 +1040,7 @@ mod tests {
             created_event(&video_path),
             &FakeCatalogNotifier::default(),
             &follow_up,
+            &UnreadableRetry::noop(),
         );
 
         assert!(follow_up.has_pending());
@@ -997,6 +1060,7 @@ mod tests {
             created_event(&video_path),
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let follow_up = parked_follow_up();
@@ -1006,6 +1070,7 @@ mod tests {
             created_event(&video_path),
             &notifier,
             &follow_up,
+            &UnreadableRetry::noop(),
         );
 
         assert!(!follow_up.has_pending());
@@ -1025,6 +1090,7 @@ mod tests {
             created_event(&video_path),
             &notifier,
             &FollowUp::noop(),
+            &UnreadableRetry::noop(),
         );
 
         let follow_up = parked_follow_up();
@@ -1037,9 +1103,169 @@ mod tests {
             },
             &notifier,
             &follow_up,
+            &UnreadableRetry::noop(),
         );
 
         assert!(!follow_up.has_pending());
+    }
+
+    #[cfg(windows)]
+    fn open_exclusively(path: &Path) -> fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Share mode 0 is what an in-progress Explorer copy holds: every other
+        // open of the file fails with a sharing violation (os error 32).
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .share_mode(0)
+            .open(path)
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    fn video_count(db: &Db) -> i64 {
+        db.writer
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Starts a real `UnreadableRetry` wired like `start_watching` does, with a
+    /// short interval.
+    #[cfg(windows)]
+    fn fast_retry(
+        db: &Db,
+        thumbs_root: &Path,
+        notifier: &Arc<FakeCatalogNotifier>,
+    ) -> UnreadableRetry {
+        let (db, thumbs_root, notifier) =
+            (db.clone(), thumbs_root.to_path_buf(), Arc::clone(notifier));
+        UnreadableRetry::with_timing(
+            Duration::from_millis(30),
+            Duration::from_secs(60),
+            move |path| {
+                process_changed_file(
+                    &db,
+                    &thumbs_root,
+                    path,
+                    notifier.as_ref(),
+                    &FollowUp::noop(),
+                )
+            },
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_file_is_deferred_and_registered_once_the_lock_is_released() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let video_path = scan_dir.path().join("copying.mp4");
+        let lock = open_exclusively(&video_path);
+        // The lock must really make the file unreadable, or this test would
+        // pass without reproducing anything.
+        assert_eq!(
+            fs::File::open(&video_path).unwrap_err().raw_os_error(),
+            Some(32)
+        );
+        let notifier = Arc::new(FakeCatalogNotifier::default());
+        let retry = fast_retry(&db, thumbs_root.path(), &notifier);
+
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            notifier.as_ref(),
+            &FollowUp::noop(),
+            &retry,
+        );
+        assert_eq!(retry.pending_count(), 1);
+
+        // Several retry rounds pass while still locked: nothing registers.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(video_count(&db), 0);
+        assert_eq!(retry.pending_count(), 1);
+
+        {
+            use std::io::Write;
+            let mut lock = lock;
+            lock.write_all(b"finished copy").unwrap();
+        }
+
+        let mut registered = false;
+        for _ in 0..100 {
+            if video_count(&db) == 1 && retry.pending_count() == 0 {
+                registered = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(registered, "the retry must register the file after unlock");
+        assert_eq!(notifier.calls(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_removed_event_drops_a_deferred_file() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let video_path = scan_dir.path().join("copying.mp4");
+        let _lock = open_exclusively(&video_path);
+        let notifier = Arc::new(FakeCatalogNotifier::default());
+        // Parked worker: the pending count is deterministic.
+        let retry =
+            UnreadableRetry::with_timing(Duration::from_secs(60), Duration::from_secs(60), |_| {
+                RetryOutcome::StillUnreadable
+            });
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&video_path),
+            notifier.as_ref(),
+            &FollowUp::noop(),
+            &retry,
+        );
+        assert_eq!(retry.pending_count(), 1);
+
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            WatchEvent {
+                kind: WatchEventKind::Removed,
+                path: video_path,
+            },
+            notifier.as_ref(),
+            &FollowUp::noop(),
+            &retry,
+        );
+
+        assert_eq!(retry.pending_count(), 0);
+    }
+
+    #[test]
+    fn a_file_that_vanished_is_not_deferred() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let retry =
+            UnreadableRetry::with_timing(Duration::from_secs(60), Duration::from_secs(60), |_| {
+                RetryOutcome::StillUnreadable
+            });
+
+        handle_watch_event(
+            &db,
+            thumbs_root.path(),
+            created_event(&scan_dir.path().join("gone.mp4")),
+            &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
+            &retry,
+        );
+
+        assert_eq!(retry.pending_count(), 0);
     }
 
     #[test]
