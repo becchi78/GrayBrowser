@@ -3,6 +3,7 @@
 //! This crate must never depend on `tauri`, `rusqlite`, or any process-spawning
 //! crate, and must never contain `#[cfg(windows)]`.
 
+pub mod backup;
 pub mod dedup;
 pub mod filename_validation;
 pub mod hash;

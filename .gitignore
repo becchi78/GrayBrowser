@@ -38,8 +38,10 @@ tests/fixtures/wb/local/
 # artifact instead of committing them.
 e2e/screenshots/
 
-# Local DB backups (e.g. manual `cp app.db app.db.bak` before a risky
-# operation) -- may contain real catalog data, must never be committed.
+# Ad-hoc local DB copies (e.g. `cp app.db app.db.bak` before a risky
+# operation) -- may contain real catalog data, must never be committed. The
+# app's own backups live in `<app dir>/backups/` (see docs/backup.md), which
+# sits outside the repo for installed builds and under /target for dev runs.
 *.db.bak
 
 # Personal Claude Code permission overrides -- machine-local, must never be

@@ -29,6 +29,7 @@ fn greet(name: &str) -> String {
 const MENU_ITEM_FOLDER_MANAGE: &str = "menu-folder-manage";
 const MENU_ITEM_WB_IMPORT: &str = "menu-wb-import";
 const MENU_ITEM_TAG_BAR_MANAGE: &str = "menu-tag-bar-manage";
+const MENU_ITEM_DB_BACKUP: &str = "menu-db-backup";
 const MENU_ITEM_ABOUT: &str = "menu-about";
 // The "スタイル" menu. Only one style ("Default") exists today, so there is
 // nothing to select between yet -- the item exists so the menu bar has the
@@ -36,6 +37,43 @@ const MENU_ITEM_ABOUT: &str = "menu-about";
 // (see `on_menu_event` below). Extend this to real mutual-exclusion once a
 // second style is added.
 const MENU_ITEM_STYLE_DEFAULT: &str = "menu-style-default";
+
+fn run_manual_backup(app_handle: tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    std::thread::spawn(move || {
+        let outcome = (|| -> anyhow::Result<std::path::PathBuf> {
+            let app_dir = paths::app_data_dir()?;
+            let db = app_handle.state::<db::Db>();
+            let conn = db.read_pool.get()?;
+            db::backup::create_backup(
+                &conn,
+                &db::backup::backups_dir(&app_dir),
+                gb_core::backup::BackupKind::Manual,
+                db::backup::unix_now(),
+            )
+        })();
+        let (message, kind) = match outcome {
+            Ok(path) => (
+                format!("バックアップを作成しました。\n{}", path.display()),
+                MessageDialogKind::Info,
+            ),
+            Err(e) => {
+                log::error!("manual database backup failed: {e:#}");
+                (
+                    format!("バックアップに失敗しました。\n{e:#}"),
+                    MessageDialogKind::Error,
+                )
+            }
+        };
+        app_handle
+            .dialog()
+            .message(message)
+            .title("データベースをバックアップ")
+            .kind(kind)
+            .show(|_| {});
+    });
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -156,10 +194,15 @@ pub fn run() {
                 MenuItemBuilder::with_id(MENU_ITEM_FOLDER_MANAGE, "フォルダ管理...").build(app)?;
             let wb_import_item =
                 MenuItemBuilder::with_id(MENU_ITEM_WB_IMPORT, ".wbインポート...").build(app)?;
+            let db_backup_item =
+                MenuItemBuilder::with_id(MENU_ITEM_DB_BACKUP, "データベースをバックアップ")
+                    .build(app)?;
             let quit_item = PredefinedMenuItem::quit(app, Some("終了"))?;
             let file_menu = SubmenuBuilder::new(app, "ファイル")
                 .item(&folder_manage_item)
                 .item(&wb_import_item)
+                .separator()
+                .item(&db_backup_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -211,6 +254,14 @@ pub fn run() {
                     if let Err(e) = app_handle.emit("menu:style-selected", "default") {
                         log::error!("failed to emit menu:style-selected: {e}");
                     }
+                    return;
+                }
+
+                // Handled entirely in Rust (no frontend modal involved): the
+                // backup runs off the event-loop thread and reports through a
+                // native message dialog.
+                if event.id().as_ref() == MENU_ITEM_DB_BACKUP {
+                    run_manual_backup(app_handle.clone());
                     return;
                 }
 
