@@ -271,9 +271,6 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
               ))}
             </ul>
           )}
-          <p className="folder-dialog-note">
-            ✎ パス編集は既存レコードを維持／✕ 登録解除は確認ダイアログを必須とし、失われるカタログ情報の件数を表示する
-          </p>
           {renameSummary && (
             <p className="folder-dialog-rename-summary" data-testid="folder-dialog-rename-summary">
               {renameSummary}

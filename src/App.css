@@ -1308,12 +1308,6 @@ button:disabled {
   font-size: 0.85em;
 }
 
-.folder-dialog-note {
-  font-size: 0.8em;
-  opacity: 0.7;
-  margin: 0;
-}
-
 .folder-dialog-scan-row {
   display: flex;
   align-items: center;
