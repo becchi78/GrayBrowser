@@ -86,6 +86,11 @@ export interface DuplicateGroupMember {
   file_size: number;
   status: "online" | "offline";
   created_at: string;
+  /** 秒。未取得なら null。 */
+  duration: number | null;
+  /** probe 未実施・取得不能なら null。 */
+  width: number | null;
+  height: number | null;
 }
 
 export type DuplicateGroupKind =

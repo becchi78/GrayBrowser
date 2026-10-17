@@ -6,7 +6,8 @@ import {
   refreshDuplicateGroups,
 } from "../api";
 import { onDedupUpdated } from "../events";
-import { splitDirAndFileName } from "../lib/paths";
+import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
+import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
 
 const KIND_LABELS: Record<DuplicateGroupKind, string> = {
@@ -62,8 +63,8 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
 
   async function handleDelete(member: DuplicateGroupMember) {
     const confirmed = window.confirm(
-      "このカタログエントリを削除しますか？\n" +
-        "※元の動画ファイル自体は削除されません。カタログからの登録のみ削除されます。",
+      "このカタログ登録を解除しますか？\n" +
+        "※元の動画ファイルは削除されません。カタログへの登録のみ解除されます。",
     );
     if (!confirmed) {
       return;
@@ -111,20 +112,11 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
       ) : (
         <ul className="duplicate-groups-list">
           {groups.map((group, index) => (
-            <li key={index} className="duplicate-group">
-              <div className="duplicate-group-header">
-                <span className="duplicate-group-kind">{KIND_LABELS[group.kind]}</span>
-              </div>
-              <ul className="duplicate-group-members">
-                {group.members.map((member) => (
-                  <DuplicateGroupMemberRow
-                    key={member.video_id}
-                    member={member}
-                    onDelete={() => handleDelete(member)}
-                  />
-                ))}
-              </ul>
-            </li>
+            <DuplicateGroupItem
+              key={index}
+              group={group}
+              onDelete={handleDelete}
+            />
           ))}
         </ul>
       )}
@@ -132,11 +124,51 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
   );
 }
 
+function DuplicateGroupItem({
+  group,
+  onDelete,
+}: {
+  group: DuplicateGroup;
+  onDelete: (member: DuplicateGroupMember) => void;
+}) {
+  // 登録日時の古い順に並べる。先に登録された方が「元」である可能性が高く、
+  // 毎回同じ順序で並ぶので見比べるときに位置が入れ替わらない。
+  // created_at は固定幅の文字列なので辞書順比較でよい。
+  const members = [...group.members].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+  );
+  const diff = computeDuplicateDiff(members);
+
+  return (
+    <li className="duplicate-group">
+      <div className="duplicate-group-header">
+        <span className="duplicate-group-kind">{KIND_LABELS[group.kind]}</span>
+      </div>
+      <ul className="duplicate-group-members">
+        {members.map((member) => (
+          <DuplicateGroupMemberRow
+            key={member.video_id}
+            member={member}
+            diff={diff}
+            onDelete={() => onDelete(member)}
+          />
+        ))}
+      </ul>
+    </li>
+  );
+}
+
+function diffClass(differs: boolean): string | undefined {
+  return differs ? "duplicate-group-member-diff" : undefined;
+}
+
 function DuplicateGroupMemberRow({
   member,
+  diff,
   onDelete,
 }: {
   member: DuplicateGroupMember;
+  diff: DuplicateDiff;
   onDelete: () => void;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
@@ -175,23 +207,37 @@ function DuplicateGroupMemberRow({
         )}
       </div>
       <div className="duplicate-group-member-info">
-        <span className="duplicate-group-member-name">{member.file_name}</span>
-        {(() => {
-          const { dir, name } = splitDirAndFileName(member.file_path);
-          return (
-            <span className="file-path-row" title={member.file_path}>
-              <span className="file-path-dir">{dir}</span>
-              <span className="file-path-file">{name}</span>
-            </span>
-          );
-        })()}
-        <span className="duplicate-group-member-meta">
-          {isOffline && <span className="thumbnail-offline-badge">オフライン</span>}
-          <span>登録日時: {member.created_at}</span>
+        <span className="duplicate-group-member-path" title={member.file_path}>
+          {member.file_path}
         </span>
+        {isOffline && (
+          <span className="duplicate-group-member-meta">
+            <span className="thumbnail-offline-badge">オフライン</span>
+          </span>
+        )}
+        <dl className="duplicate-group-member-props">
+          <div>
+            <dt>サイズ</dt>
+            <dd className={diffClass(diff.file_size)}>{formatFileSize(member.file_size)}</dd>
+          </div>
+          <div>
+            <dt>再生時間</dt>
+            <dd className={diffClass(diff.duration)}>{formatDuration(member.duration)}</dd>
+          </div>
+          <div>
+            <dt>解像度</dt>
+            <dd className={diffClass(diff.resolution)}>
+              {formatResolution(member.width, member.height)}
+            </dd>
+          </div>
+          <div>
+            <dt>登録日時</dt>
+            <dd>{member.created_at}</dd>
+          </div>
+        </dl>
       </div>
       <button type="button" className="duplicate-group-member-delete" onClick={onDelete}>
-        削除
+        登録解除
       </button>
     </li>
   );

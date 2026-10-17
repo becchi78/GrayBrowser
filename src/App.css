@@ -985,16 +985,6 @@ button:disabled {
   flex: 1;
 }
 
-.duplicate-group-member-name {
-  font-weight: 500;
-  /* No longer truncated -- the file name is the core piece of
-     information this row exists to show, so if the panel is too narrow
-     to fit it on one line, it wraps instead of losing characters off the
-     end. `SkippedFilesPanel`'s `.skipped-file-name` already worked this
-     way (it never had an overflow/ellipsis rule to begin with); this just
-     brings the other two panels in line with it. */
-}
-
 /* Shared by DuplicateGroupsPanel's `-path` row and
    GenerationFailuresPanel's `-path` row (`.file-path-*`, not
    `.duplicate-group-*`/`.generation-failure-*`, since both panels render
@@ -1029,12 +1019,57 @@ button:disabled {
   opacity: 0.75;
 }
 
+/* 重複パネルのパスはディレクトリとファイル名を分けず1本の文字列として
+   表示する。分けると残り幅の配分でファイル名との間に空きが出るため。
+   ファイル名が唯一の識別情報なので省略記号では切らず、長いパスは折り返す。 */
+.duplicate-group-member-path {
+  font-size: 0.8em;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
 .duplicate-group-member-meta {
   display: flex;
   align-items: center;
   gap: 0.5em;
   font-size: 0.8em;
   opacity: 0.8;
+}
+
+/* ラベルと値のペアを横に並べ、パネル幅が足りないときだけ折り返す。
+   縦に積むとメンバー1件あたりの高さが増えて、グループ内を見比べる
+   ときのスクロールが増えるため。項目の順序は全メンバーで同じ。 */
+.duplicate-group-member-props {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1em 1em;
+  margin: 0.2em 0 0;
+  font-size: 0.85em;
+}
+
+.duplicate-group-member-props > div {
+  display: flex;
+  gap: 0.4em;
+}
+
+.duplicate-group-member-props dt {
+  opacity: 0.7;
+}
+
+.duplicate-group-member-props dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* グループ内で値が揃っていない項目。色だけに頼らず太字にもして、
+   配色が見分けにくい環境でも違いが分かるようにする。 */
+.duplicate-group-member-diff {
+  font-weight: 700;
+  background-color: #fff1c2;
+  color: #5a3d00;
+  border-radius: 3px;
+  padding: 0 0.3em;
 }
 
 .duplicate-group-member-delete {
@@ -1098,8 +1133,8 @@ button:disabled {
 
 .generation-failure-name {
   font-weight: 500;
-  /* Same "don't truncate the file name, wrap instead" change as
-     `.duplicate-group-member-name` above. */
+  /* The file name is the core piece of information this row exists to
+     show, so it is not truncated; it wraps instead. */
 }
 
 /* `-path` row itself uses the shared `.file-path-row`/
@@ -1488,6 +1523,11 @@ button:disabled {
 
   .duplicate-group {
     border-color: #555;
+  }
+
+  .duplicate-group-member-diff {
+    background-color: #5a4a14;
+    color: #ffe9a8;
   }
 
   .duplicate-group-member-thumb img,
