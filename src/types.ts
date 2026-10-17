@@ -86,6 +86,14 @@ export interface DuplicateGroupMember {
   file_size: number;
   status: "online" | "offline";
   created_at: string;
+  /** 秒。未取得なら null。 */
+  duration: number | null;
+  /** 0 = 未評価。 */
+  rating: number;
+  /** Unix エポック秒。取得できなければ null。 */
+  mtime: number | null;
+  /** タグ名（名前順）。無ければ空配列。 */
+  tags: string[];
 }
 
 export type DuplicateGroupKind =

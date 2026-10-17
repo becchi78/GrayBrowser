@@ -10,12 +10,16 @@ use crate::dedup::{self, DuplicateGroup, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
 
 /// Returns the most recently detected duplicate groups
-/// (`dedup::refresh_duplicate_groups`'s last completed run's snapshot).
-/// Does not itself trigger detection -- call `refresh_duplicate_groups` for
-/// that; this just reads `DuplicateGroupsState`.
+/// (`dedup::refresh_duplicate_groups`'s last completed run's snapshot), with
+/// each member's row values re-read from the DB so rating/tag edits made
+/// since detection are visible. Does not itself trigger detection -- call
+/// `refresh_duplicate_groups` for that.
 #[tauri::command]
-pub fn list_duplicate_groups(state: State<DuplicateGroupsState>) -> Vec<DuplicateGroup> {
-    state.get()
+pub fn list_duplicate_groups(
+    db: State<Db>,
+    state: State<DuplicateGroupsState>,
+) -> Vec<DuplicateGroup> {
+    dedup::refresh_group_members(&db, state.get())
 }
 
 /// Fire-and-forget: kicks off a fresh duplicate-detection pass in the

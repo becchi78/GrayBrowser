@@ -1037,6 +1037,36 @@ button:disabled {
   opacity: 0.8;
 }
 
+/* ラベルと値を2列で縦に並べる。メンバー間で同じ項目が同じ幅・順序に
+   並ぶので、行をまたいで見比べやすい。 */
+.duplicate-group-member-props {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.1em 0.75em;
+  margin: 0.2em 0 0;
+  font-size: 0.85em;
+}
+
+.duplicate-group-member-props dt {
+  opacity: 0.7;
+}
+
+.duplicate-group-member-props dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* グループ内で値が揃っていない項目。色だけに頼らず太字にもして、
+   配色が見分けにくい環境でも違いが分かるようにする。 */
+.duplicate-group-member-diff {
+  font-weight: 700;
+  background-color: #fff1c2;
+  color: #5a3d00;
+  border-radius: 3px;
+  padding: 0 0.3em;
+}
+
 .duplicate-group-member-delete {
   flex-shrink: 0;
 }
@@ -1488,6 +1518,11 @@ button:disabled {
 
   .duplicate-group {
     border-color: #555;
+  }
+
+  .duplicate-group-member-diff {
+    background-color: #5a4a14;
+    color: #ffe9a8;
   }
 
   .duplicate-group-member-thumb img,

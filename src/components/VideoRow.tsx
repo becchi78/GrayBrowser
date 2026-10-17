@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getThumbnails, getVideoProperties, playVideo } from "../api";
+import { formatDuration, formatFileSize } from "../lib/format";
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { StarRating } from "./StarRating";
@@ -16,22 +17,6 @@ interface Props {
 // Every video shows exactly 6 evenly-spaced thumbnails (replaces the old
 // grid's single thumbnail-per-cell).
 const THUMBNAILS_PER_VIDEO = 6;
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "不明";
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
-}
-
-function formatFileSize(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
-}
 
 function formatBitrate(bps: number | null): string {
   if (bps === null) return "不明";
