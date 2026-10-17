@@ -3,7 +3,7 @@
 // with here.
 
 import { listen } from "@tauri-apps/api/event";
-import type { DuplicateGroup, WbImportProgress, WbImportSummary } from "./types";
+import type { DuplicateGroup, ThumbnailProgress, WbImportProgress, WbImportSummary } from "./types";
 
 /**
  * Subscribes to a Tauri event and returns an unlisten function. Safe to
@@ -36,6 +36,13 @@ function subscribe<T>(eventName: string, handler: (payload: T) => void): () => v
  */
 export function onCatalogChanged(cb: () => void): () => void {
   return subscribe<void>("catalog:changed", cb);
+}
+
+/**
+ * Subscribes to thumbnail:progress (background thumbnail generation).
+ */
+export function onThumbnailProgress(cb: (progress: ThumbnailProgress) => void): () => void {
+  return subscribe<ThumbnailProgress>("thumbnail:progress", cb);
 }
 
 /**

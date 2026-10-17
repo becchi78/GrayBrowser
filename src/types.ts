@@ -156,3 +156,9 @@ export interface ScanSummary {
   /** A path-follow candidate existed but its target path collided with an online row; registered as a new row instead. */
   collisions: number;
 }
+
+/** `total === 0` means no thumbnail generation is in progress. */
+export interface ThumbnailProgress {
+  done: number;
+  total: number;
+}
