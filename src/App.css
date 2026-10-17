@@ -188,6 +188,19 @@ button.search-box-clear {
   gap: 0.5em;
 }
 
+/* 検索欄(flex: 1)が余白を使うため、行の右端(並び替えの右)に並ぶ。
+   押下状態は枠線色と薄い背景で示し、ライト/ダークどちらでも読めるよう
+   半透明の青を使う。 */
+.info-pane-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.info-pane-toggle[aria-pressed="true"] {
+  border-color: #396cd8;
+  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+}
+
 /* Outer row: holds `.tag-bar-row` (the chip row, see below) and
    `.tag-bar-overflow` (the ▾ toggle + its popover) side by side.
    Deliberately does NOT have `overflow: hidden` itself -- see
@@ -775,6 +788,13 @@ button.search-box-clear {
      `VIDEO_LIST_MIN_WIDTH_PX` must match this column's width -- see those
      rules' own comments. */
   font-size: 0.85em;
+}
+
+/* 情報列を全行まとめて隠す。`.video-row`はflexなので、消えた300px分は
+   `.video-row-thumbnails-wrap`(内容幅まで伸び、足りなければ内部で横スクロール)
+   が使う。`.video-list`のmin-widthは据え置き(`sidebarResize.ts`と整合させるため)。 */
+.video-list--info-collapsed .video-row-info {
+  display: none;
 }
 
 /* Real-data measurement: `StarRating`/`TagEditor` reuse the global

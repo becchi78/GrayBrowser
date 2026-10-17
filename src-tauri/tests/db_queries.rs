@@ -474,3 +474,36 @@ fn tag_bar_pinned_tag_ids_self_healing_skips_the_tags_table_when_persisted_list_
         Vec::<i64>::new()
     );
 }
+
+#[test]
+fn info_pane_collapsed_defaults_to_false_when_unset() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
+}
+
+#[test]
+fn info_pane_collapsed_round_trips_through_set_and_get() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    queries::set_info_pane_collapsed(&conn, true).unwrap();
+    assert!(queries::get_info_pane_collapsed(&conn).unwrap());
+
+    queries::set_info_pane_collapsed(&conn, false).unwrap();
+    assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
+}
+
+#[test]
+fn info_pane_collapsed_treats_unrecognized_value_as_false() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('info_pane_collapsed', 'yes')",
+        [],
+    )
+    .unwrap();
+    assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
+}

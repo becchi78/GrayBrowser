@@ -307,6 +307,8 @@ pub fn run() {
             commands::tag_cmds::remove_tag,
             commands::tag_cmds::list_tags_for_video,
             commands::tag_cmds::list_all_tags,
+            commands::info_pane_cmds::get_info_pane_collapsed,
+            commands::info_pane_cmds::set_info_pane_collapsed,
             commands::tag_bar_cmds::get_tag_bar_pinned_tag_ids,
             commands::tag_bar_cmds::set_tag_bar_pinned_tag_ids,
             commands::rating_cmds::set_rating,
