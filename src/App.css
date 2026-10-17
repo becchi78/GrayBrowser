@@ -145,9 +145,41 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.search-box {
+/* 入力欄の右端に✕を重ねるための相対配置。元の`.search-box`のflex指定は
+   ラッパー側に移し、行内での伸縮は従来どおりにする。 */
+.search-box-wrap {
+  position: relative;
+  display: flex;
   flex: 1;
   min-width: 12em;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 0;
+  /* ✕と文字が重ならないよう右側を空ける。 */
+  padding-right: 2em;
+}
+
+/* 汎用の`button:active`の背景指定より詳細度を上げて、押下中も✕の背景が
+   灰色にならないようにする。 */
+button.search-box-clear {
+  position: absolute;
+  right: 0.3em;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 0.4em;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  font-size: 0.85em;
+  line-height: 1.5;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.search-box-clear:hover {
+  opacity: 1;
 }
 
 .sort-control {
@@ -1072,8 +1104,25 @@ button:disabled {
   padding: 0 0.3em;
 }
 
-.duplicate-group-member-delete {
+.duplicate-group-member-delete,
+.duplicate-group-member-play {
   flex-shrink: 0;
+}
+
+/* サムネイルのクリックで再生できることを示す。オフラインのメンバーには
+   このクラスを付けず、通常の矢印カーソルのままにする。 */
+.duplicate-group-member-thumb--playable {
+  cursor: pointer;
+}
+
+.duplicate-group-member-play-note {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.duplicate-group-member-play-error {
+  font-size: 0.85em;
+  color: #b00020;
 }
 
 .generation-failures-panel {
@@ -1152,9 +1201,17 @@ button:disabled {
   gap: 0.2em;
 }
 
+/* ★の色は背景の明暗で変えるため変数にしておく(ダーク側は下の
+   prefers-color-scheme ブロックで上書き)。未選択は同じ黄色を薄くして、
+   色相は揃えたまま選択状態だけ区別する。 */
+:root {
+  --star-color: #f5c518;
+}
+
 .star {
   padding: 0.1em 0.3em;
   font-size: 1.2em;
+  color: var(--star-color);
   opacity: 0.4;
 }
 
@@ -1452,6 +1509,7 @@ button:disabled {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
+    --star-color: #ffd54a;
   }
 
   input,
@@ -1462,6 +1520,11 @@ button:disabled {
   }
   button:active {
     background-color: #0f0f0f69;
+  }
+
+  /* 上の`button`の背景指定より詳細度を上げて、✕を入力欄に溶け込ませる。 */
+  button.search-box-clear {
+    background: transparent;
   }
 
   .ffmpeg-notice {
@@ -1517,7 +1580,8 @@ button:disabled {
     color: #f3caca;
   }
 
-  .duplicate-groups-error {
+  .duplicate-groups-error,
+  .duplicate-group-member-play-error {
     color: #f3caca;
   }
 

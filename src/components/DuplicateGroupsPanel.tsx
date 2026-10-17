@@ -3,6 +3,7 @@ import {
   deleteDuplicateVideo,
   getThumbnails,
   listDuplicateGroups,
+  playVideo,
   refreshDuplicateGroups,
 } from "../api";
 import { onDedupUpdated } from "../events";
@@ -172,7 +173,19 @@ function DuplicateGroupMemberRow({
   onDelete: () => void;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
   const isOffline = member.status === "offline";
+
+  async function handlePlay() {
+    if (isOffline) return;
+    setPlayError(null);
+    try {
+      await playVideo(member.file_path);
+    } catch (e) {
+      console.error(e);
+      setPlayError(`再生に失敗しました: ${String(e)}`);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -197,7 +210,14 @@ function DuplicateGroupMemberRow({
           : "duplicate-group-member"
       }
     >
-      <div className="duplicate-group-member-thumb">
+      <div
+        className={
+          isOffline
+            ? "duplicate-group-member-thumb"
+            : "duplicate-group-member-thumb duplicate-group-member-thumb--playable"
+        }
+        onClick={isOffline ? undefined : handlePlay}
+      >
         {dataUrl ? (
           <img src={dataUrl} alt={member.file_name} loading="lazy" />
         ) : (
@@ -235,7 +255,19 @@ function DuplicateGroupMemberRow({
             <dd>{member.created_at}</dd>
           </div>
         </dl>
+        {isOffline && (
+          <span className="duplicate-group-member-play-note">オフラインのため再生できません</span>
+        )}
+        {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
       </div>
+      <button
+        type="button"
+        className="duplicate-group-member-play"
+        onClick={handlePlay}
+        disabled={isOffline}
+      >
+        再生
+      </button>
       <button type="button" className="duplicate-group-member-delete" onClick={onDelete}>
         登録解除
       </button>
