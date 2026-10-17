@@ -5,7 +5,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 const DIALOG_MESSAGE =
-  "tauri-plugin-dialog が window.confirm を非同期関数に差し替え、Promise を返すため、確認が機能しない。自前のモーダル(ConfirmDialog)を使うこと";
+  "tauri-plugin-dialog が window.confirm / alert / prompt を非同期関数に差し替え、Promise を返すため、確認が機能しない。自前のモーダル(ConfirmDialog)を使うこと";
 
 export default tseslint.config(
   // "target" (not "src-tauri/target"): PR1's Cargo workspace split moved the
@@ -28,11 +28,14 @@ export default tseslint.config(
       // 効かず、確認なしで処理が進んでしまう（型検査でも検出できない）。
       "no-restricted-properties": [
         "error",
-        ...["confirm", "alert", "prompt"].map((property) => ({
-          object: "window",
-          property,
-          message: DIALOG_MESSAGE,
-        })),
+        // globalThis / self も同じ関数を指すため、window だけでは抜け道になる。
+        ...["window", "globalThis", "self"].flatMap((object) =>
+          ["confirm", "alert", "prompt"].map((property) => ({
+            object,
+            property,
+            message: DIALOG_MESSAGE,
+          })),
+        ),
       ],
       "no-restricted-globals": [
         "error",

@@ -159,7 +159,10 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
             <DuplicateGroupItem
               key={index}
               group={group}
-              busy={busy}
+              // 確認モーダルの表示中も行の操作を止める。背景へ Tab で移って別の
+              // メンバーの操作を押すと、モーダルの対象が気づかないうちに
+              // 切り替わってしまうため。
+              busy={busy || pending !== null}
               fileDeleteErrors={fileDeleteErrors}
               onDelete={(member) => setPending({ kind: "unregister", member })}
               onDeleteFile={requestFileDelete}
@@ -270,7 +273,7 @@ function DuplicateGroupMemberRow({
   const isOffline = member.status === "offline";
 
   async function handlePlay() {
-    if (isOffline) return;
+    if (isOffline || busy) return;
     setPlayError(null);
     try {
       await playVideo(member.file_path);
@@ -309,7 +312,7 @@ function DuplicateGroupMemberRow({
             ? "duplicate-group-member-thumb"
             : "duplicate-group-member-thumb duplicate-group-member-thumb--playable"
         }
-        onClick={isOffline ? undefined : handlePlay}
+        onClick={isOffline || busy ? undefined : handlePlay}
       >
         {dataUrl ? (
           <img src={dataUrl} alt={member.file_name} loading="lazy" />
@@ -363,7 +366,7 @@ function DuplicateGroupMemberRow({
         type="button"
         className="duplicate-group-member-play"
         onClick={handlePlay}
-        disabled={isOffline}
+        disabled={isOffline || busy}
       >
         再生
       </button>
