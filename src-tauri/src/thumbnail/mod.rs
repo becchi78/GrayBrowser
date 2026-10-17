@@ -302,6 +302,11 @@ fn process_pending<F, N>(
                     // generate call and the notification.
                     let Some(_claim) = queue.try_claim(&id) else {
                         log::debug!("thumbnail worker: {id} is already being generated, skipping");
+                        // The holder may be untracked (e.g. a manual retry) or
+                        // may have finished already, so nobody else is
+                        // guaranteed to retire this id.
+                        queue.finish_tracked(&id, FinishOutcome::SkippedBusy);
+                        queue.publish_progress(notifier.as_ref());
                         continue;
                     };
                     let video_dir = paths::video_thumbnail_dir(
@@ -720,11 +725,12 @@ mod tests {
     }
 
     #[test]
-    fn a_video_skipped_because_another_worker_holds_it_is_not_finished_here() {
+    fn a_video_held_by_an_untracked_claimant_is_dropped_and_the_run_ends_hidden() {
         let (_db_dir, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
         insert_test_video(&db, "a", "C:/videos/a.mp4");
         let queue = ThumbnailQueueHandle::default();
+        // Stands in for a manual retry, which claims but never tracks.
         let _held = queue.try_claim("a").unwrap();
         let notifier = Arc::new(ProgressRecorder::default());
 
@@ -738,9 +744,123 @@ mod tests {
             vec![pending_entry("a")],
         );
 
-        assert_eq!(
-            queue.progress_snapshot(),
-            ProgressSnapshot { done: 0, total: 1 }
+        let calls = notifier.0.lock().unwrap().clone();
+        assert_eq!(calls, vec![(0, 1), (0, 0)]);
+        assert_eq!(queue.progress_snapshot(), ProgressSnapshot::default());
+    }
+
+    #[test]
+    fn re_adding_a_video_whose_claim_holder_already_finished_does_not_get_stuck() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "x", "C:/videos/x.mp4");
+        let queue = ThumbnailQueueHandle::default();
+        // Worker A: finished x but still holds the claim until iteration end.
+        queue.track_pending(["x"]);
+        let held = queue.try_claim("x").unwrap();
+        queue.finish_tracked("x", FinishOutcome::Generated);
+        let notifier = Arc::new(ProgressRecorder::default());
+
+        // Queue B lists x from a stale snapshot and loses the claim.
+        process_pending(
+            db,
+            thumbs.path().to_path_buf(),
+            Vec::new(),
+            queue.clone(),
+            available_ffmpeg(Duration::ZERO),
+            Arc::clone(&notifier),
+            vec![pending_entry("x")],
         );
+        drop(held);
+
+        assert_eq!(notifier.0.lock().unwrap().last(), Some(&(0, 0)));
+        assert_eq!(queue.progress_snapshot(), ProgressSnapshot::default());
+    }
+
+    #[test]
+    fn already_complete_videos_in_a_stale_list_count_as_done_and_end_hidden() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        let dir = unassigned_dir(thumbs.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        for id in ["a", "b"] {
+            insert_test_video(&db, id, &format!("C:/videos/{id}.mp4"));
+            for i in 0..worker::THUMBNAILS_PER_VIDEO {
+                std::fs::write(dir.join(format!("{id}_{i}.webp")), b"original").unwrap();
+            }
+        }
+        let notifier = Arc::new(ProgressRecorder::default());
+        let queue = ThumbnailQueueHandle::default();
+
+        process_pending(
+            db,
+            thumbs.path().to_path_buf(),
+            Vec::new(),
+            queue.clone(),
+            available_ffmpeg(Duration::ZERO),
+            Arc::clone(&notifier),
+            vec![pending_entry("a"), pending_entry("b")],
+        );
+
+        let calls = notifier.0.lock().unwrap().clone();
+        assert!(
+            calls.contains(&(1, 2)),
+            "skipped-as-complete counts as done: {calls:?}"
+        );
+        assert_eq!(calls.last(), Some(&(0, 0)));
+        assert_eq!(queue.progress_snapshot(), ProgressSnapshot::default());
+    }
+
+    /// Blocks inside the first notification until released, then records it.
+    struct BlockingFirstNotifier {
+        calls: Mutex<Vec<(u32, u32)>>,
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        first: AtomicBool,
+    }
+
+    impl CatalogNotifier for BlockingFirstNotifier {
+        fn notify_changed(&self) {}
+
+        fn notify_thumbnail_progress(&self, done: u32, total: u32) {
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.entered.send(()).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
+            }
+            self.calls.lock().unwrap().push((done, total));
+        }
+    }
+
+    #[test]
+    fn notifications_arrive_in_snapshot_order_even_if_a_notifier_is_slow() {
+        let queue = ThumbnailQueueHandle::default();
+        queue.track_pending(["a", "b"]);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let notifier = Arc::new(BlockingFirstNotifier {
+            calls: Mutex::new(Vec::new()),
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+            first: AtomicBool::new(true),
+        });
+
+        let first = {
+            let (queue, notifier) = (queue.clone(), Arc::clone(&notifier));
+            thread::spawn(move || queue.publish_progress(notifier.as_ref()))
+        };
+        // The first publisher took its (0, 2) snapshot and is stuck notifying.
+        entered_rx.recv().unwrap();
+        queue.finish_tracked("a", FinishOutcome::Generated);
+        let second = {
+            let (queue, notifier) = (queue.clone(), Arc::clone(&notifier));
+            thread::spawn(move || queue.publish_progress(notifier.as_ref()))
+        };
+        // Give the second publisher time to overtake if nothing orders them.
+        thread::sleep(Duration::from_millis(100));
+        release_tx.send(()).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+
+        assert_eq!(*notifier.calls.lock().unwrap(), vec![(0, 2), (1, 2)]);
     }
 }

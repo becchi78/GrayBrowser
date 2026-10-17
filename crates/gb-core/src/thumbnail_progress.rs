@@ -18,6 +18,12 @@ pub enum FinishOutcome {
     /// Generation gave up. Counts as processed but not as done, so the
     /// batch can still complete and the failure is surfaced elsewhere.
     Failed,
+    /// Another holder (a different queue or a manual retry) owns the video's
+    /// claim, so this queue skipped it. The holder may not be tracked here at
+    /// all, so waiting for its `finish` could leave the video pending
+    /// forever; the skipper drops it instead. It is not counted as done
+    /// because this queue did not produce it.
+    SkippedBusy,
 }
 
 impl FinishOutcome {
@@ -176,6 +182,36 @@ mod tests {
         p.finish("a", Generated);
         p.add(["b", "c"]);
         assert_eq!(snap(&p), (1, 3));
+    }
+
+    #[test]
+    fn skipped_busy_is_processed_but_not_done() {
+        let mut p = ThumbnailProgress::new();
+        p.add(["a", "b"]);
+        p.finish("a", SkippedBusy);
+        assert_eq!(snap(&p), (0, 2));
+        // The claim holder finishing later is ignored: already untracked.
+        p.finish("a", Generated);
+        assert_eq!(snap(&p), (0, 2));
+    }
+
+    #[test]
+    fn skipped_busy_on_the_last_video_resets() {
+        let mut p = ThumbnailProgress::new();
+        p.add(["a", "b"]);
+        p.finish("a", Generated);
+        p.finish("b", SkippedBusy);
+        assert_eq!(snap(&p), (0, 0));
+    }
+
+    #[test]
+    fn skipped_busy_for_an_untracked_id_is_ignored() {
+        let mut p = ThumbnailProgress::new();
+        p.finish("ghost", SkippedBusy);
+        assert_eq!(snap(&p), (0, 0));
+        p.add(["a"]);
+        p.finish("ghost", SkippedBusy);
+        assert_eq!(snap(&p), (0, 1));
     }
 
     #[test]
