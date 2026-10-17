@@ -13,6 +13,7 @@ import type {
   SortDirection,
   SortField,
   TagDto,
+  ThumbnailProgress,
   VideoDto,
   VideoPropertiesDto,
 } from "./types";
@@ -85,6 +86,7 @@ export const toggleThumbnailPause = (paused: boolean) =>
   invoke<void>("toggle_thumbnail_pause", { paused });
 export const getThumbnails = (videoId: string) =>
   invoke<string[] | null>("get_thumbnails", { videoId });
+export const getThumbnailProgress = () => invoke<ThumbnailProgress>("get_thumbnail_progress");
 export const playVideo = (filePath: string) => invoke<void>("play_video", { filePath });
 export const pickWbFile = () => invoke<string | null>("pick_wb_file");
 export const pickWbThumbnailFolder = () => invoke<string | null>("pick_wb_thumbnail_folder");

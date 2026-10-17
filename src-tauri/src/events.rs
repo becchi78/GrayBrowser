@@ -38,6 +38,11 @@ use tauri::Emitter;
 pub trait CatalogNotifier: Send + Sync {
     /// Notifies the frontend that `list_videos`'s result may have changed.
     fn notify_changed(&self);
+
+    /// Notifies the frontend of thumbnail generation progress. `total == 0`
+    /// means nothing is being generated. Does nothing by default so
+    /// implementors that don't show progress need not care.
+    fn notify_thumbnail_progress(&self, _done: u32, _total: u32) {}
 }
 
 pub struct TauriCatalogNotifier<R: tauri::Runtime> {
@@ -57,6 +62,20 @@ impl<R: tauri::Runtime> CatalogNotifier for TauriCatalogNotifier<R> {
     fn notify_changed(&self) {
         if let Err(e) = self.app.emit("catalog:changed", ()) {
             log::error!("failed to emit catalog:changed: {e}");
+        }
+    }
+
+    fn notify_thumbnail_progress(&self, done: u32, total: u32) {
+        #[derive(Clone, serde::Serialize)]
+        struct Progress {
+            done: u32,
+            total: u32,
+        }
+        if let Err(e) = self
+            .app
+            .emit("thumbnail:progress", Progress { done, total })
+        {
+            log::error!("failed to emit thumbnail:progress: {e}");
         }
     }
 }
@@ -229,6 +248,8 @@ mod fake {
     #[derive(Default)]
     pub struct FakeCatalogNotifier {
         pub call_count: AtomicUsize,
+        /// Every `(done, total)` passed to `notify_thumbnail_progress`, in order.
+        pub thumbnail_progress_calls: Mutex<Vec<(u32, u32)>>,
     }
 
     impl FakeCatalogNotifier {
@@ -240,6 +261,13 @@ mod fake {
     impl CatalogNotifier for FakeCatalogNotifier {
         fn notify_changed(&self) {
             self.call_count.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn notify_thumbnail_progress(&self, done: u32, total: u32) {
+            self.thumbnail_progress_calls
+                .lock()
+                .unwrap()
+                .push((done, total));
         }
     }
 

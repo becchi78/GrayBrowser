@@ -519,6 +519,12 @@ button.search-box-clear {
   background-color: #e8e8e8;
 }
 
+.status-thumbnail-progress {
+  font-size: 0.75em;
+  white-space: nowrap;
+  color: #555;
+}
+
 .status-badge[aria-pressed="true"] {
   background-color: #396cd8;
   color: #ffffff;
@@ -1643,6 +1649,10 @@ button.search-box-clear {
 
   .status-badge {
     background-color: #444;
+  }
+
+  .status-thumbnail-progress {
+    color: #bbb;
   }
 
   .status-badge[aria-pressed="true"] {

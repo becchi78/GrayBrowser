@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getThumbnailProgress } from "../api";
+import { onThumbnailProgress } from "../events";
+import { formatThumbnailProgress } from "../lib/thumbnailProgress";
+import type { ThumbnailProgress } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
 import { SkippedFilesPanel } from "./SkippedFilesPanel";
@@ -26,6 +30,29 @@ export function StatusBar({ refreshKey }: Props) {
   const [unregisteredCount, setUnregisteredCount] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [thumbnailProgress, setThumbnailProgress] =
+    useState<ThumbnailProgress | null>(null);
+
+  useEffect(() => {
+    // Generation can start before this subscription attaches (startup queue),
+    // so read the current value once; events take over after that. A read
+    // that resolves after an event must not overwrite the newer value.
+    let received = false;
+    const unsubscribe = onThumbnailProgress((p) => {
+      received = true;
+      setThumbnailProgress(p);
+    });
+    getThumbnailProgress()
+      .then((p) => {
+        if (!received) setThumbnailProgress(p);
+      })
+      .catch(() => {});
+    return unsubscribe;
+  }, []);
+
+  const thumbnailProgressText = thumbnailProgress
+    ? formatThumbnailProgress(thumbnailProgress)
+    : null;
 
   function toggle(kind: PanelKind) {
     setOpenPanel((prev) => (prev === kind ? null : kind));
@@ -61,6 +88,14 @@ export function StatusBar({ refreshKey }: Props) {
         >
           生成失敗 {failedCount}
         </button>
+        {thumbnailProgressText !== null && (
+          <span
+            className="status-thumbnail-progress"
+            data-testid="status-thumbnail-progress"
+          >
+            {thumbnailProgressText}
+          </span>
+        )}
       </div>
       <SkippedFilesPanel
         refreshKey={refreshKey}
