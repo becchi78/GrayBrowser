@@ -1449,6 +1449,48 @@ button.search-box-clear {
   overflow-wrap: anywhere;
 }
 
+.about-dialog {
+  width: min(22em, 90vw);
+  text-align: center;
+}
+
+.about-dialog-version {
+  margin: 0;
+}
+
+.about-dialog-text {
+  margin: 0.25em 0 0;
+}
+
+.about-dialog-links {
+  list-style: none;
+  margin: 1em 0 0;
+  padding: 0;
+}
+
+/* テキストリンク風。ボタン共通の枠・影・背景は打ち消す。 */
+button.link-button {
+  padding: 0.15em 0.3em;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  background: transparent;
+  color: #396cd8;
+  text-decoration: underline;
+}
+button.link-button:hover,
+button.link-button:active {
+  background: transparent;
+  text-decoration: none;
+}
+button.link-button:focus-visible {
+  outline: 2px solid #396cd8;
+}
+
+.about-dialog-footer {
+  justify-content: center;
+}
+
 .confirm-dialog-body p {
   margin: 0 0 0.5em;
 }
@@ -1577,6 +1619,18 @@ button.search-box-clear {
   }
   button:active {
     background-color: #0f0f0f69;
+  }
+
+  button.link-button,
+  button.link-button:hover,
+  button.link-button:active {
+    background: transparent;
+  }
+  button.link-button {
+    color: #7aa2f7;
+  }
+  button.link-button:focus-visible {
+    outline-color: #7aa2f7;
   }
 
   /* 上の`button`の背景指定より詳細度を上げて、✕を入力欄に溶け込ませる。 */
