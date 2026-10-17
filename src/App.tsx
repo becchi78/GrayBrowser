@@ -101,14 +101,7 @@ function App() {
           the DOM) is the title-bar equivalent now. */}
       <div className="header-row-primary" data-testid="header-row-primary">
         <SearchBox value={search} onChange={setSearch} />
-        <SortControl
-          field={sortField}
-          direction={sortDirection}
-          onChange={(field, direction) => {
-            setSortField(field);
-            setSortDirection(direction);
-          }}
-        />
+        {/* 並び替えより左に置くことで、並び替えを従来どおり行の右端に残す。 */}
         <button
           type="button"
           className="info-pane-toggle"
@@ -118,6 +111,14 @@ function App() {
         >
           {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
         </button>
+        <SortControl
+          field={sortField}
+          direction={sortDirection}
+          onChange={(field, direction) => {
+            setSortField(field);
+            setSortDirection(direction);
+          }}
+        />
       </div>
       <div className="header-row-filters" data-testid="header-row-filters">
         <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
