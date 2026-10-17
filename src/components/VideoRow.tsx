@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getThumbnails, getVideoProperties, playVideo } from "../api";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
+import { needsPropertiesRefresh } from "../lib/videoProperties";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { StarRating } from "./StarRating";
 import { TagEditor } from "./TagEditor";
@@ -10,6 +11,8 @@ interface Props {
   video: VideoDto;
   /** Shared across every row (owned by VideoList/ThumbnailGrid), keyed by video id. */
   cache: Map<string, string[]>;
+  /** Bumped by the parent on every list re-fetch; see the properties effect. */
+  catalogVersion: number;
   isSelected: boolean;
   onSelect: (video: VideoDto) => void;
 }
@@ -40,7 +43,7 @@ function formatFps(fps: number | null): string {
 // component itself by video id lets React remount it fresh whenever the
 // video shown at a given scroll position changes, resyncing `rating`'s
 // lazy initializer without a manual effect.
-export function VideoRow({ video, cache, isSelected, onSelect }: Props) {
+export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }: Props) {
   const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(video.id) ?? null);
   const [rating, setRating] = useState(video.rating);
   const [properties, setProperties] = useState<VideoPropertiesDto | null>(null);
@@ -67,7 +70,25 @@ export function VideoRow({ video, cache, isSelected, onSelect }: Props) {
     };
   }, [video.id, video.thumbnail_ready, thumbnails, cache]);
 
+  // `probed_at === null` covers both "not yet probed" and "probe failed
+  // permanently" -- the backend doesn't distinguish these today (known
+  // limitation). Showing "取得中..." is the common case; this is a
+  // deliberate simplification, not a claim that it's always still in
+  // progress.
+  const stillProbing = needsPropertiesRefresh(properties);
+
+  // バックグラウンドのメタデータ取得は1件終わるごとに一覧の更新通知を出すが、
+  // 行は再マウントされないため、マウント時に一度取得するだけでは、その時点で
+  // 未取得だった行が「取得中...」のまま固まる。そこで一覧の更新（catalogVersion）
+  // を契機に、取得が終わっていない行だけ取り直す。取得済みなら何もしないので、
+  // 取得済みの行で再取得は増えない。stillProbing（boolean）を依存に使うのは、
+  // 未取得のまま応答が返っても値が変わらず、effectが再実行されてループしない
+  // ようにするため。
+  // ffprobeに永続的に失敗した行はprobed_atが入らないため一覧の更新のたびに
+  // 取り直すが、対象は仮想スクロールで描画中の数行に限られ負荷は小さい。
+  // ポーリングはせず、既存のイベント駆動に合わせる。
   useEffect(() => {
+    if (!stillProbing) return;
     let cancelled = false;
     getVideoProperties(video.id)
       .then((props) => {
@@ -77,14 +98,7 @@ export function VideoRow({ video, cache, isSelected, onSelect }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [video.id]);
-
-  // `probed_at === null` covers both "not yet probed" and "probe failed
-  // permanently" -- the backend doesn't distinguish these today (known
-  // limitation). Showing "取得中..." is the common case; this is a
-  // deliberate simplification, not a claim that it's always still in
-  // progress.
-  const stillProbing = properties === null || properties.probed_at === null;
+  }, [video.id, catalogVersion, stillProbing]);
   const isOffline = video.status === "offline";
 
   // サムネイルは元動画のアスペクト比を保ったまま表示する（バックエンドの
@@ -182,7 +196,7 @@ export function VideoRow({ video, cache, isSelected, onSelect }: Props) {
           <dd>{formatDuration(video.duration)}</dd>
           <dt>ファイルサイズ</dt>
           <dd>{formatFileSize(video.file_size)}</dd>
-          {stillProbing ? (
+          {stillProbing || properties === null ? (
             <>
               <dt>詳細情報</dt>
               <dd>取得中...</dd>

@@ -44,6 +44,10 @@ export function ThumbnailGrid({
   infoCollapsed,
 }: Props) {
   const [videos, setVideos] = useState<VideoDto[]>([]);
+  // 一覧を再取得するたびに増える。VideoDtoには詳細情報の取得状況が含まれず、
+  // 行は自分で状況を知る手段がないため、「一覧が更新された」ことだけを行に
+  // 伝えて、取得が終わっていない行に取り直させる。
+  const [catalogVersion, setCatalogVersion] = useState(0);
   // Highlights the selected row -- the detail panel this used to open is
   // gone, so selection no longer has any other effect than the
   // `.video-row--selected` class VideoRow applies itself.
@@ -79,6 +83,7 @@ export function ThumbnailGrid({
         });
         if (cancelled) return;
         setVideos(rows);
+        setCatalogVersion((v) => v + 1);
         // Clears the selection highlight if the selected video disappeared
         // from the list entirely (e.g. its watch folder was removed) --
         // otherwise `.video-row--selected` would just never match again.
@@ -186,6 +191,7 @@ export function ThumbnailGrid({
                 key={video.id}
                 video={video}
                 cache={cache}
+                catalogVersion={catalogVersion}
                 isSelected={video.id === selectedVideoId}
                 onSelect={(v) => setSelectedVideoId(v.id)}
               />

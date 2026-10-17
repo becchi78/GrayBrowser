@@ -35,8 +35,14 @@ export function StarRating({ videoId, value, onChange }: Props) {
           ★
         </button>
       ))}
-      <button type="button" className="star-clear" onClick={() => handleSet(0)} disabled={value === 0}>
-        評価をクリア
+      <button
+        type="button"
+        className="star-clear"
+        onClick={() => handleSet(0)}
+        disabled={value === 0}
+        aria-label="評価をクリア"
+      >
+        クリア
       </button>
     </div>
   );
