@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
+import { AboutDialog } from "./components/AboutDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { FolderSidebar } from "./components/FolderSidebar";
 import { RatingBar } from "./components/RatingBar";
@@ -13,6 +14,7 @@ import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
 import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } from "./api";
 import {
+  onMenuAbout,
   onMenuOpenFolderDialog,
   onMenuOpenTagBarDialog,
   onMenuOpenWbImportDialog,
@@ -49,6 +51,7 @@ function App() {
   // list, so TagBar re-fetches it (via its own `refreshKey` prop) without a
   // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
+  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
@@ -78,6 +81,11 @@ function App() {
 
   useEffect(() => {
     const unlisten = onMenuOpenTagBarDialog(() => setTagBarDialogOpen(true));
+    return () => unlisten();
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onMenuAbout(() => setAboutDialogOpen(true));
     return () => unlisten();
   }, []);
 
@@ -177,6 +185,7 @@ function App() {
         onClose={() => setTagBarDialogOpen(false)}
         onChanged={() => setTagBarRefreshKey((k) => k + 1)}
       />
+      <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
     </div>
   );
 }

@@ -1449,6 +1449,19 @@ button.search-box-clear {
   overflow-wrap: anywhere;
 }
 
+.about-dialog {
+  width: min(22em, 90vw);
+  text-align: center;
+}
+
+.about-dialog-version {
+  margin: 0;
+}
+
+.about-dialog-footer {
+  justify-content: center;
+}
+
 .confirm-dialog-body p {
   margin: 0 0 0.5em;
 }
