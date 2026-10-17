@@ -125,12 +125,13 @@ fn sort_by_mtime_with_nulls_pinned_last() {
     }
 }
 
-/// "ファイルサイズ" and "フォルダ名" have no index: the plan is recorded here
-/// (both fall back to a full scan + temp b-tree sort) using the exact clause
-/// production builds, so whether an index is warranted is decided from the
-/// measured cost in `search_performance_bench.rs`, not assumed.
+/// "ファイルサイズ" and "フォルダ名" have no index: this pins that (both fall
+/// back to a full scan + temp b-tree sort) using the exact clause production
+/// builds. The decision not to add one rests on the measured cost in
+/// `search_performance_bench.rs`; if an index is added later, this test must
+/// be updated to assert it is actually used instead.
 #[test]
-fn sort_by_file_size_and_folder_plans_are_recorded() {
+fn sort_by_file_size_and_folder_have_no_index() {
     let (_dir, db) = init_temp_db_with_rows();
     let conn = db.writer.lock().unwrap();
     for field in [SortField::FileSize, SortField::Folder] {
