@@ -7,7 +7,7 @@ interface Props {
 }
 
 // TagBarと並ぶ独立したフィルタ軸。タグ機構(TagBar/tags/video_tags)には一切
-// 関与しない -- videos.ratingのみを対象とする選んだ評価と一致するもののみを表示する単純なフィルタ。
+// 関与しない -- videos.ratingのみを対象に、選んだ評価と一致する動画だけを表示する単純なフィルタ。
 export function RatingBar({ value, onChange }: Props) {
   return (
     <div className="rating-bar" data-testid="rating-bar">
