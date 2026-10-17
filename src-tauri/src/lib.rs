@@ -131,6 +131,14 @@ pub fn run() {
                 log::error!("thumbnail layout migration failed: {e}");
             }
 
+            // Nothing is generating yet, so every leftover .tmp is an orphan.
+            // Clearing them before the queue starts keeps stalled videos from
+            // carrying stale partial output into regeneration.
+            let removed = thumbnail::remove_orphan_tmp_files(&thumbnails_root);
+            if removed > 0 {
+                log::info!("removed {removed} orphan thumbnail .tmp file(s)");
+            }
+
             // Startup resume: re-enumerate videos missing a
             // thumbnail and kick off generation in the background.
             thumbnail::enqueue_missing_thumbnails(
