@@ -62,6 +62,7 @@ log = "0.4.33"
 base64 = "0.22.1"
 flexi_logger = "0.31.9"
 notify = "7"
+trash = "5.2.6"
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Console"] }
 
 [dev-dependencies]
