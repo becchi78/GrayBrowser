@@ -19,6 +19,7 @@ use tauri::State;
 use crate::adapters;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
+use crate::thumbnail::ThumbnailQueueHandle;
 use crate::{metadata, thumbnail};
 
 /// One row of `list_generation_failures`'s thumbnail half -- a thin
@@ -112,6 +113,7 @@ pub fn list_generation_failures(db: State<Db>) -> Result<GenerationFailuresDto, 
 pub fn retry_thumbnail_generation(
     app: tauri::AppHandle,
     db: State<'_, Db>,
+    queue: State<'_, ThumbnailQueueHandle>,
     video_id: String,
 ) -> Result<(), String> {
     {
@@ -125,6 +127,7 @@ pub fn retry_thumbnail_generation(
             let ffmpeg = adapters::ffmpeg::RealFfmpegAdapter;
             attempt_thumbnail_retry(
                 db.inner(),
+                queue.inner(),
                 &ffmpeg,
                 &video_id,
                 &video,
@@ -155,11 +158,20 @@ pub fn retry_thumbnail_generation(
 /// since nothing downstream of it is allowed to fail this command either.
 fn attempt_thumbnail_retry(
     db: &Db,
+    queue: &ThumbnailQueueHandle,
     ffmpeg: &impl FfmpegAdapter,
     video_id: &str,
     video: &queries::VideoRow,
     app_dir: Result<PathBuf, String>,
 ) {
+    // A queue may already be generating this video; running a second
+    // generation alongside it is exactly what the claim exists to prevent.
+    // The attempts counter was reset by the caller, so the in-flight run's
+    // outcome is what the user will see.
+    let Some(_claim) = queue.try_claim(video_id) else {
+        log::info!("manual thumbnail retry skipped for {video_id}: already being generated");
+        return;
+    };
     let app_dir = match app_dir {
         Ok(dir) => dir,
         Err(e) => {
@@ -345,6 +357,7 @@ mod tests {
 
         attempt_thumbnail_retry(
             &db,
+            &ThumbnailQueueHandle::default(),
             &ffmpeg,
             "vid-appdir-fail",
             &video,
@@ -368,6 +381,50 @@ mod tests {
         assert_eq!(
             attempts, 0,
             "a best-effort skip must not be counted as a failed generation attempt"
+        );
+    }
+
+    #[test]
+    fn attempt_thumbnail_retry_skips_a_video_that_is_already_being_generated() {
+        use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
+
+        let (_db_dir, db) = init_temp_db();
+        let app_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-busy", "C:/videos/movie.mp4");
+        let video = queries::find_video_by_id(&db.read_pool, "vid-busy")
+            .unwrap()
+            .unwrap();
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+        let queue = ThumbnailQueueHandle::default();
+
+        let claim = queue.try_claim("vid-busy").unwrap();
+        attempt_thumbnail_retry(
+            &db,
+            &queue,
+            &ffmpeg,
+            "vid-busy",
+            &video,
+            Ok(app_dir.path().to_path_buf()),
+        );
+        assert!(ffmpeg.calls.lock().unwrap().is_empty());
+
+        drop(claim);
+        attempt_thumbnail_retry(
+            &db,
+            &queue,
+            &ffmpeg,
+            "vid-busy",
+            &video,
+            Ok(app_dir.path().to_path_buf()),
+        );
+        assert!(!ffmpeg.calls.lock().unwrap().is_empty());
+        assert!(
+            queue.try_claim("vid-busy").is_some(),
+            "the retry must release its claim"
         );
     }
 

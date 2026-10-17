@@ -6,6 +6,7 @@
 //! and every `.tmp` file produced so far for this video is cleaned up.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 
@@ -18,6 +19,19 @@ const THUMBNAIL_QUALITY: u8 = 55;
 /// Number of thumbnails generated per video: 6 evenly spaced frames per
 /// row.
 pub const THUMBNAILS_PER_VIDEO: usize = 6;
+
+static TMP_NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A token unique to one `generate_thumbnail_for_video` call, embedded in
+/// every `.tmp` file name of that call. With a fixed `{id}_{i}.webp.tmp`
+/// name, two runs on the same video (e.g. overlapping queues, or a manual
+/// retry) would write the same file and one side's rename could fail or
+/// publish the other's half-written output. The process id keeps names from
+/// a previous process (leftover `.tmp` files) from ever matching a new one.
+fn next_tmp_nonce() -> String {
+    let n = TMP_NONCE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{n}", std::process::id())
+}
 
 pub fn generate_thumbnail_for_video(
     ffmpeg: &impl FfmpegAdapter,
@@ -52,11 +66,12 @@ pub fn generate_thumbnail_for_video(
 
     let seeks = gb_core::thumbnail_policy::thumbnail_seek_positions(duration);
 
+    let nonce = next_tmp_nonce();
     let mut tmp_paths: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
     let mut extraction_err: Option<anyhow::Error> = None;
 
     for (i, seek) in seeks.into_iter().enumerate() {
-        let tmp_path = thumbnails_dir.join(format!("{video_id}_{i}.webp.tmp"));
+        let tmp_path = thumbnails_dir.join(format!("{video_id}_{i}.webp.{nonce}.tmp"));
 
         let slot_result = match ffmpeg.extract_thumbnail(
             video_path,
@@ -87,52 +102,82 @@ pub fn generate_thumbnail_for_video(
         }
     }
 
-    match extraction_err {
+    let failure = match extraction_err {
         None => {
             debug_assert_eq!(tmp_paths.len(), THUMBNAILS_PER_VIDEO);
+            let mut renamed_finals: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
+            let mut rename_err: Option<anyhow::Error> = None;
             for (i, tmp_path) in tmp_paths.iter().enumerate() {
                 let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
-                std::fs::rename(tmp_path, &final_path)?;
+                match std::fs::rename(tmp_path, &final_path) {
+                    Ok(()) => renamed_finals.push(final_path),
+                    Err(e) => {
+                        rename_err = Some(anyhow::anyhow!(
+                            "slot {i}: failed to rename {} -> {}: {e}",
+                            tmp_path.display(),
+                            final_path.display()
+                        ));
+                        break;
+                    }
+                }
             }
-            // Keeps videos.thumbnail_ready (migration 0008) in
-            // sync with the files that were just written, so list_videos's
-            // hot path never has to stat() these files itself. Best-effort: a
-            // failure to write this flag must not turn an otherwise-
-            // successful generation into an error -- worst case, the files
-            // exist but the flag lags behind until the next
-            // list_videos_missing_thumbnails resume pass backfills it.
-            if let Err(e) = queries::mark_thumbnail_ready(&db.writer.lock().unwrap(), video_id) {
-                log::warn!("failed to mark thumbnail_ready for {video_id}: {e}");
+            match rename_err {
+                None => {
+                    // Keeps videos.thumbnail_ready (migration 0008) in
+                    // sync with the files that were just written, so
+                    // list_videos's hot path never has to stat() these
+                    // files itself. Best-effort: a failure to write this
+                    // flag must not turn an otherwise-successful generation
+                    // into an error -- worst case, the files exist but the
+                    // flag lags behind until the next
+                    // list_videos_missing_thumbnails resume pass backfills
+                    // it.
+                    if let Err(e) =
+                        queries::mark_thumbnail_ready(&db.writer.lock().unwrap(), video_id)
+                    {
+                        log::warn!("failed to mark thumbnail_ready for {video_id}: {e}");
+                    }
+                    return Ok(());
+                }
+                Some(e) => {
+                    // A video's thumbnails are all-or-nothing: take back the
+                    // finals this call already published so no partial set
+                    // is left behind. Only this call's own files are
+                    // removed, never a pre-existing path that made a rename
+                    // fail.
+                    for final_path in &renamed_finals {
+                        let _ = std::fs::remove_file(final_path);
+                    }
+                    e
+                }
             }
-            Ok(())
         }
-        Some(e) => {
-            log::warn!(
-                "thumbnail generation failed for video {video_id} ({}): {e}",
-                video_path.display()
-            );
-            // best-effort cleanup of every tmp file produced before the
-            // failing slot (the failing slot itself never wrote a tmp file
-            // that needs cleaning up, since extract_thumbnail only writes
-            // its output on success).
-            for tmp_path in &tmp_paths {
-                let _ = std::fs::remove_file(tmp_path);
-            }
-            // Recorded only on failure (never on success), and only once per
-            // video regardless of which slot failed -- this is the one and
-            // only place `thumbnail_attempts` is incremented, so a caller
-            // invoking this function directly (e.g. the
-            // retry_thumbnail_generation command) gets the same counting
-            // behavior as the automatic queue, with no risk of double-
-            // counting a single failed attempt.
-            if let Err(inc_err) =
-                queries::increment_thumbnail_attempts(&db.writer.lock().unwrap(), video_id)
-            {
-                log::warn!("failed to increment thumbnail_attempts for {video_id}: {inc_err}");
-            }
-            Err(e)
-        }
+        Some(e) => e,
+    };
+
+    log::warn!(
+        "thumbnail generation failed for video {video_id} ({}): {failure}",
+        video_path.display()
+    );
+    // best-effort cleanup of every tmp file still on disk (ones already
+    // renamed no longer exist under that name, so removing them is a no-op).
+    // The failing extraction slot itself never wrote a tmp file, since
+    // extract_thumbnail only writes its output on success.
+    for tmp_path in &tmp_paths {
+        let _ = std::fs::remove_file(tmp_path);
     }
+    // Recorded only on failure (never on success), and only once per video
+    // regardless of which step failed -- this is the one and only place
+    // `thumbnail_attempts` is incremented, so a caller invoking this function
+    // directly (e.g. the retry_thumbnail_generation command) gets the same
+    // counting behavior as the automatic queue, with no risk of double-
+    // counting a single failed attempt.
+    if let Err(inc_err) =
+        queries::increment_thumbnail_attempts(&db.writer.lock().unwrap(), video_id)
+    {
+        log::warn!("failed to increment thumbnail_attempts for {video_id}: {inc_err}");
+    }
+    Err(failure)
 }
 
 /// `(id, file_path)` for every online video for which any of the 6
@@ -233,7 +278,15 @@ mod tests {
     }
 
     fn any_tmp_file_exists(thumbs_dir: &Path, id: &str) -> bool {
-        (0..THUMBNAILS_PER_VIDEO).any(|i| thumbs_dir.join(format!("{id}_{i}.webp.tmp")).exists())
+        let prefix = format!("{id}_");
+        std::fs::read_dir(thumbs_dir)
+            .map(|rd| {
+                rd.flatten().any(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.starts_with(&prefix) && name.ends_with(".tmp")
+                })
+            })
+            .unwrap_or(false)
     }
 
     #[test]
@@ -386,11 +439,8 @@ mod tests {
         assert!(!all_six_final_files_exist(thumbs_dir.path(), "vid-3"));
         for i in 0..THUMBNAILS_PER_VIDEO {
             assert!(!thumbs_dir.path().join(format!("vid-3_{i}.webp")).exists());
-            assert!(!thumbs_dir
-                .path()
-                .join(format!("vid-3_{i}.webp.tmp"))
-                .exists());
         }
+        assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-3"));
     }
 
     /// Fail-fast guard: once slot 0's primary and fallback seeks have both
@@ -448,12 +498,17 @@ mod tests {
             "only slot 0's primary + fallback attempts should have run"
         );
         for path in &extract_paths {
-            assert_eq!(
-                path,
-                &thumbs_dir.path().join("vid-fastfail_0.webp.tmp"),
-                "no slot other than 0 should ever have been attempted"
+            assert_eq!(path.parent(), Some(thumbs_dir.path()));
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(
+                name.starts_with("vid-fastfail_0.webp.") && name.ends_with(".tmp"),
+                "no slot other than 0 should ever have been attempted, got {name}"
             );
         }
+        assert_eq!(
+            extract_paths[0], extract_paths[1],
+            "the 0s fallback retry reuses the slot's tmp path within one call"
+        );
     }
 
     #[test]
@@ -854,5 +909,100 @@ mod tests {
         )
         .expect("a probe failure alone should not fail generation");
         assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-5"));
+    }
+
+    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
+        let conn = db.writer.lock().unwrap();
+        conn.query_row(
+            "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rename_failure_returns_err_counts_one_attempt_and_leaves_no_files_behind() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-rename-fail", "C:/videos/movie.mp4");
+        // A directory squatting on slot 3's final path makes that rename
+        // fail deterministically, after slots 0..2 were already renamed.
+        let blocker = thumbs_dir.path().join("vid-rename-fail_3.webp");
+        std::fs::create_dir(&blocker).unwrap();
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        let result = generate_thumbnail_for_video(
+            &ffmpeg,
+            &db,
+            thumbs_dir.path(),
+            "vid-rename-fail",
+            Path::new("C:/videos/movie.mp4"),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(thumbnail_attempts_of(&db, "vid-rename-fail"), 1);
+        assert_eq!(thumbnail_ready_flag(&db, "vid-rename-fail"), 0);
+        assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-rename-fail"));
+        for i in [0, 1, 2, 4, 5] {
+            assert!(
+                !thumbs_dir
+                    .path()
+                    .join(format!("vid-rename-fail_{i}.webp"))
+                    .exists(),
+                "slot {i}: a partial final file must not remain"
+            );
+        }
+        assert!(blocker.is_dir(), "a pre-existing path must be left alone");
+    }
+
+    #[test]
+    fn two_consecutive_generations_use_distinct_tmp_names_and_both_succeed() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-twice", "C:/videos/movie.mp4");
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        for _ in 0..2 {
+            generate_thumbnail_for_video(
+                &ffmpeg,
+                &db,
+                thumbs_dir.path(),
+                "vid-twice",
+                Path::new("C:/videos/movie.mp4"),
+            )
+            .expect("generation should succeed");
+        }
+
+        assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-twice"));
+        assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-twice"));
+
+        let calls = ffmpeg.calls.lock().unwrap();
+        let tmp_paths: Vec<&PathBuf> = calls
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::ExtractThumbnail {
+                    output_tmp_path, ..
+                } => Some(output_tmp_path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tmp_paths.len(), 2 * THUMBNAILS_PER_VIDEO);
+        let unique: std::collections::HashSet<_> = tmp_paths.iter().collect();
+        assert_eq!(
+            unique.len(),
+            tmp_paths.len(),
+            "every call's tmp paths must be distinct from the other call's"
+        );
     }
 }
