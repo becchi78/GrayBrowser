@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gb_core::ports::dialog::FolderPicker;
 use tauri::State;
 
@@ -6,21 +8,18 @@ use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
 use crate::watch::RealtimeWatchManager;
 
-/// Pure-ish mapping: given a picker result and the existing folder list,
-/// decides the merged list. Kept separate from the command body so it can
-/// be unit-tested against `FakeFolderPicker` without opening a real dialog.
-fn pick_and_merge(
-    picker: &impl FolderPicker,
-    existing: Vec<String>,
-) -> Result<Vec<String>, String> {
-    match picker.pick_folders().map_err(|e| e.to_string())? {
-        None => Ok(existing), // user cancelled: leave the list unchanged
+/// Pure merge of the picker's result into the existing folder list. Kept
+/// separate from the command body so it can be unit-tested without opening a
+/// real dialog. `None` (user cancelled) leaves the list unchanged.
+fn merge_picked(existing: Vec<String>, picked: Option<Vec<PathBuf>>) -> Vec<String> {
+    match picked {
+        None => existing,
         Some(picked) => {
             let picked: Vec<String> = picked
                 .into_iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
-            Ok(gb_core::watch_folders::merge(existing, picked))
+            gb_core::watch_folders::merge(existing, picked)
         }
     }
 }
@@ -29,18 +28,33 @@ fn pick_and_merge(
 /// reconfigure`) is what closes the "restart required to pick up a new
 /// folder" gap: every successful pick immediately routes the merged folder
 /// list through drive-type detection again, not just at the next app start.
-#[tauri::command]
+///
+/// `async` so it runs off the main thread: a sync command runs on the UI
+/// thread on Windows, and the blocking folder dialog would freeze the window.
+/// The dialog is shown *before* the writer lock is taken so the lock is never
+/// held while waiting on the user.
+#[tauri::command(async)]
 pub fn pick_watch_folders(
     app: tauri::AppHandle,
     db: State<Db>,
     watch_manager: State<RealtimeWatchManager>,
 ) -> Result<Vec<String>, String> {
+    let picker = adapters::dialog::RealFolderPicker::new(app.clone());
+    let picked = picker
+        .pick_folders()
+        .map_err(|e| e.to_string())
+        .inspect_err(|e| log::warn!("folder picker failed: {e}"))?;
+
+    if picked.is_none() {
+        // Cancelled: nothing to write, so read the list without the writer lock.
+        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+        return queries::get_watch_folders(&conn).map_err(|e| e.to_string());
+    }
+
     let (merged, nas_poll_interval_secs) = {
         let conn = db.writer.lock().unwrap();
         let existing = queries::get_watch_folders(&conn).map_err(|e| e.to_string())?;
-        let picker = adapters::dialog::RealFolderPicker::new(app.clone());
-        let merged = pick_and_merge(&picker, existing)
-            .inspect_err(|e| log::warn!("folder picker failed: {e}"))?;
+        let merged = merge_picked(existing, picked);
         queries::set_watch_folders(&conn, &merged).map_err(|e| e.to_string())?;
         let interval = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
         (merged, interval)
@@ -312,12 +326,30 @@ mod tests {
     use super::*;
     use gb_core::ports::dialog::DialogError;
     use gb_core::testing::fake_dialog::FakeFolderPicker;
-    use std::path::PathBuf;
+
+    /// Same pick-then-merge sequence the command performs, minus the DB.
+    fn pick_and_merge(
+        picker: &impl FolderPicker,
+        existing: Vec<String>,
+    ) -> Result<Vec<String>, String> {
+        let picked = picker.pick_folders().map_err(|e| e.to_string())?;
+        Ok(merge_picked(existing, picked))
+    }
 
     #[test]
     fn cancelled_pick_leaves_existing_list_unchanged() {
         let picker = FakeFolderPicker {
             result: Ok(None),
+            ..Default::default()
+        };
+        let existing = vec!["C:/Videos".to_string()];
+        assert_eq!(pick_and_merge(&picker, existing.clone()).unwrap(), existing);
+    }
+
+    #[test]
+    fn picking_an_already_registered_folder_does_not_duplicate_it() {
+        let picker = FakeFolderPicker {
+            result: Ok(Some(vec![PathBuf::from("C:/Videos")])),
             ..Default::default()
         };
         let existing = vec!["C:/Videos".to_string()];
