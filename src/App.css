@@ -1182,9 +1182,17 @@ button:disabled {
   gap: 0.2em;
 }
 
+/* ★の色は背景の明暗で変えるため変数にしておく(ダーク側は下の
+   prefers-color-scheme ブロックで上書き)。未選択は同じ黄色を薄くして、
+   色相は揃えたまま選択状態だけ区別する。 */
+:root {
+  --star-color: #f5c518;
+}
+
 .star {
   padding: 0.1em 0.3em;
   font-size: 1.2em;
+  color: var(--star-color);
   opacity: 0.4;
 }
 
@@ -1482,6 +1490,7 @@ button:disabled {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
+    --star-color: #ffd54a;
   }
 
   input,
