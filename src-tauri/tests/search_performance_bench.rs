@@ -633,7 +633,7 @@ fn run_all_patterns_for(row_count: usize, seed: u64, results: &mut Vec<BenchResu
     let no_tags: Vec<i64> = Vec::new();
     let popular_tags = dataset.popular_tag_ids.to_vec();
 
-    let patterns: [QueryPattern; 7] = [
+    let patterns: [QueryPattern; 11] = [
         (
             "(a) no term, sort=CreatedAt desc (browse)",
             &no_terms,
@@ -680,6 +680,34 @@ fn run_all_patterns_for(row_count: usize, seed: u64, results: &mut Vec<BenchResu
             "(e) sort=UpdatedDate desc [no index, reference]",
             &no_terms,
             SortField::UpdatedDate,
+            SortDirection::Desc,
+            &no_tags,
+        ),
+        (
+            "(e) sort=FileSize asc",
+            &no_terms,
+            SortField::FileSize,
+            SortDirection::Asc,
+            &no_tags,
+        ),
+        (
+            "(e) sort=FileSize desc",
+            &no_terms,
+            SortField::FileSize,
+            SortDirection::Desc,
+            &no_tags,
+        ),
+        (
+            "(e) sort=Folder asc",
+            &no_terms,
+            SortField::Folder,
+            SortDirection::Asc,
+            &no_tags,
+        ),
+        (
+            "(e) sort=Folder desc",
+            &no_terms,
+            SortField::Folder,
             SortDirection::Desc,
             &no_tags,
         ),

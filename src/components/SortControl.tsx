@@ -11,6 +11,8 @@ const FIELD_LABELS: Record<SortField, string> = {
   created_at: "追加日",
   updated_date: "更新日",
   rating: "評価",
+  file_size: "ファイルサイズ",
+  folder: "フォルダ名",
 };
 
 const FIELDS = Object.keys(FIELD_LABELS) as SortField[];

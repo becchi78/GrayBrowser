@@ -68,6 +68,8 @@ pub enum SortFieldParam {
     CreatedAt,
     UpdatedDate,
     Rating,
+    FileSize,
+    Folder,
 }
 
 impl From<SortFieldParam> for gb_core::sort::SortField {
@@ -77,6 +79,8 @@ impl From<SortFieldParam> for gb_core::sort::SortField {
             SortFieldParam::CreatedAt => gb_core::sort::SortField::CreatedAt,
             SortFieldParam::UpdatedDate => gb_core::sort::SortField::UpdatedDate,
             SortFieldParam::Rating => gb_core::sort::SortField::Rating,
+            SortFieldParam::FileSize => gb_core::sort::SortField::FileSize,
+            SortFieldParam::Folder => gb_core::sort::SortField::Folder,
         }
     }
 }
