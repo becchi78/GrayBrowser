@@ -1404,7 +1404,7 @@ button.search-box-clear {
 }
 
 /* Wider than the base .dialog: each row carries ↑/↓, the path, the check
-   toggle, the mode label and ✎/✕, and the path column ellipsizes first. */
+   toggle and ✎/✕, and the path column ellipsizes first. */
 .folder-dialog {
   width: min(48em, 90vw);
 }
@@ -1472,15 +1472,6 @@ button.search-box-clear {
   font-size: 0.85em;
   opacity: 0.85;
   margin: 0;
-}
-
-.folder-row-mode {
-  font-size: 0.75em;
-  opacity: 0.7;
-  white-space: nowrap;
-  /* Fixed width so the longest label ("NASポーリング") doesn't shift the
-     path column from row to row. */
-  min-width: 6.5em;
 }
 
 .folder-row-move-btn {

@@ -27,27 +27,6 @@ interface DeleteTarget {
   count: number;
 }
 
-// Displays the watch mode (リアルタイム or NASポーリング) for each folder.
-//
-// The *real* classification lives entirely in the Windows adapter layer
-// (`gb_core::ports::drive_type::DriveTypeDetector`, resolved via the real
-// `GetDriveTypeW` call in `src-tauri::adapters::drive_type`) and is only
-// ever consulted by `RealtimeWatchManager::reconfigure` when folders are
-// actually (re)configured for watching -- there is no Tauri command that
-// exposes it for display purposes (a read-only informational label does
-// not need a live Win32 API round trip). This is therefore a
-// frontend-only approximation: a UNC path (`\\server\share\...`) is
-// always NAS-polled by `RealtimeWatchManager::reconfigure`, matching the
-// same UNC-vs-drive-letter shape `gb_core::paths::extract_drive_root`
-// already recognizes structurally (see that function's own doc comment).
-// Known limitation: a *mapped* network drive letter (e.g. `Z:\` backed by a
-// network share) cannot be told apart from a genuinely local drive without
-// the real `GetDriveTypeW` call, so this heuristic would mislabel it
-// "リアルタイム".
-function isNetworkPath(path: string): boolean {
-  return path.startsWith("\\\\") || path.startsWith("//");
-}
-
 export function FolderDialog({ open, onClose, onChanged }: Props) {
   const [folders, setFolders] = useState<string[]>([]);
   const [editingPath, setEditingPath] = useState<string | null>(null);
@@ -355,16 +334,6 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
                         />
                         更新チェック
                       </label>
-                      <span
-                        className="folder-row-mode"
-                        data-testid="folder-row-mode"
-                      >
-                        {checkDisabled.includes(path)
-                          ? "チェックなし"
-                          : isNetworkPath(path)
-                            ? "NASポーリング"
-                            : "リアルタイム"}
-                      </span>
                       <button
                         type="button"
                         className="folder-row-edit-btn"
