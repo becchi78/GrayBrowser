@@ -140,6 +140,42 @@ fn reset_metadata_attempts_returns_the_counter_to_zero() {
 }
 
 #[test]
+fn reset_video_derived_data_clears_derived_columns_only_for_the_target_video() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+    insert_video(&conn, "v1", "D:\\videos\\a.mp4", "online");
+    insert_video(&conn, "v2", "D:\\videos\\b.mp4", "online");
+    conn.execute(
+        "UPDATE videos SET thumbnail_ready = 1, thumbnail_attempts = 2, duration = 9,
+         probed_at = CURRENT_TIMESTAMP, metadata_attempts = 3, width = 640, height = 480,
+         video_codec = 'h264', audio_codec = 'aac', bitrate = 1000, fps = 30.0, rating = 4",
+        [],
+    )
+    .unwrap();
+
+    queries::reset_video_derived_data(&conn, "v1").unwrap();
+
+    // Rolled into one string: a 14-column tuple has no Debug/PartialEq.
+    let row = |id: &str| -> String {
+        conn.query_row(
+            "SELECT thumbnail_ready || '|' || thumbnail_attempts || '|' || IFNULL(duration, 'N')
+                    || '|' || IFNULL(probed_at, 'N') || '|' || metadata_attempts
+                    || '|' || IFNULL(width, 'N') || '|' || IFNULL(height, 'N')
+                    || '|' || IFNULL(video_codec, 'N') || '|' || IFNULL(audio_codec, 'N')
+                    || '|' || IFNULL(bitrate, 'N') || '|' || IFNULL(fps, 'N')
+                    || '|' || rating || '|' || file_size || '|' || quick_hash
+             FROM videos WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(row("v1"), "0|0|N|N|0|N|N|N|N|N|N|4|1024|qh");
+    assert!(row("v2").starts_with("1|2|9|"));
+    assert!(row("v2").contains("|640|480|h264|aac|1000|30.0|"));
+}
+
+#[test]
 fn list_online_video_paths_with_thumbnail_attempts_returns_the_current_counter_and_excludes_offline(
 ) {
     let (_dir, db) = init_temp_db();

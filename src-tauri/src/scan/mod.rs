@@ -150,7 +150,7 @@ pub fn process_detected_file(
     };
 
     match known {
-        Some(known) => reconcile_known_path(db, &scanned_file, &known),
+        Some(known) => reconcile_known_path(db, thumbnails_root, &scanned_file, &known),
         None => register_new_path(db, thumbnails_root, &scanned_file),
     }
 }
@@ -160,6 +160,7 @@ pub fn process_detected_file(
 /// never inserts a second row.
 fn reconcile_known_path(
     db: &Db,
+    thumbnails_root: &Path,
     scanned_file: &ScannedFile,
     known: &queries::VideoRow,
 ) -> anyhow::Result<ProcessOutcome> {
@@ -292,13 +293,54 @@ fn reconcile_known_path(
                 }
             }
 
-            queries::update_video_scan_metadata(
-                &conn,
-                &known.id,
-                scanned_file.file_size as i64,
-                scanned_file.mtime,
-                &quick_hash_str,
-            )?;
+            // An mtime-only change (same size and quick_hash) leaves the
+            // derived data valid, so it must not throw away good thumbnails.
+            let content_changed = known.file_size != scanned_file.file_size as i64
+                || known.quick_hash != quick_hash_str;
+            if content_changed {
+                // One transaction so the new hash is never committed without
+                // the invalidation: the hash is what makes the next scan see
+                // the file as unchanged, so a lost reset would never be
+                // retried.
+                let tx = conn.unchecked_transaction()?;
+                queries::update_video_scan_metadata(
+                    &tx,
+                    &known.id,
+                    scanned_file.file_size as i64,
+                    scanned_file.mtime,
+                    &quick_hash_str,
+                )?;
+                queries::reset_video_derived_data(&tx, &known.id)?;
+                tx.commit()?;
+                // Files go only after the DB commit: if the commit failed,
+                // deleting them would leave a row that still claims
+                // thumbnails exist.
+                let watch_folders = match queries::get_watch_folders(&conn) {
+                    Ok(folders) => folders,
+                    Err(e) => {
+                        log::warn!(
+                            "failed to read watch_folders while removing stale thumbnails for \
+                             video_id={}: {e}",
+                            known.id
+                        );
+                        Vec::new()
+                    }
+                };
+                thumbnail::paths::remove_video_thumbnails(
+                    thumbnails_root,
+                    &watch_folders,
+                    &known.id,
+                    &known.file_path,
+                );
+            } else {
+                queries::update_video_scan_metadata(
+                    &conn,
+                    &known.id,
+                    scanned_file.file_size as i64,
+                    scanned_file.mtime,
+                    &quick_hash_str,
+                )?;
+            }
             if known.status == "offline" {
                 queries::update_video_status(&conn, &known.id, "online")?;
             }
@@ -934,7 +976,7 @@ mod tests {
                 .unwrap()
         };
 
-        let outcome = reconcile_known_path(&db, &scanned_file, &known).unwrap();
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
         assert!(
             matches!(outcome, ProcessOutcome::Reconciled),
             "R2 is always just reconciled in place, never reactivated/replaced"
@@ -1050,7 +1092,7 @@ mod tests {
              classify_discovered_file's mtime mismatch is what routes here in the first place"
         );
 
-        let outcome = reconcile_known_path(&db, &scanned_file, &known).unwrap();
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
         assert!(
             matches!(outcome, ProcessOutcome::Reconciled),
             "reconnecting at the same path with unchanged content is still an ordinary reconcile"
@@ -1105,7 +1147,7 @@ mod tests {
                 .unwrap()
         };
 
-        let outcome = reconcile_known_path(&db, &scanned_file, &known).unwrap();
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
         assert!(matches!(outcome, ProcessOutcome::Reconciled));
 
         let collisions = queries::list_path_collisions(&db.read_pool).unwrap();
@@ -1210,6 +1252,128 @@ mod tests {
                 "slot {i} must exist, with its original content, in the new folder's \
                  thumbnail subdirectory"
             );
+        }
+    }
+
+    /// Registers `content` at a fresh path, marks the row as fully derived
+    /// (thumbnails ready, duration probed) and writes its 6 slot files plus
+    /// a neighbouring video's 6 slot files in the same directory. Returns
+    /// `(video_id, path, video_dir, thumbs_root)` once set up.
+    fn setup_video_with_derived_data(
+        db: &Db,
+        content: &[u8],
+    ) -> (
+        String,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("video.mp4");
+        fs::write(&path, content).unwrap();
+        let folders = vec![dir.path().to_string_lossy().to_string()];
+        {
+            let conn = db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, &folders).unwrap();
+        }
+        scan_folders(&folders, db, thumbs_root.path()).unwrap();
+        let video_id: String = {
+            let conn = db.writer.lock().unwrap();
+            conn.execute(
+                "UPDATE videos SET thumbnail_ready = 1, thumbnail_attempts = 2,
+                 duration = 5, probed_at = CURRENT_TIMESTAMP, metadata_attempts = 1",
+                [],
+            )
+            .unwrap();
+            conn.query_row("SELECT id FROM videos", [], |r| r.get(0))
+                .unwrap()
+        };
+        let video_dir = thumbnail::paths::video_thumbnail_dir(
+            thumbs_root.path(),
+            &folders,
+            &path.to_string_lossy(),
+        );
+        fs::create_dir_all(&video_dir).unwrap();
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            fs::write(video_dir.join(format!("{video_id}_{i}.webp")), "mine").unwrap();
+            fs::write(video_dir.join(format!("other-video_{i}.webp")), "other").unwrap();
+        }
+        (video_id, path, video_dir, thumbs_root, dir)
+    }
+
+    fn derived_state(db: &Db, id: &str) -> (i64, i64, Option<i64>, Option<String>, i64) {
+        let conn = db.writer.lock().unwrap();
+        conn.query_row(
+            "SELECT thumbnail_ready, thumbnail_attempts, duration, probed_at, metadata_attempts
+             FROM videos WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
+    }
+
+    fn rescan_with_current_file(db: &Db, thumbs_root: &Path, path: &Path, mtime_bump: i64) {
+        let metadata = fs::metadata(path).unwrap();
+        process_detected_file(
+            db,
+            thumbs_root,
+            path,
+            metadata.len(),
+            mtime_from_metadata(&metadata).unwrap() + mtime_bump,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_size_change_invalidates_derived_data_and_removes_only_that_videos_thumbnails() {
+        let (_db_dir, db) = init_temp_db();
+        let (id, path, video_dir, thumbs_root, _dir) =
+            setup_video_with_derived_data(&db, b"truncated head");
+
+        fs::write(&path, b"the complete file, now much longer than before").unwrap();
+        rescan_with_current_file(&db, thumbs_root.path(), &path, 0);
+
+        assert_eq!(derived_state(&db, &id), (0, 0, None, None, 0));
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            assert!(!video_dir.join(format!("{id}_{i}.webp")).exists());
+            assert!(
+                video_dir.join(format!("other-video_{i}.webp")).exists(),
+                "another video's thumbnails must be left alone"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quick_hash_change_at_the_same_size_invalidates_derived_data() {
+        let (_db_dir, db) = init_temp_db();
+        let (id, path, video_dir, thumbs_root, _dir) =
+            setup_video_with_derived_data(&db, b"aaaaaaaaaaaaaaaa");
+
+        fs::write(&path, b"bbbbbbbbbbbbbbbb").unwrap();
+        rescan_with_current_file(&db, thumbs_root.path(), &path, 100);
+
+        assert_eq!(derived_state(&db, &id), (0, 0, None, None, 0));
+        assert!(!video_dir.join(format!("{id}_0.webp")).exists());
+    }
+
+    #[test]
+    fn an_mtime_only_change_keeps_derived_data_and_thumbnails() {
+        let (_db_dir, db) = init_temp_db();
+        let (id, path, video_dir, thumbs_root, _dir) =
+            setup_video_with_derived_data(&db, b"unchanged content");
+
+        rescan_with_current_file(&db, thumbs_root.path(), &path, 100);
+
+        let (ready, attempts, duration, probed_at, meta_attempts) = derived_state(&db, &id);
+        assert_eq!(
+            (ready, attempts, duration, meta_attempts),
+            (1, 2, Some(5), 1)
+        );
+        assert!(probed_at.is_some());
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            assert!(video_dir.join(format!("{id}_{i}.webp")).exists());
         }
     }
 }
