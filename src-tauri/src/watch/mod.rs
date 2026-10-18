@@ -61,6 +61,11 @@ pub struct RealtimeWatchManager {
     /// `reconfigure`) stops its thread.
     unreadable_retry: Mutex<Option<Arc<UnreadableRetry>>>,
     follow_up: Arc<FollowUp>,
+    /// Held for the whole of `reconfigure`. Commands that change the folder
+    /// list or the per-folder check setting run concurrently, and the per-field
+    /// locks above only protect each field: two interleaved reconfigures could
+    /// overwrite each other's handles and leave duplicate watchers/pollers.
+    reconfigure_lock: Mutex<()>,
 }
 
 impl Default for RealtimeWatchManager {
@@ -77,6 +82,7 @@ impl RealtimeWatchManager {
             startup_scans: Mutex::default(),
             unreadable_retry: Mutex::default(),
             follow_up,
+            reconfigure_lock: Mutex::new(()),
         }
     }
 
@@ -102,6 +108,10 @@ impl RealtimeWatchManager {
         nas_poll_interval: Duration,
         notifier: Arc<N>,
     ) {
+        let _serialized = self
+            .reconfigure_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let WatchContext {
             db,
             thumbnails_root,
@@ -197,6 +207,11 @@ impl RealtimeWatchManager {
 /// every call site: `lib.rs`'s startup `.setup()` and each of
 /// `commands::settings_cmds`'s three watch-folder-mutating commands
 /// (`pick_watch_folders`/`remove_watch_folder`/`rename_watch_folder`).
+///
+/// `folders` is narrowed here to the folders whose update check is on, so every
+/// caller gets the same behavior without passing the disabled list around.
+/// Manual scans read `get_watch_folders` directly and so still cover the
+/// disabled folders.
 pub fn reconfigure_real_watch_manager(
     app: &tauri::AppHandle,
     db: &Db,
@@ -205,12 +220,24 @@ pub fn reconfigure_real_watch_manager(
     folders: &[String],
     nas_poll_interval_secs: i64,
 ) {
+    // If the disabled list can't be read, watch everything: missing a new
+    // video is worse than checking a folder the user switched off.
+    let disabled = db
+        .read_pool
+        .get()
+        .map_err(anyhow::Error::from)
+        .and_then(|conn| crate::db::queries::get_watch_check_disabled(&conn))
+        .unwrap_or_else(|e| {
+            log::warn!("failed to read the update-check-disabled folders; checking all: {e}");
+            Vec::new()
+        });
+    let checked = gb_core::watch_folders::filter_checked(folders, &disabled);
     watch_manager.reconfigure(
         WatchContext {
             db: db.clone(),
             thumbnails_root: thumbnails_root.to_path_buf(),
         },
-        folders,
+        &checked,
         &crate::adapters::watcher::RealFileWatcher,
         &crate::adapters::drive_type::RealDriveTypeDetector,
         Duration::from_secs(nas_poll_interval_secs.max(0) as u64),
@@ -956,6 +983,54 @@ mod tests {
         );
         assert_eq!(manager.active_handle_count(), 0);
         assert_eq!(manager.active_nas_poller_count(), 0);
+    }
+
+    #[test]
+    fn concurrent_reconfigure_calls_leave_exactly_one_set_of_handles() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let local_dir = tempfile::tempdir().unwrap();
+        let nas_dir = tempfile::tempdir().unwrap();
+
+        let mut drive_type = FakeDriveTypeDetector::default();
+        drive_type
+            .results
+            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
+        drive_type
+            .results
+            .insert(nas_dir.path().to_path_buf(), Ok(DriveKind::Network));
+        let watcher = FakeFileWatcher {
+            watch_result: Ok(()),
+            ..Default::default()
+        };
+        let manager = RealtimeWatchManager::default();
+        let folders = [
+            local_dir.path().to_string_lossy().to_string(),
+            nas_dir.path().to_string_lossy().to_string(),
+        ];
+
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    for _ in 0..5 {
+                        manager.reconfigure(
+                            WatchContext {
+                                db: db.clone(),
+                                thumbnails_root: thumbs_root.path().to_path_buf(),
+                            },
+                            &folders,
+                            &watcher,
+                            &drive_type,
+                            Duration::from_secs(600),
+                            Arc::new(FakeCatalogNotifier::default()),
+                        );
+                    }
+                });
+            }
+        });
+
+        assert_eq!(manager.active_handle_count(), 1);
+        assert_eq!(manager.active_nas_poller_count(), 1);
     }
 
     #[test]

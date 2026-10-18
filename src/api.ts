@@ -81,6 +81,12 @@ export const removeWatchFolder = (folderPath: string) =>
   invoke<string[]>("remove_watch_folder", { folderPath });
 export const renameWatchFolder = (oldFolderPath: string, newFolderPath: string) =>
   invoke<RenameWatchFolderResult>("rename_watch_folder", { oldFolderPath, newFolderPath });
+export const reorderWatchFolders = (ordered: string[]) =>
+  invoke<string[]>("reorder_watch_folders", { ordered });
+export const listWatchCheckDisabledFolders = () =>
+  invoke<string[]>("list_watch_check_disabled_folders");
+export const setWatchFolderCheckEnabled = (folderPath: string, enabled: boolean) =>
+  invoke<string[]>("set_watch_folder_check_enabled", { folderPath, enabled });
 export const startScan = () => invoke<ScanSummary>("start_scan");
 export const toggleThumbnailPause = (paused: boolean) =>
   invoke<void>("toggle_thumbnail_pause", { paused });

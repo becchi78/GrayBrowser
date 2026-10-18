@@ -659,6 +659,23 @@ pub fn set_watch_folders(conn: &Connection, folders: &[String]) -> anyhow::Resul
     Ok(())
 }
 
+/// Folders whose update check (realtime watch, startup diff scan, NAS
+/// polling) is switched off. Absent key means every folder is checked.
+const WATCH_CHECK_DISABLED_KEY: &str = "watch_check_disabled_folders";
+
+pub fn get_watch_check_disabled(conn: &Connection) -> anyhow::Result<Vec<String>> {
+    match get_setting(conn, WATCH_CHECK_DISABLED_KEY)? {
+        Some(json) => Ok(serde_json::from_str(&json)?),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub fn set_watch_check_disabled(conn: &Connection, folders: &[String]) -> anyhow::Result<()> {
+    let json = serde_json::to_string(folders)?;
+    set_setting(conn, WATCH_CHECK_DISABLED_KEY, &json)?;
+    Ok(())
+}
+
 const NAS_POLL_INTERVAL_KEY: &str = "nas_polling_interval_sec";
 /// Default NAS polling interval: periodic (e.g. every 10 minutes),
 /// configurable by the user.
@@ -1791,5 +1808,31 @@ mod wb_import_tests {
             .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(video_count, 1);
+    }
+}
+
+#[cfg(test)]
+mod watch_check_disabled_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+
+    #[test]
+    fn defaults_to_empty_when_the_key_is_absent() {
+        let (_dir, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert!(get_watch_check_disabled(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn round_trips_in_order_and_is_independent_of_watch_folders() {
+        let (_dir, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        let disabled = vec![r"D:\Movies".to_string(), r"C:\Videos".to_string()];
+        set_watch_check_disabled(&conn, &disabled).unwrap();
+        assert_eq!(get_watch_check_disabled(&conn).unwrap(), disabled);
+        assert!(get_watch_folders(&conn).unwrap().is_empty());
+
+        set_watch_check_disabled(&conn, &[]).unwrap();
+        assert!(get_watch_check_disabled(&conn).unwrap().is_empty());
     }
 }
