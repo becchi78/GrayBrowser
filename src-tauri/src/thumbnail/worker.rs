@@ -1,9 +1,11 @@
 //! Per-video thumbnail generation: probe duration, compute 6 evenly spaced
 //! seek positions, extract each via `FfmpegAdapter` with a one-shot 0s
 //! fallback per slot on failure, then atomically rename each `.tmp` ->
-//! final -- but only once all 6 slots have succeeded. If any slot fails
-//! permanently, extraction of the remaining slots is skipped (fail-fast)
-//! and every `.tmp` file produced so far for this video is cleaned up.
+//! final -- but only once all 6 slots have succeeded and not every one of
+//! them needed the 0s fallback (six identical first frames). If any slot
+//! fails permanently, extraction of the remaining slots is skipped
+//! (fail-fast) and every `.tmp` file produced so far for this video is
+//! cleaned up.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -69,6 +71,7 @@ pub fn generate_thumbnail_for_video(
     let nonce = next_tmp_nonce();
     let mut tmp_paths: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
     let mut extraction_err: Option<anyhow::Error> = None;
+    let mut fallback_count: usize = 0;
 
     for (i, seek) in seeks.into_iter().enumerate() {
         let tmp_path = thumbnails_dir.join(format!("{video_id}_{i}.webp.{nonce}.tmp"));
@@ -84,6 +87,7 @@ pub fn generate_thumbnail_for_video(
             Err(first_err) => match gb_core::thumbnail_policy::fallback_seek_seconds(seek) {
                 Some(fallback) => ffmpeg
                     .extract_thumbnail(video_path, &tmp_path, fallback, THUMBNAIL_WIDTH_PX, THUMBNAIL_QUALITY)
+                    .map(|()| fallback_count += 1)
                     .map_err(|second_err| anyhow::anyhow!("slot {i}: seek {seek}s failed ({first_err}); fallback to 0s also failed ({second_err})")),
                 None => Err(anyhow::anyhow!("slot {i}: seek {seek}s failed: {first_err}")),
             },
@@ -100,6 +104,16 @@ pub fn generate_thumbnail_for_video(
                 break;
             }
         }
+    }
+
+    // Checked before any rename so nothing is published for an all-gray set.
+    if extraction_err.is_none()
+        && gb_core::thumbnail_policy::all_slots_fell_back(fallback_count, THUMBNAILS_PER_VIDEO)
+    {
+        extraction_err = Some(anyhow::anyhow!(
+            "all {THUMBNAILS_PER_VIDEO} slots fell back to the 0s frame \
+             (the file may be unreadable past its start, e.g. still being written)"
+        ));
     }
 
     let failure = match extraction_err {
@@ -358,14 +372,14 @@ mod tests {
     }
 
     #[test]
-    fn every_slot_that_fails_its_initial_seek_falls_back_to_zero_and_all_six_succeed() {
+    fn every_slot_that_fails_its_initial_seek_falls_back_to_zero_and_the_generation_fails() {
         let (_db_dir, db) = init_temp_db();
         let thumbs_dir = tempfile::tempdir().unwrap();
         insert_test_video(&db, "vid-2", "C:/videos/movie.mp4");
 
         // duration=120.0 -> all 6 computed seeks (120*1/7 .. 120*6/7) are
-        // non-zero, so this fails every slot's initial seek and rescues all
-        // 6 via the 0s fallback.
+        // non-zero, so this fails every slot's initial seek and every slot
+        // is rescued only by the 0s fallback: six identical first frames.
         let ffmpeg = FakeFfmpegAdapter {
             duration: Ok(Some(120.0)),
             extract_result: Box::new(|seek_secs| {
@@ -381,16 +395,19 @@ mod tests {
             ..Default::default()
         };
 
-        generate_thumbnail_for_video(
+        let result = generate_thumbnail_for_video(
             &ffmpeg,
             &db,
             thumbs_dir.path(),
             "vid-2",
             Path::new("C:/videos/movie.mp4"),
-        )
-        .expect("fallback should rescue every slot");
+        );
 
-        assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-2"));
+        assert!(result.is_err(), "an all-fallback set must not be a success");
+        assert_eq!(thumbnail_attempts_of(&db, "vid-2"), 1);
+        assert_eq!(thumbnail_ready_flag(&db, "vid-2"), 0);
+        assert!(!any_final_file_exists(thumbs_dir.path(), "vid-2"));
+        assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-2"));
         let calls = ffmpeg.calls.lock().unwrap();
         let extract_calls: Vec<f64> = calls
             .iter()
@@ -408,6 +425,72 @@ mod tests {
             );
             assert_eq!(pair[1], 0.0, "fallback seek for each slot should be 0.0");
         }
+    }
+
+    fn any_final_file_exists(thumbs_dir: &Path, id: &str) -> bool {
+        (0..THUMBNAILS_PER_VIDEO).any(|i| thumbs_dir.join(format!("{id}_{i}.webp")).exists())
+    }
+
+    #[test]
+    fn a_single_fallback_slot_is_still_a_success() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-partial", "C:/videos/movie.mp4");
+
+        // Only the last slot's primary seek (120*6/7) fails.
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|seek_secs| {
+                if seek_secs > 100.0 {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "seek out of range".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+
+        generate_thumbnail_for_video(
+            &ffmpeg,
+            &db,
+            thumbs_dir.path(),
+            "vid-partial",
+            Path::new("C:/videos/movie.mp4"),
+        )
+        .expect("a partial fallback should still succeed");
+
+        assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-partial"));
+        assert_eq!(thumbnail_ready_flag(&db, "vid-partial"), 1);
+        assert_eq!(thumbnail_attempts_of(&db, "vid-partial"), 0);
+    }
+
+    #[test]
+    fn unknown_duration_with_every_one_second_seek_succeeding_is_a_success() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-nodur", "C:/videos/movie.webm");
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(None),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        generate_thumbnail_for_video(
+            &ffmpeg,
+            &db,
+            thumbs_dir.path(),
+            "vid-nodur",
+            Path::new("C:/videos/movie.webm"),
+        )
+        .expect("unknown duration alone must not fail generation");
+
+        assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-nodur"));
+        assert_eq!(thumbnail_ready_flag(&db, "vid-nodur"), 1);
+        assert_eq!(thumbnail_attempts_of(&db, "vid-nodur"), 0);
     }
 
     #[test]

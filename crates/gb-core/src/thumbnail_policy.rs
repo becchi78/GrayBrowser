@@ -52,9 +52,31 @@ pub fn fallback_seek_seconds(failed_seek_secs: f64) -> Option<f64> {
     }
 }
 
+/// Whether every slot only succeeded through the 0s fallback. A file whose
+/// body can't be read yet (still being written, truncated) yields the
+/// first frame for every slot, so the result is six identical gray frames
+/// that must not be treated as a success. A partial fallback (some slots)
+/// is normal for short videos and stays a success.
+pub fn all_slots_fell_back(fallback_count: usize, total: usize) -> bool {
+    total > 0 && fallback_count >= total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_slots_fell_back_only_when_every_slot_used_the_fallback() {
+        assert!(all_slots_fell_back(6, 6));
+        assert!(!all_slots_fell_back(5, 6));
+        assert!(!all_slots_fell_back(1, 6));
+        assert!(!all_slots_fell_back(0, 6));
+    }
+
+    #[test]
+    fn all_slots_fell_back_is_false_for_zero_slots() {
+        assert!(!all_slots_fell_back(0, 0));
+    }
 
     #[test]
     fn fallback_from_a_positive_seek_retries_at_zero() {

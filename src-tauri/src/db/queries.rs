@@ -490,6 +490,25 @@ pub fn mark_thumbnail_ready(conn: &Connection, video_id: &str) -> rusqlite::Resu
     Ok(())
 }
 
+/// Returns everything derived from the file's content (thumbnail state,
+/// duration, probed properties and their retry counters) to the "not yet
+/// generated/probed" state, for when the content itself changed. The probed
+/// properties are cleared too, rather than left to be overwritten, so a
+/// re-probe that fails does not leave the previous content's values next
+/// to a NULL `probed_at`.
+pub fn reset_video_derived_data(conn: &Connection, video_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE videos
+         SET thumbnail_ready = 0, thumbnail_attempts = 0,
+             duration = NULL, probed_at = NULL, metadata_attempts = 0,
+             width = NULL, height = NULL, video_codec = NULL,
+             audio_codec = NULL, bitrate = NULL, fps = NULL
+         WHERE id = ?1",
+        params![video_id],
+    )?;
+    Ok(())
+}
+
 /// Resets `thumbnail_attempts` back to 0 for `video_id`. Intended for a
 /// manual "retry" action (surfaced in the UI) that gives an exhausted video
 /// another chance at automatic generation.

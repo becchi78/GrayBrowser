@@ -107,6 +107,28 @@ pub fn move_video_thumbnails(
     move_thumbnail_files(video_id, &old_dir, &new_dir)
 }
 
+/// Deletes `video_id`'s slot files (and only those) from the directory
+/// `file_path` resolves to. Used when the file's content changed, so the
+/// cached frames no longer depict it. A missing slot is fine; any other
+/// removal failure is logged and does not stop the remaining slots, since
+/// thumbnails are regenerable.
+pub fn remove_video_thumbnails(
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+    video_id: &str,
+    file_path: &str,
+) {
+    let dir = video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
+    for slot in 0..THUMBNAILS_PER_VIDEO {
+        let path = slot_path(&dir, video_id, slot);
+        if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("failed to remove stale thumbnail {}: {e}", path.display());
+            }
+        }
+    }
+}
+
 /// Moves `video_id`'s thumbnail files directly between the subdirectories
 /// for `old_folder_path` and `new_folder_path`, identified by the folder
 /// path strings themselves rather than by searching `watch_folders` -- used
