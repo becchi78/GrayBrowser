@@ -23,6 +23,9 @@ pub struct VideoDto {
     pub rating: i64,
     pub created_at: String,
     pub thumbnail_ready: bool,
+    /// Automatic retries are used up and there is still no thumbnail, so the
+    /// row should say it failed instead of "generating" forever.
+    pub thumbnail_failed: bool,
 }
 
 impl VideoDto {
@@ -40,6 +43,10 @@ impl VideoDto {
     /// every browse) still treats the filesystem itself as authoritative,
     /// and self-heals this column when it's stale.
     fn from_row(row: queries::VideoRow) -> Self {
+        let thumbnail_failed = !row.thumbnail_ready
+            && !gb_core::retry::is_eligible_for_automatic_retry(
+                u32::try_from(row.thumbnail_attempts).unwrap_or(0),
+            );
         Self {
             id: row.id,
             file_path: row.file_path,
@@ -52,6 +59,7 @@ impl VideoDto {
             rating: row.rating,
             created_at: row.created_at,
             thumbnail_ready: row.thumbnail_ready,
+            thumbnail_failed,
         }
     }
 }
@@ -256,6 +264,7 @@ mod tests {
             created_at: "2026-01-01 00:00:00".to_string(),
             mtime: None,
             thumbnail_ready,
+            thumbnail_attempts: 0,
         }
     }
 
@@ -289,5 +298,28 @@ mod tests {
             dto.thumbnail_ready,
             "thumbnail_ready must come from the DB column, never from a filesystem check"
         );
+    }
+
+    #[test]
+    fn thumbnail_failed_is_true_only_when_not_ready_and_retries_are_used_up() {
+        let max = i64::from(gb_core::retry::MAX_GENERATION_ATTEMPTS);
+        let cases = [
+            (false, 0, false),
+            (false, max - 1, false),
+            (false, max, true),
+            (false, max + 5, true),
+            (true, 0, false),
+            (true, max, false),
+            (true, max + 5, false),
+        ];
+        for (ready, attempts, expected) in cases {
+            let mut row = video_row(ready);
+            row.thumbnail_attempts = attempts;
+            assert_eq!(
+                VideoDto::from_row(row).thumbnail_failed,
+                expected,
+                "ready={ready} attempts={attempts}"
+            );
+        }
     }
 }

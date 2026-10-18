@@ -769,6 +769,11 @@ button.search-box-clear {
   font-size: 0.85em;
 }
 
+.thumbnail-placeholder--failed {
+  background-color: #f3d6d6;
+  color: #8a2a2a;
+}
+
 .video-row--offline .video-row-thumbnail-wrap img,
 .video-row--offline .video-row-thumbnail-wrap .thumbnail-placeholder {
   /* 45% opacity. `filter: grayscale` kept alongside opacity, same as the
@@ -1714,6 +1719,11 @@ button.link-button:focus-visible {
   .thumbnail-placeholder {
     background-color: #444;
     color: #ccc;
+  }
+
+  .thumbnail-placeholder--failed {
+    background-color: #5a2f2f;
+    color: #f0b4b4;
   }
 
   .video-row {
