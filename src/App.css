@@ -519,6 +519,45 @@ button.search-box-clear {
   background-color: #e8e8e8;
 }
 
+/* Right-aligned jump button; `.status-jump-menu` opens upward from it like
+   `.status-panel`, and is capped to the viewport so 11 items never overflow. */
+.status-jump {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.status-jump-menu {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 0.5em;
+  min-width: 6em;
+  max-height: calc(100vh - 6em);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  padding: 0.25em;
+  z-index: 20;
+}
+
+.status-jump-item {
+  box-shadow: none;
+  background-color: transparent;
+  text-align: right;
+  padding: 0.25em 0.75em;
+  font-size: 0.8em;
+}
+
+.status-jump-item:hover {
+  background-color: #e8e8e8;
+}
+
 .status-thumbnail-progress {
   font-size: 0.75em;
   white-space: nowrap;
@@ -1760,6 +1799,16 @@ button.link-button:focus-visible {
   .status-badge[aria-pressed="true"] {
     background-color: #5a8ef0;
     color: #0f0f0f;
+  }
+
+  .status-jump-menu {
+    background-color: #2f2f2f;
+    color: #f6f6f6;
+    border-color: #555;
+  }
+
+  .status-jump-item:hover {
+    background-color: #444;
   }
 
   .status-panel {

@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import { listVideos } from "../api";
 import { onCatalogChanged } from "../events";
+import { jumpTargetIndex } from "../lib/jumpToPercent";
 import type { SortDirection, SortField, VideoDto } from "../types";
 import { VideoRow } from "./VideoRow";
 
@@ -31,6 +32,10 @@ interface Props {
   rating: number | null;
   /** Hides every row's right-hand info column (CSS only; rows still mount it). */
   infoCollapsed: boolean;
+  /** `seq` lets pressing the same percent twice in a row still count as a new request. */
+  jumpRequest: { percent: number; seq: number } | null;
+  /** Reports the current (filtered/sorted) row count, for the jump button. */
+  onCountChange: (count: number) => void;
 }
 
 export function ThumbnailGrid({
@@ -42,6 +47,8 @@ export function ThumbnailGrid({
   folderPath,
   rating,
   infoCollapsed,
+  jumpRequest,
+  onCountChange,
 }: Props) {
   const [videos, setVideos] = useState<VideoDto[]>([]);
   // 一覧を再取得するたびに増える。VideoDtoには詳細情報の取得状況が含まれず、
@@ -153,6 +160,25 @@ export function ThumbnailGrid({
     estimateSize: () => ROW_HEIGHT,
     overscan: 5,
   });
+
+  useEffect(() => {
+    onCountChange(videos.length);
+  }, [videos.length, onCountChange]);
+
+  // Keyed on the request object only: depending on `videos` would yank the
+  // user back to the jump target whenever the list refetches, so the latest
+  // length is read through a ref instead.
+  const videoCountRef = useRef(videos.length);
+  videoCountRef.current = videos.length;
+  const scrollToIndex = rowVirtualizer.scrollToIndex;
+  const scrollToIndexRef = useRef(scrollToIndex);
+  scrollToIndexRef.current = scrollToIndex;
+  useEffect(() => {
+    if (jumpRequest === null) return;
+    const index = jumpTargetIndex(videoCountRef.current, jumpRequest.percent);
+    if (index === null) return;
+    scrollToIndexRef.current(index, { align: jumpRequest.percent === 100 ? "end" : "start" });
+  }, [jumpRequest]);
 
   const cache = thumbnailCache.current;
   const virtualRows = rowVirtualizer.getVirtualItems();
