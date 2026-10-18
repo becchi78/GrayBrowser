@@ -1,5 +1,6 @@
 // Pure array operations behind TagBarEditDialog's "バーに常設するタグ" list
-// (↑/↓ reorder, ✕ remove, + 追加) -- split out into this JSX非依存 file so
+// (↑/↓ reorder, ✕ remove, + 追加). Generic over the element type so the
+// folder dialog can reuse them for string paths. Split out into this JSX非依存 file so
 // they're unit-testable without mounting the dialog, same pattern as
 // src/lib/sidebarResize.ts/tagBarLayout.ts. Every function returns a new
 // array (never mutates `ids`), matching how React state setters are used
@@ -11,7 +12,7 @@
  * or out of range -- callers also disable the "↑" button in that case, but
  * this stays safe to call regardless.
  */
-export function moveUp(ids: number[], index: number): number[] {
+export function moveUp<T>(ids: T[], index: number): T[] {
   if (index <= 0 || index >= ids.length) return ids;
   const next = [...ids];
   [next[index - 1], next[index]] = [next[index], next[index - 1]];
@@ -24,12 +25,12 @@ export function moveUp(ids: number[], index: number): number[] {
  * implementation instead of two independent (and independently buggy)
  * copies.
  */
-export function moveDown(ids: number[], index: number): number[] {
+export function moveDown<T>(ids: T[], index: number): T[] {
   return moveUp(ids, index + 1);
 }
 
 /** Removes the element at `index`. A no-op for an out-of-range index. */
-export function removeAt(ids: number[], index: number): number[] {
+export function removeAt<T>(ids: T[], index: number): T[] {
   if (index < 0 || index >= ids.length) return ids;
   return ids.filter((_, i) => i !== index);
 }
@@ -40,6 +41,6 @@ export function removeAt(ids: number[], index: number): number[] {
  * 除外して表示しているため通常は重複しないが、二重クリック等に対する
  * 保険として重複追加を防ぐ。
  */
-export function addIfAbsent(ids: number[], id: number): number[] {
+export function addIfAbsent<T>(ids: T[], id: T): T[] {
   return ids.includes(id) ? ids : [...ids, id];
 }

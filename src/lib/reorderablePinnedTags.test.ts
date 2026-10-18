@@ -55,3 +55,13 @@ test("addIfAbsent: 既に含まれるidは重複追加されない", () => {
 test("addIfAbsent: 空配列への追加", () => {
   assert.deepEqual(addIfAbsent([], 1), [1]);
 });
+
+test("moveUp/moveDown: string配列でも入れ替えられる", () => {
+  assert.deepEqual(moveUp(["a", "b", "c"], 2), ["a", "c", "b"]);
+  assert.deepEqual(moveDown(["a", "b", "c"], 0), ["b", "a", "c"]);
+});
+
+test("moveUp/moveDown: string配列の端ではno-op", () => {
+  assert.deepEqual(moveUp(["a", "b"], 0), ["a", "b"]);
+  assert.deepEqual(moveDown(["a", "b"], 1), ["a", "b"]);
+});

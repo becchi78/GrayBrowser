@@ -83,6 +83,131 @@ pub fn list_watch_folders(db: State<Db>) -> Result<Vec<String>, String> {
     queries::get_watch_folders(&conn).map_err(|e| e.to_string())
 }
 
+/// Validates `ordered` against the stored list and persists it. Takes the
+/// connection so it is unit-testable without a Tauri `State`. The caller holds
+/// the writer lock, which makes read-validate-write atomic.
+fn apply_reorder(conn: &rusqlite::Connection, ordered: Vec<String>) -> Result<Vec<String>, String> {
+    use gb_core::watch_folders::ReorderError;
+
+    let existing = queries::get_watch_folders(conn).map_err(|e| e.to_string())?;
+    let reordered = gb_core::watch_folders::reorder(&existing, ordered).map_err(|e| match e {
+        ReorderError::Duplicate(f) => format!("並び順に同じフォルダが重複しています: \"{f}\""),
+        ReorderError::Unknown(f) => format!("登録済みの監視フォルダではありません: \"{f}\""),
+        ReorderError::Missing(f) => {
+            format!("並び順にフォルダが含まれていません(一覧が古い可能性があります): \"{f}\"")
+        }
+    })?;
+    queries::set_watch_folders(conn, &reordered).map_err(|e| e.to_string())?;
+    Ok(reordered)
+}
+
+/// Persists a new folder order. Order does not affect watching, so no
+/// `reconfigure` is needed.
+#[tauri::command]
+pub fn reorder_watch_folders(db: State<Db>, ordered: Vec<String>) -> Result<Vec<String>, String> {
+    let conn = db.writer.lock().unwrap();
+    apply_reorder(&conn, ordered)
+}
+
+#[tauri::command]
+pub fn list_watch_check_disabled_folders(db: State<Db>) -> Result<Vec<String>, String> {
+    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+    queries::get_watch_check_disabled(&conn).map_err(|e| e.to_string())
+}
+
+/// Adds/removes `folder_path` in the disabled list (no duplicates, other
+/// entries keep their order). Rejects folders that are not registered.
+fn apply_check_enabled(
+    conn: &rusqlite::Connection,
+    folder_path: &str,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    let folders = queries::get_watch_folders(conn).map_err(|e| e.to_string())?;
+    if !folders.iter().any(|f| f == folder_path) {
+        return Err(format!(
+            "登録済みの監視フォルダではありません: \"{folder_path}\""
+        ));
+    }
+    let mut disabled = queries::get_watch_check_disabled(conn).map_err(|e| e.to_string())?;
+    if enabled {
+        disabled.retain(|f| f != folder_path);
+    } else if !disabled.iter().any(|f| f == folder_path) {
+        disabled.push(folder_path.to_string());
+    }
+    queries::set_watch_check_disabled(conn, &disabled).map_err(|e| e.to_string())?;
+    Ok(disabled)
+}
+
+/// Switches a folder's update check (realtime watch, startup diff scan, NAS
+/// polling) on or off, then re-`reconfigure`s so it takes effect at once.
+/// Manual scans are unaffected. Returns the updated disabled list.
+///
+/// `async` for the same reason as `pick_watch_folders`: `reconfigure` does
+/// drive-type detection and watcher registration, which would otherwise block
+/// the UI thread.
+#[tauri::command(async)]
+pub fn set_watch_folder_check_enabled(
+    app: tauri::AppHandle,
+    db: State<Db>,
+    watch_manager: State<RealtimeWatchManager>,
+    folder_path: String,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
+        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
+    );
+
+    let (disabled, folders, nas_poll_interval_secs) = {
+        let conn = db.writer.lock().unwrap();
+        let disabled = apply_check_enabled(&conn, &folder_path, enabled)?;
+        let folders = queries::get_watch_folders(&conn).map_err(|e| e.to_string())?;
+        let interval = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
+        (disabled, folders, interval)
+        // Writer lock drops here, before reconfigure does its own DB reads --
+        // same ordering `pick_watch_folders` uses.
+    };
+
+    crate::watch::reconfigure_real_watch_manager(
+        &app,
+        db.inner(),
+        &watch_manager,
+        &thumbnails_root,
+        &folders,
+        nas_poll_interval_secs,
+    );
+
+    Ok(disabled)
+}
+
+/// Rewrites `old` to `new` in the disabled list so a renamed folder keeps its
+/// update-check setting. No write when `old` is not in the list.
+fn rename_in_check_disabled(
+    conn: &rusqlite::Connection,
+    old: &str,
+    new: &str,
+) -> Result<(), String> {
+    let disabled = queries::get_watch_check_disabled(conn).map_err(|e| e.to_string())?;
+    if !disabled.iter().any(|f| f == old) {
+        return Ok(());
+    }
+    let updated: Vec<String> = disabled
+        .into_iter()
+        .map(|f| if f == old { new.to_string() } else { f })
+        .collect();
+    queries::set_watch_check_disabled(conn, &updated).map_err(|e| e.to_string())
+}
+
+/// Drops `folder` from the disabled list so a removed folder leaves no stale
+/// entry behind (it would otherwise silently disable a re-added folder).
+fn remove_from_check_disabled(conn: &rusqlite::Connection, folder: &str) -> Result<(), String> {
+    let disabled = queries::get_watch_check_disabled(conn).map_err(|e| e.to_string())?;
+    if !disabled.iter().any(|f| f == folder) {
+        return Ok(());
+    }
+    let remaining: Vec<String> = disabled.into_iter().filter(|f| f != folder).collect();
+    queries::set_watch_check_disabled(conn, &remaining).map_err(|e| e.to_string())
+}
+
 /// Read-only precursor to `remove_watch_folder`: counts how many `videos`
 /// rows would be lost so `FolderDialog`'s ✕ delete confirmation can
 /// show a real number *before* the user commits to the destructive action.
@@ -134,6 +259,7 @@ pub fn remove_watch_folder(
         let existing = queries::get_watch_folders(&conn).map_err(|e| e.to_string())?;
         let remaining: Vec<String> = existing.into_iter().filter(|f| f != &folder_path).collect();
         queries::set_watch_folders(&conn, &remaining).map_err(|e| e.to_string())?;
+        remove_from_check_disabled(&conn, &folder_path)?;
         let interval = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
         (remaining, interval)
         // `conn` (and its writer-lock guard) drops here, before reconfigure
@@ -258,6 +384,7 @@ pub fn rename_watch_folder(
             })
             .collect();
         queries::set_watch_folders(&conn, &updated).map_err(|e| e.to_string())?;
+        rename_in_check_disabled(&conn, &old_folder_path, &new_folder_path)?;
         let interval = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
 
         (
@@ -420,6 +547,99 @@ mod tests {
     fn allows_an_otherwise_non_conflicting_rename() {
         let existing = vec![r"C:\Videos".to_string(), r"D:\Movies".to_string()];
         assert!(validate_rename_target(&existing, r"C:\Videos", r"E:\Renamed").is_ok());
+    }
+
+    // --- reorder / per-folder update check --------------------------------
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn db_with_folders(folders: &[&str]) -> (tempfile::TempDir, Db) {
+        let (dir, db) = crate::db::test_support::init_temp_db();
+        queries::set_watch_folders(&db.writer.lock().unwrap(), &v(folders)).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn reorder_persists_the_new_order() {
+        let (_d, db) = db_with_folders(&["A", "B", "C"]);
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(
+            apply_reorder(&conn, v(&["C", "A", "B"])).unwrap(),
+            v(&["C", "A", "B"])
+        );
+        assert_eq!(
+            queries::get_watch_folders(&conn).unwrap(),
+            v(&["C", "A", "B"])
+        );
+    }
+
+    #[test]
+    fn reorder_rejects_non_permutations_and_leaves_the_stored_order() {
+        let (_d, db) = db_with_folders(&["A", "B"]);
+        let conn = db.writer.lock().unwrap();
+        for bad in [v(&["A"]), v(&["A", "B", "X"]), v(&["A", "A"]), v(&[])] {
+            assert!(apply_reorder(&conn, bad).is_err());
+        }
+        assert_eq!(queries::get_watch_folders(&conn).unwrap(), v(&["A", "B"]));
+    }
+
+    #[test]
+    fn check_enabled_rejects_an_unregistered_folder() {
+        let (_d, db) = db_with_folders(&["A"]);
+        let conn = db.writer.lock().unwrap();
+        assert!(apply_check_enabled(&conn, "Z", false).is_err());
+        assert!(queries::get_watch_check_disabled(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn check_off_adds_without_duplicates_and_on_removes_keeping_order() {
+        let (_d, db) = db_with_folders(&["A", "B", "C"]);
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(apply_check_enabled(&conn, "C", false).unwrap(), v(&["C"]));
+        assert_eq!(
+            apply_check_enabled(&conn, "A", false).unwrap(),
+            v(&["C", "A"])
+        );
+        assert_eq!(
+            apply_check_enabled(&conn, "A", false).unwrap(),
+            v(&["C", "A"])
+        );
+        assert_eq!(
+            apply_check_enabled(&conn, "B", true).unwrap(),
+            v(&["C", "A"])
+        );
+        assert_eq!(apply_check_enabled(&conn, "C", true).unwrap(), v(&["A"]));
+        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["A"]));
+    }
+
+    #[test]
+    fn rename_replaces_the_old_path_in_the_disabled_list() {
+        let (_d, db) = db_with_folders(&["A", "B"]);
+        let conn = db.writer.lock().unwrap();
+        queries::set_watch_check_disabled(&conn, &v(&["B", "A"])).unwrap();
+        rename_in_check_disabled(&conn, "A", "A2").unwrap();
+        assert_eq!(
+            queries::get_watch_check_disabled(&conn).unwrap(),
+            v(&["B", "A2"])
+        );
+        rename_in_check_disabled(&conn, "Q", "Q2").unwrap();
+        assert_eq!(
+            queries::get_watch_check_disabled(&conn).unwrap(),
+            v(&["B", "A2"])
+        );
+    }
+
+    #[test]
+    fn remove_drops_the_folder_from_the_disabled_list() {
+        let (_d, db) = db_with_folders(&["A", "B"]);
+        let conn = db.writer.lock().unwrap();
+        queries::set_watch_check_disabled(&conn, &v(&["A", "B"])).unwrap();
+        remove_from_check_disabled(&conn, "A").unwrap();
+        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
+        remove_from_check_disabled(&conn, "Q").unwrap();
+        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
     }
 
     // --- rename_watch_folder's thumbnail-moving sequence -------------------

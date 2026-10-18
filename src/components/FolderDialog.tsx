@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   countVideosUnderFolder,
+  listWatchCheckDisabledFolders,
   listWatchFolders,
   pickWatchFolders,
   removeWatchFolder,
   renameWatchFolder,
+  reorderWatchFolders,
+  setWatchFolderCheckEnabled,
   startScan,
 } from "../api";
+import { moveDown, moveUp } from "../lib/reorderablePinnedTags";
 
 interface Props {
   open: boolean;
@@ -55,15 +59,31 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [lastScanSummary, setLastScanSummary] = useState<string | null>(null);
+  const [checkDisabled, setCheckDisabled] = useState<string[]>([]);
+  const [reordering, setReordering] = useState(false);
+  const [togglingPath, setTogglingPath] = useState<string | null>(null);
+  const [orderCheckError, setOrderCheckError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
     let cancelled = false;
+    // Independent so one failing call does not keep the other list stale.
     listWatchFolders()
       .then((rows) => {
-        if (!cancelled) setFolders(rows);
+        if (!cancelled) {
+          // A stale error from a previous open must not outlive the reopen.
+          setOrderCheckError(null);
+          setFolders(rows);
+        }
+      })
+      .catch(console.error);
+    listWatchCheckDisabledFolders()
+      .then((disabled) => {
+        if (!cancelled) {
+          setCheckDisabled(disabled);
+        }
       })
       .catch(console.error);
     return () => {
@@ -75,11 +95,23 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
     return null;
   }
 
+  // The backend rewrites the check-disabled list on rename/remove/add, so the
+  // dialog refetches it rather than mirroring the change. A failed refetch
+  // must not block the other updates.
+  async function refreshCheckDisabled() {
+    try {
+      setCheckDisabled(await listWatchCheckDisabledFolders());
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   async function handleAdd() {
     try {
       const merged = await pickWatchFolders();
       setFolders(merged);
       onChanged();
+      await refreshCheckDisabled();
     } catch (e) {
       console.error(e);
     }
@@ -110,6 +142,42 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
       console.error(e);
     } finally {
       setScanning(false);
+    }
+  }
+
+  // The displayed order is only replaced by the order the backend returns, so
+  // a rejected save (e.g. the list changed underneath this dialog) leaves it
+  // untouched. `reordering` blocks overlapping saves, which would otherwise be
+  // computed from a stale list.
+  async function handleMove(index: number, direction: "up" | "down") {
+    const next =
+      direction === "up" ? moveUp(folders, index) : moveDown(folders, index);
+    if (next === folders) {
+      return;
+    }
+    setOrderCheckError(null);
+    setReordering(true);
+    try {
+      const saved = await reorderWatchFolders(next);
+      setFolders(saved);
+      onChanged();
+    } catch (e) {
+      setOrderCheckError(String(e));
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  async function handleToggleCheck(path: string, enabled: boolean) {
+    setOrderCheckError(null);
+    setTogglingPath(path);
+    try {
+      const disabled = await setWatchFolderCheckEnabled(path, enabled);
+      setCheckDisabled(disabled);
+    } catch (e) {
+      setOrderCheckError(String(e));
+    } finally {
+      setTogglingPath(null);
     }
   }
 
@@ -155,6 +223,7 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
       );
       cancelEdit();
       onChanged();
+      await refreshCheckDisabled();
     } catch (e) {
       // Surfaced in the UI, not just console.error -- e.g. the backend's
       // duplicate/containment rejection (validate_rename_target) or the
@@ -184,6 +253,7 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
       setFolders(remaining);
       setDeleteTarget(null);
       onChanged();
+      await refreshCheckDisabled();
     } catch (e) {
       console.error(e);
     } finally {
@@ -201,10 +271,12 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
         >
           <h2>フォルダ管理</h2>
           {folders.length === 0 ? (
-            <p className="folder-dialog-empty">登録済みのフォルダはありません。</p>
+            <p className="folder-dialog-empty">
+              登録済みのフォルダはありません。
+            </p>
           ) : (
             <ul className="folder-dialog-list">
-              {folders.map((path) => (
+              {folders.map((path, index) => (
                 <li key={path} className="folder-row" data-testid="folder-row">
                   {editingPath === path ? (
                     <div className="folder-row-edit">
@@ -234,18 +306,64 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
                         </button>
                       </div>
                       {editError && (
-                        <p className="folder-row-edit-error" data-testid="folder-row-edit-error">
+                        <p
+                          className="folder-row-edit-error"
+                          data-testid="folder-row-edit-error"
+                        >
                           {editError}
                         </p>
                       )}
                     </div>
                   ) : (
                     <>
-                      <span className="folder-row-path" data-testid="folder-row-path" title={path}>
+                      <button
+                        type="button"
+                        className="folder-row-move-btn"
+                        data-testid="folder-row-move-up-btn"
+                        aria-label="上へ移動"
+                        onClick={() => handleMove(index, "up")}
+                        disabled={index === 0 || reordering}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="folder-row-move-btn"
+                        data-testid="folder-row-move-down-btn"
+                        aria-label="下へ移動"
+                        onClick={() => handleMove(index, "down")}
+                        disabled={index === folders.length - 1 || reordering}
+                      >
+                        ↓
+                      </button>
+                      <span
+                        className="folder-row-path"
+                        data-testid="folder-row-path"
+                        title={path}
+                      >
                         {path}
                       </span>
-                      <span className="folder-row-mode">
-                        {isNetworkPath(path) ? "NASポーリング" : "リアルタイム"}
+                      <label className="folder-row-check">
+                        <input
+                          type="checkbox"
+                          data-testid="folder-row-check-toggle"
+                          checked={!checkDisabled.includes(path)}
+                          onChange={(e) =>
+                            handleToggleCheck(path, e.target.checked)
+                          }
+                          disabled={togglingPath !== null}
+                        />
+                        更新チェック
+                      </label>
+                      <span
+                        className="folder-row-mode"
+                        data-testid="folder-row-mode"
+                      >
+                        {checkDisabled.includes(path)
+                          ? "チェックなし"
+                          : isNetworkPath(path)
+                            ? "NASポーリング"
+                            : "リアルタイム"}
                       </span>
                       <button
                         type="button"
@@ -271,8 +389,19 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
               ))}
             </ul>
           )}
+          {orderCheckError && (
+            <p
+              className="folder-dialog-order-check-error"
+              data-testid="folder-dialog-order-check-error"
+            >
+              {orderCheckError}
+            </p>
+          )}
           {renameSummary && (
-            <p className="folder-dialog-rename-summary" data-testid="folder-dialog-rename-summary">
+            <p
+              className="folder-dialog-rename-summary"
+              data-testid="folder-dialog-rename-summary"
+            >
               {renameSummary}
             </p>
           )}
@@ -288,13 +417,24 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
             >
               {scanning ? "スキャン中..." : "スキャン開始"}
             </button>
-            {lastScanSummary && <span className="scan-summary">{lastScanSummary}</span>}
+            {lastScanSummary && (
+              <span className="scan-summary">{lastScanSummary}</span>
+            )}
           </div>
           <div className="dialog-footer">
-            <button type="button" data-testid="folder-dialog-add-btn" onClick={handleAdd}>
+            <button
+              type="button"
+              data-testid="folder-dialog-add-btn"
+              onClick={handleAdd}
+              disabled={reordering || togglingPath !== null}
+            >
               + フォルダを追加
             </button>
-            <button type="button" data-testid="folder-dialog-close-btn" onClick={onClose}>
+            <button
+              type="button"
+              data-testid="folder-dialog-close-btn"
+              onClick={onClose}
+            >
               閉じる
             </button>
           </div>
@@ -302,14 +442,18 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
       </div>
 
       {deleteTarget && (
-        <div className="dialog-overlay" onClick={() => !deleting && setDeleteTarget(null)}>
+        <div
+          className="dialog-overlay"
+          onClick={() => !deleting && setDeleteTarget(null)}
+        >
           <div
             className="dialog folder-delete-confirm-dialog"
             data-testid="folder-delete-confirm-dialog"
             onClick={(e) => e.stopPropagation()}
           >
             <p>
-              このフォルダの登録を解除します。配下の <strong>{deleteTarget.count}</strong>{" "}
+              このフォルダの登録を解除します。配下の{" "}
+              <strong>{deleteTarget.count}</strong>{" "}
               件の動画について、GrayBrowser上のタグ・評価・登録日の情報が失われます（動画ファイル自体は削除されません）。
             </p>
             <p className="folder-delete-confirm-path">{deleteTarget.path}</p>
