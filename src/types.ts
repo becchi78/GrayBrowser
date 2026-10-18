@@ -14,6 +14,8 @@ export interface VideoDto {
   rating: number;
   created_at: string;
   thumbnail_ready: boolean;
+  /** 自動の再試行を使い切っても、まだサムネイルがない状態。 */
+  thumbnail_failed: boolean;
 }
 
 export interface SkippedFileDto {

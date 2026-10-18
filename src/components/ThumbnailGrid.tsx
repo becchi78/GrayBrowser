@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { listVideos } from "../api";
 import { onCatalogChanged } from "../events";
 import { jumpTargetIndex } from "../lib/jumpToPercent";
+import { createLatestOnlyGuard } from "../lib/latestRequest";
 import type { SortDirection, SortField, VideoDto } from "../types";
 import { VideoRow } from "./VideoRow";
 
@@ -77,8 +78,15 @@ export function ThumbnailGrid({
   // during a large batch instead of staying frozen until everything finishes.
   useEffect(() => {
     let cancelled = false;
+    // 一覧の再取得は応答の順序が入れ替わりうる。古い要求の応答（まだ
+    // 生成中の状態）が後から届いて新しい一覧を上書きしないよう、最新の
+    // 要求の応答だけを反映する。依存が変わって effect が再実行されたときの
+    // 古い応答は、上の cancelled で破棄されるので、ガードは effect ごとに
+    // 作れば足りる。
+    const guard = createLatestOnlyGuard();
 
     const tick = async () => {
+      const requestId = guard.begin();
       try {
         const rows = await listVideos({
           search,
@@ -88,7 +96,7 @@ export function ThumbnailGrid({
           folderPath,
           rating,
         });
-        if (cancelled) return;
+        if (cancelled || !guard.isLatest(requestId)) return;
         setVideos(rows);
         setCatalogVersion((v) => v + 1);
         // Clears the selection highlight if the selected video disappeared

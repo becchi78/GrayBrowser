@@ -163,7 +163,14 @@ export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }:
                 {url ? (
                   <img src={url} alt={video.file_name} loading="lazy" />
                 ) : (
-                  <div className="thumbnail-placeholder">生成中...</div>
+                  <div
+                    className={
+                      "thumbnail-placeholder" +
+                      (video.thumbnail_failed ? " thumbnail-placeholder--failed" : "")
+                    }
+                  >
+                    {video.thumbnail_failed ? "生成失敗" : "生成中..."}
+                  </div>
                 )}
               </div>
             );

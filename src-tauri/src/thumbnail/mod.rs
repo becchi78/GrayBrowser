@@ -343,6 +343,10 @@ fn process_pending<F, N>(
                         }
                         Err(e) => {
                             log::warn!("thumbnail worker: giving up on video {id}: {e}");
+                            // The row can only switch to its failed state if
+                            // the list is re-read after the attempt count
+                            // changed. That re-read does not start generation.
+                            notifier.notify_changed();
                             FinishOutcome::Failed
                         }
                     };
@@ -524,6 +528,27 @@ mod tests {
         }
         assert_eq!(thumbnail_ready_flag(&db, "vid-done"), 1);
         assert_eq!(notifier.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_failed_generation_also_notifies_the_catalog_changed() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-fail", "C:/videos/fail.mp4");
+        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            Vec::new(),
+            ThumbnailQueueHandle::default(),
+            failing_ffmpeg(),
+            Arc::clone(&notifier),
+            vec![pending_entry("vid-fail")],
+        );
+
+        assert_eq!(thumbnail_ready_flag(&db, "vid-fail"), 0);
+        assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
     }
 
     #[test]

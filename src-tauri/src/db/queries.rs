@@ -47,11 +47,15 @@ pub struct VideoRow {
     /// (`list_videos_missing_thumbnails`) still treats the filesystem itself
     /// as authoritative and self-heals this flag when it's stale.
     pub thumbnail_ready: bool,
+    /// Count of failed thumbnail generations (migration 0007). Read here so
+    /// the list can tell "still being generated" from "automatic retries
+    /// used up" without a second query per row.
+    pub thumbnail_attempts: i64,
 }
 
 /// Shared column list + row-mapping closure for every query that selects a
 /// full `videos` row, so the two never drift out of sync with each other.
-const VIDEO_COLUMNS: &str = "id, file_path, file_name, file_size, duration, quick_hash, full_hash, status, rating, created_at, mtime, thumbnail_ready";
+const VIDEO_COLUMNS: &str = "id, file_path, file_name, file_size, duration, quick_hash, full_hash, status, rating, created_at, mtime, thumbnail_ready, thumbnail_attempts";
 
 fn map_video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
     Ok(VideoRow {
@@ -67,6 +71,7 @@ fn map_video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
         created_at: r.get(9)?,
         mtime: r.get(10)?,
         thumbnail_ready: r.get(11)?,
+        thumbnail_attempts: r.get(12)?,
     })
 }
 
