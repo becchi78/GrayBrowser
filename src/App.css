@@ -2038,10 +2038,6 @@ button.link-button:focus-visible {
   font-size: 0.9em;
 }
 
-.bulk-tag-result p {
-  margin: 0 0 0.5em;
-}
-
 .bulk-tag-error {
   margin: 0;
   color: #8a1f1f;
