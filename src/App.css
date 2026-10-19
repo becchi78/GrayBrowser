@@ -186,56 +186,12 @@ button.search-box-clear {
   background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
 }
 
-/* 左ペインのタグ部品。縦のペインなので幅の計算は不要で、チップは折り返して並べる。 */
+/* 左ペインのタグ一覧。項目の見た目は .folder-sidebar-item(と active)を共用し、
+   ここは縦に並べる器だけを持つ。 */
 .tag-bar {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.4em;
   min-width: 0;
-}
-
-.tag-bar-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4em;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.tag-bar-chip {
-  border-radius: 999px;
-  padding: 0.15em 0.6em;
-  font-size: 0.8em;
-  box-shadow: none;
-  background-color: #e8e8e8;
-  /* 長いタグ名1つがペイン幅を超えないためのクランプ。
-     `title`属性でフルネームをツールチップ表示する(TagBar.tsx参照)。 */
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tag-bar-chip--active {
-  background-color: #396cd8;
-  color: #ffffff;
-}
-
-.tag-bar-clear-all,
-.tag-bar-others-toggle {
-  padding: 0.15em 0.6em;
-  font-size: 0.8em;
-  box-shadow: none;
-}
-
-.tag-bar-others {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.4em;
-  min-width: 0;
-  max-width: 100%;
 }
 
 /* 評価の一覧。フォルダ一覧と同じ縦並びのボタン。 */
@@ -407,10 +363,6 @@ button.search-box-clear {
 
 .sidebar-section-body {
   padding-bottom: 0.5em;
-}
-
-.sidebar-section-body .tag-bar {
-  padding: 0 0.75em;
 }
 
 .folder-sidebar {
@@ -1848,15 +1800,6 @@ button.link-button:focus-visible {
   .duplicate-group-member-thumb .thumbnail-placeholder {
     background-color: #444;
     color: #ccc;
-  }
-
-  .tag-bar-chip {
-    background-color: #444;
-  }
-
-  .tag-bar-chip--active {
-    background-color: #5a8ef0;
-    color: #0f0f0f;
   }
 
   .generation-failures-error {

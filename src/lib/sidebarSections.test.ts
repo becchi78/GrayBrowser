@@ -27,42 +27,23 @@ test("toggleSectionは指定セクションだけ反転し、元の状態は変�
   assert.deepEqual(toggleSection(after, "rating"), before);
 });
 
-test("選択も常設もなければprimaryは空、othersは全タグ", () => {
-  const all = [tag(1), tag(2), tag(3)];
-  const { primary, others } = deriveTagLists(all, [], []);
-  assert.deepEqual(ids(primary), []);
-  assert.deepEqual(ids(others), [1, 2, 3]);
+test("常設がなければallTagsの順のまま", () => {
+  assert.deepEqual(
+    ids(deriveTagLists([tag(1), tag(2), tag(3)], [])),
+    [1, 2, 3],
+  );
 });
 
-test("常設タグは常設の順に並び、残りがothersになる", () => {
+test("常設タグは常設の順に先頭へ並び、残りはallTagsの順で続く", () => {
   const all = [tag(1), tag(2), tag(3), tag(4)];
-  const { primary, others } = deriveTagLists(all, [3, 1], []);
-  assert.deepEqual(ids(primary), [3, 1]);
-  assert.deepEqual(ids(others), [2, 4]);
+  assert.deepEqual(ids(deriveTagLists(all, [3, 1])), [3, 1, 2, 4]);
 });
 
-test("選択中の未常設タグは選択順で常設の前に昇格する", () => {
-  const all = [tag(1), tag(2), tag(3), tag(4)];
-  const { primary, others } = deriveTagLists(all, [1], [4, 2]);
-  assert.deepEqual(ids(primary), [4, 2, 1]);
-  assert.deepEqual(ids(others), [3]);
-});
-
-test("選択済みの常設タグは位置が変わらず重複もしない", () => {
-  const all = [tag(1), tag(2), tag(3)];
-  const { primary } = deriveTagLists(all, [1, 2, 3], [2]);
-  assert.deepEqual(ids(primary), [1, 2, 3]);
-});
-
-test("存在しないタグIDは選択・常設どちらでも無視される", () => {
+test("存在しないタグIDと常設内の重複は無視される", () => {
   const all = [tag(1), tag(2)];
-  const { primary, others } = deriveTagLists(all, [99, 1], [98]);
-  assert.deepEqual(ids(primary), [1]);
-  assert.deepEqual(ids(others), [2]);
+  assert.deepEqual(ids(deriveTagLists(all, [99, 2, 2])), [2, 1]);
 });
 
-test("タグが0件なら両方空", () => {
-  const { primary, others } = deriveTagLists([], [1], [2]);
-  assert.deepEqual(primary, []);
-  assert.deepEqual(others, []);
+test("タグが0件なら空", () => {
+  assert.deepEqual(deriveTagLists([], [1]), []);
 });

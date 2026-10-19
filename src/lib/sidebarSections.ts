@@ -21,31 +21,22 @@ export function toggleSection(
 }
 
 /**
- * タグ部品の並びを導出する。
- *
- * - `primary`: 選択中だが未常設のタグ(選択順=昇格) → 常設タグ(常設の順)。
- *   存在しないタグID(削除直後など)は除く。
- * - `others`: それ以外のタグ(`allTags`の順)。「その他のタグ」の展開先。
- *
- * 昇格用の専用stateを持たず毎回導出するので、選択を外せば自動的に昇格も消える。
+ * 左ペインのタグ一覧の並びを導出する: 常設タグ(常設の順) → それ以外(`allTags`の順)。
+ * 存在しないタグID(削除直後など)と常設内の重複は除く。
  */
 export function deriveTagLists<T extends { id: number }>(
   allTags: readonly T[],
   pinnedTagIds: readonly number[],
-  selected: readonly number[],
-): { primary: T[]; others: T[] } {
+): T[] {
   const byId = new Map(allTags.map((tag) => [tag.id, tag]));
-  const pinnedSet = new Set(pinnedTagIds);
-  const primaryIds: number[] = [];
+  const pinned: T[] = [];
   const seen = new Set<number>();
-  for (const id of [...selected.filter((id) => !pinnedSet.has(id)), ...pinnedTagIds]) {
-    if (byId.has(id) && !seen.has(id)) {
+  for (const id of pinnedTagIds) {
+    const tag = byId.get(id);
+    if (tag && !seen.has(id)) {
       seen.add(id);
-      primaryIds.push(id);
+      pinned.push(tag);
     }
   }
-  return {
-    primary: primaryIds.map((id) => byId.get(id) as T),
-    others: allTags.filter((tag) => !seen.has(tag.id)),
-  };
+  return [...pinned, ...allTags.filter((tag) => !seen.has(tag.id))];
 }

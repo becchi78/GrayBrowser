@@ -1,6 +1,6 @@
 // E2E flow: the left-pane TagBar -- pinned-tag position stability,
-// "すべて解除"'s fixed leading position, and the 「その他のタグ」 list with
-// promotion.
+// "すべて解除"'s fixed leading position, and the full tag list (pinned first,
+// then the rest) with click-to-filter and clear-all.
 //
 // Tags/pinned list are seeded directly via DB (fixtures.mjs's
 // seedTags/seedTagBarPinnedTagIds), the same "skip the native-adjacent flow,
@@ -14,29 +14,25 @@
 // against this same, persistent app.db.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getTagBarPinnedTagIds, seedTagBarPinnedTagIds, seedTags } from "../fixtures.mjs";
+import {
+  getTagBarPinnedTagIds,
+  seedTagBarPinnedTagIds,
+  seedTags,
+} from "../fixtures.mjs";
 import { createSession, saveFailureScreenshot } from "../session.mjs";
 import { ensureAppDbExists, waitForAppReady } from "../uiFlows.mjs";
 
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 
-async function waitForTagBarChipCount(browser, expectedCount) {
-  await browser.waitUntil(
-    async () => (await browser.$$('[data-testid="tag-bar-chip"]')).length === expectedCount,
-    {
-      timeout: 15_000,
-      interval: 300,
-      timeoutMsg: `tag-bar-chip count never reached ${expectedCount}`,
-    },
-  );
-}
-
-async function tagBarChipNames(browser) {
-  return browser.execute(() =>
+// The list shows every tag in the library, so callers filter by their own
+// seeded names (token-prefixed) to stay independent of leftover tags.
+async function tagBarChipNames(browser, token = "") {
+  const all = await browser.execute(() =>
     Array.from(document.querySelectorAll('[data-testid="tag-bar-chip"]')).map(
       (el) => el.textContent,
     ),
   );
+  return all.filter((name) => name.startsWith(token));
 }
 
 test("pinned tag chips keep their bar position while being selected and deselected", async () => {
@@ -52,9 +48,17 @@ test("pinned tag chips keep their bar position while being selected and deselect
   try {
     await browser.setWindowSize(DEFAULT_WINDOW.width, DEFAULT_WINDOW.height);
     await waitForAppReady(browser);
-    await waitForTagBarChipCount(browser, names.length);
+    await browser.waitUntil(
+      async () =>
+        (await tagBarChipNames(browser, token)).length === names.length,
+      {
+        timeout: 15_000,
+        interval: 300,
+        timeoutMsg: "seeded tag chips never appeared",
+      },
+    );
 
-    const initialOrder = await tagBarChipNames(browser);
+    const initialOrder = await tagBarChipNames(browser, token);
     assert.deepEqual(
       initialOrder,
       names,
@@ -63,9 +67,7 @@ test("pinned tag chips keep their bar position while being selected and deselect
 
     // The middle pinned tag ("bravo") is already pinned before this click --
     // per TagBar.tsx's own design, selecting/deselecting an *already-pinned*
-    // tag must never move it (unlike a newly-selected, not-yet-pinned tag,
-    // which would appear as a "promoted" chip -- out of scope for this
-    // fixed-position assertion).
+    // tag must never move it.
     const bravoName = names[1];
     const bravoChip = await browser.$(
       `//button[@data-testid="tag-bar-chip" and text()="${bravoName}"]`,
@@ -77,11 +79,12 @@ test("pinned tag chips keep their bar position while being selected and deselect
       async () => (await bravoChip.getAttribute("aria-pressed")) === "true",
       {
         timeout: 10_000,
-        timeoutMsg: "clicking the pinned chip never marked it aria-pressed=true",
+        timeoutMsg:
+          "clicking the pinned chip never marked it aria-pressed=true",
       },
     );
     assert.deepEqual(
-      await tagBarChipNames(browser),
+      await tagBarChipNames(browser, token),
       names,
       "selecting an already-pinned tag must not change the chip order",
     );
@@ -95,7 +98,7 @@ test("pinned tag chips keep their bar position while being selected and deselect
       },
     );
     assert.deepEqual(
-      await tagBarChipNames(browser),
+      await tagBarChipNames(browser, token),
       names,
       "deselecting an already-pinned tag must not change the chip order either",
     );
@@ -134,10 +137,15 @@ test('"すべて解除" stays the first element of the bar, disabled, with nothi
     // is a plain column (no `order`/`*-reverse`), so document order and
     // top-to-bottom visual order coincide.
     const isFirstButton = await browser.execute(() => {
-      const firstButton = document.querySelector('[data-testid="tag-bar"] button');
+      const firstButton = document.querySelector(
+        '[data-testid="tag-bar"] button',
+      );
       return firstButton?.getAttribute("data-testid") === "tag-bar-clear-all";
     });
-    assert.ok(isFirstButton, '"すべて解除" must be the first button rendered inside .tag-bar');
+    assert.ok(
+      isFirstButton,
+      '"すべて解除" must be the first button rendered inside .tag-bar',
+    );
 
     assert.equal(
       await clearAll.isEnabled(),
@@ -153,46 +161,51 @@ test('"すべて解除" stays the first element of the bar, disabled, with nothi
   }
 });
 
-test("tags that are not pinned are reachable from the 「その他のタグ」 list and get promoted when selected", async () => {
+test("all tags are listed (pinned first), toggle on click, and clear-all deselects", async () => {
   await ensureAppDbExists();
 
   const token = `e2e${Date.now()}others`;
   const names = [`${token}_pinned`, `${token}_other`];
   const ids = seedTags(names);
   const originalPinned = getTagBarPinnedTagIds();
-  seedTagBarPinnedTagIds([ids[0]]);
+  seedTagBarPinnedTagIds([ids[1]]);
 
   const browser = await createSession();
   try {
     await browser.setWindowSize(DEFAULT_WINDOW.width, DEFAULT_WINDOW.height);
     await waitForAppReady(browser);
-    await waitForTagBarChipCount(browser, 1);
-
-    const othersToggle = await browser.$('[data-testid="tag-bar-others-toggle"]');
-    await othersToggle.waitForExist({ timeout: 10_000 });
-    assert.equal(
-      await othersToggle.getAttribute("aria-expanded"),
-      "false",
-      "the 「その他のタグ」 list must start collapsed",
-    );
-    await othersToggle.click();
 
     const otherChip = await browser.$(
-      `//button[@data-testid="tag-bar-others-chip" and text()="${names[1]}"]`,
+      `//button[@data-testid="tag-bar-chip" and text()="${names[0]}"]`,
     );
     await otherChip.waitForDisplayed({ timeout: 10_000 });
+    const listed = await tagBarChipNames(browser, token);
     assert.ok(
-      !(await tagBarChipNames(browser)).includes(names[1]),
-      "an unpinned, unselected tag must not appear among the primary chips",
+      listed.indexOf(names[1]) !== -1 &&
+        listed.indexOf(names[1]) < listed.indexOf(names[0]),
+      "the pinned tag must come before the unpinned one, and both must be listed",
     );
 
     await otherChip.click();
-    // Selecting it promotes it ahead of the pinned chips.
-    await waitForTagBarChipCount(browser, 2);
+    await browser.waitUntil(
+      async () => (await otherChip.getAttribute("aria-pressed")) === "true",
+      {
+        timeout: 10_000,
+        timeoutMsg:
+          "clicking an unpinned tag never marked it aria-pressed=true",
+      },
+    );
     assert.deepEqual(
-      (await tagBarChipNames(browser)).slice(0, 2),
-      [names[1], names[0]],
-      "a selected, unpinned tag must be promoted before the pinned chips",
+      await tagBarChipNames(browser, token),
+      listed,
+      "selecting a tag must not reorder the list",
+    );
+
+    const clearAll = await browser.$('[data-testid="tag-bar-clear-all"]');
+    await clearAll.click();
+    await browser.waitUntil(
+      async () => (await otherChip.getAttribute("aria-pressed")) === "false",
+      { timeout: 10_000, timeoutMsg: "clear-all never deselected the tag" },
     );
   } catch (e) {
     await saveFailureScreenshot(browser, "tag-bar-others");
