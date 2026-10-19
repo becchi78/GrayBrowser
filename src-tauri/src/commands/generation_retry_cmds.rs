@@ -12,6 +12,7 @@
 //! like an automatic one, with no risk of double-incrementing.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use tauri::State;
@@ -239,6 +240,95 @@ pub fn retry_metadata_probe(
 
     TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
+}
+
+/// Resolves `thumbnails_root` and the registered watch folders for the bulk
+/// thumbnail commands. Unlike the best-effort single retry, a
+/// `thumbnails_root` failure is an error here: the bulk command must not touch
+/// the DB when it cannot go on to generate anything.
+fn resolve_thumbnail_context(db: &Db) -> Result<(PathBuf, Vec<String>), String> {
+    let thumbnails_root = crate::paths::app_data_dir()
+        .map(|dir| thumbnail::paths::thumbnails_root(&dir))
+        .map_err(|e| e.to_string())?;
+    let watch_folders = {
+        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
+    };
+    Ok((thumbnails_root, watch_folders))
+}
+
+/// Number of online videos whose 6 thumbnails are not all on disk, i.e. what
+/// `regenerate_missing_thumbnails` would (re)generate, exhausted videos
+/// included. Not strictly side-effect free: the underlying scan backfills
+/// `thumbnail_ready` for videos whose files exist but whose flag is stale.
+/// That only brings the DB in line with the disk and is the same write the
+/// startup/post-scan passes make.
+///
+/// `async` runs it off the main thread: a sync command executes there on
+/// Windows, and this stats 6 files per online video, which can take seconds
+/// on a large or network-backed library.
+#[tauri::command(async)]
+pub fn count_missing_thumbnails(db: State<Db>) -> Result<u32, String> {
+    let (thumbnails_root, watch_folders) = resolve_thumbnail_context(&db)?;
+    let missing = thumbnail::worker::list_all_videos_missing_thumbnails(
+        &db,
+        &thumbnails_root,
+        &watch_folders,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(missing.len() as u32)
+}
+
+/// Picks every online video missing thumbnails and gives the exhausted ones a
+/// fresh retry budget, returning the picked ids. Healthy and offline videos
+/// are never selected, so their counters are never touched. The writer lock
+/// is released before returning, so the caller can start generation without
+/// holding it.
+fn prepare_regeneration(
+    db: &Db,
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+) -> anyhow::Result<Vec<String>> {
+    let missing =
+        thumbnail::worker::list_all_videos_missing_thumbnails(db, thumbnails_root, watch_folders)?;
+    let exhausted: Vec<String> = missing
+        .iter()
+        .filter(|(_, _, attempts)| !gb_core::retry::is_eligible_for_automatic_retry(*attempts))
+        .map(|(id, _, _)| id.clone())
+        .collect();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        queries::reset_thumbnail_attempts_for(&mut conn, &exhausted)?;
+    }
+    Ok(missing.into_iter().map(|(id, _, _)| id).collect())
+}
+
+/// Resets the retry budget of exhausted videos that are missing thumbnails
+/// and starts background generation for every video missing thumbnails.
+/// Returns how many videos were targeted; progress is reported through the
+/// existing thumbnail queue events. Repeated calls are harmless because the
+/// queue's claim prevents generating the same video twice.
+///
+/// `async` for the same reason as `count_missing_thumbnails`: the scan that
+/// finds the targets must not run on the main thread.
+#[tauri::command(async)]
+pub fn regenerate_missing_thumbnails(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    queue: State<'_, ThumbnailQueueHandle>,
+) -> Result<u32, String> {
+    let (thumbnails_root, watch_folders) = resolve_thumbnail_context(&db)?;
+    let ids =
+        prepare_regeneration(&db, &thumbnails_root, &watch_folders).map_err(|e| e.to_string())?;
+    let _ = std::fs::create_dir_all(&thumbnails_root);
+    thumbnail::enqueue_missing_thumbnails(
+        db.inner().clone(),
+        thumbnails_root,
+        queue.inner().clone(),
+        Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
+        Arc::new(TauriCatalogNotifier::new(app)),
+    );
+    Ok(ids.len() as u32)
 }
 
 #[cfg(test)]
@@ -486,6 +576,81 @@ mod tests {
             attempts, 1,
             "the immediate retry attempt is exactly one attempt, not zero and not two"
         );
+    }
+
+    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
+        db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn add_failed_attempts(db: &Db, id: &str, n: u32) {
+        let conn = db.writer.lock().unwrap();
+        for _ in 0..n {
+            queries::increment_thumbnail_attempts(&conn, id).unwrap();
+        }
+    }
+
+    #[test]
+    fn prepare_regeneration_resets_only_exhausted_missing_videos() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        let max = gb_core::retry::MAX_GENERATION_ATTEMPTS;
+
+        insert_test_video(&db, "exhausted", "C:/videos/a.mp4");
+        add_failed_attempts(&db, "exhausted", max);
+        insert_test_video(&db, "retryable", "C:/videos/b.mp4");
+        add_failed_attempts(&db, "retryable", 1);
+        insert_test_video(&db, "untouched", "C:/videos/c.mp4");
+
+        insert_test_video(&db, "healthy", "C:/videos/d.mp4");
+        add_failed_attempts(&db, "healthy", max);
+        let healthy_dir =
+            thumbnail::paths::video_thumbnail_dir(thumbs.path(), &[], "C:/videos/d.mp4");
+        std::fs::create_dir_all(&healthy_dir).unwrap();
+        for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            std::fs::write(
+                thumbnail::paths::slot_path(&healthy_dir, "healthy", i),
+                b"x",
+            )
+            .unwrap();
+        }
+
+        insert_test_video(&db, "offline", "C:/videos/e.mp4");
+        add_failed_attempts(&db, "offline", max);
+        db.writer
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE videos SET status = 'offline' WHERE id = 'offline'",
+                [],
+            )
+            .unwrap();
+
+        let mut ids = prepare_regeneration(&db, thumbs.path(), &[]).unwrap();
+        ids.sort();
+
+        assert_eq!(ids, vec!["exhausted", "retryable", "untouched"]);
+        assert_eq!(thumbnail_attempts_of(&db, "exhausted"), 0);
+        assert_eq!(thumbnail_attempts_of(&db, "retryable"), 1);
+        assert_eq!(thumbnail_attempts_of(&db, "untouched"), 0);
+        assert_eq!(thumbnail_attempts_of(&db, "healthy"), i64::from(max));
+        assert_eq!(thumbnail_attempts_of(&db, "offline"), i64::from(max));
+    }
+
+    #[test]
+    fn prepare_regeneration_with_nothing_missing_returns_empty() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        assert!(prepare_regeneration(&db, thumbs.path(), &[])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

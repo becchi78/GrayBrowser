@@ -361,7 +361,9 @@ pub fn run() {
             commands::dedup_cmds::delete_duplicate_video_and_file,
             commands::generation_retry_cmds::list_generation_failures,
             commands::generation_retry_cmds::retry_thumbnail_generation,
-            commands::generation_retry_cmds::retry_metadata_probe
+            commands::generation_retry_cmds::retry_metadata_probe,
+            commands::generation_retry_cmds::count_missing_thumbnails,
+            commands::generation_retry_cmds::regenerate_missing_thumbnails
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
