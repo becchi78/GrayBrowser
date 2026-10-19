@@ -326,8 +326,11 @@ pub fn regenerate_missing_thumbnails(
         thumbnails_root,
         queue.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
-        Arc::new(TauriCatalogNotifier::new(app)),
+        Arc::new(TauriCatalogNotifier::new(app.clone())),
     );
+    // The reset above already changed what the failures panel lists, and
+    // generation may finish (or fail) without any further notification.
+    TauriCatalogNotifier::new(app).notify_changed();
     Ok(ids.len() as u32)
 }
 
@@ -380,8 +383,10 @@ pub fn reprobe_missing_metadata(app: tauri::AppHandle, db: State<'_, Db>) -> Res
     metadata::enqueue_missing_metadata_probes(
         db.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
-        Arc::new(TauriCatalogNotifier::new(app)),
+        Arc::new(TauriCatalogNotifier::new(app.clone())),
     );
+    // Same reason as in `regenerate_missing_thumbnails`.
+    TauriCatalogNotifier::new(app).notify_changed();
     Ok(ids.len() as u32)
 }
 

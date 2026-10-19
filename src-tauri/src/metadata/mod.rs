@@ -73,6 +73,11 @@ where
                         Ok(()) => notifier.notify_changed(),
                         Err(e) => {
                             log::warn!("metadata worker: giving up on video {id}: {e}");
+                            // A failure raises `metadata_attempts`, which can
+                            // move the video into the "generation failures"
+                            // list; without this a bulk re-probe that fails
+                            // everywhere would never refresh that list.
+                            notifier.notify_changed();
                         }
                     }
                 })
@@ -83,4 +88,50 @@ where
             let _ = handle.join();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::{init_temp_db, insert_test_video};
+    use gb_core::ports::ffmpeg::{FfmpegAvailability, FfmpegError};
+    use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    struct CountingNotifier(AtomicUsize);
+
+    impl CatalogNotifier for CountingNotifier {
+        fn notify_changed(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_failed_probe_also_notifies_the_catalog_changed() {
+        let (_db_dir, db) = init_temp_db();
+        insert_test_video(&db, "vid-fail", "C:/videos/fail.mp4");
+        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
+        let ffmpeg = Arc::new(FakeFfmpegAdapter {
+            availability: Ok(FfmpegAvailability {
+                ffmpeg_version: Some("7.0".into()),
+                ffprobe_version: Some("7.0".into()),
+            }),
+            metadata: Err(FfmpegError::NonZeroExit {
+                status: 1,
+                stderr: "corrupt file".into(),
+            }),
+            ..Default::default()
+        });
+
+        enqueue_missing_metadata_probes(db.clone(), ffmpeg, Arc::clone(&notifier));
+
+        // The queue is fire-and-forget on a detached thread, so poll for the
+        // notification instead of joining.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while notifier.0.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
+    }
 }
