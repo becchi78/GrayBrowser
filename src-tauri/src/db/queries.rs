@@ -936,6 +936,72 @@ pub fn assign_tag_to_video(
     Ok(tag)
 }
 
+/// Result of `assign_tag_to_videos`: how the requested videos split between
+/// newly tagged, already carrying the tag, and no longer in the catalog.
+pub struct AssignTagOutcome {
+    pub tag: TagRow,
+    pub newly_tagged: u32,
+    pub already_tagged: u32,
+    pub missing: u32,
+}
+
+/// Assigns one tag (by raw, user-typed name) to many videos in a single
+/// transaction. The name is normalized once up front so an invalid name
+/// changes nothing. Unlike the single-video variant, an unknown id is not an
+/// error: a video can be removed or moved between the selection and the
+/// action, and one stale id must not block tagging the rest, so it is counted
+/// in `missing` instead. Duplicate ids are counted once. The tag row is
+/// created even when no listed video exists, since the caller gets the tag
+/// back either way and the single-video path already leaves reusable tags.
+pub fn assign_tag_to_videos(
+    conn: &mut Connection,
+    video_ids: &[String],
+    raw_tag_name: &str,
+) -> Result<AssignTagOutcome, TagMutationError> {
+    let normalized_name = gb_core::tags::normalize_tag_name(raw_tag_name)?;
+
+    let tx = conn.transaction()?;
+    let tag = get_or_create_tag(&tx, &normalized_name)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let (mut newly_tagged, mut already_tagged, mut missing) = (0u32, 0u32, 0u32);
+    for video_id in video_ids {
+        if !seen.insert(video_id.as_str()) {
+            continue;
+        }
+        let video_exists = tx
+            .query_row(
+                "SELECT 1 FROM videos WHERE id = ?1",
+                params![video_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !video_exists {
+            missing += 1;
+            continue;
+        }
+        let inserted = tx.execute(
+            "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, ?2)
+             ON CONFLICT(video_id, tag_id) DO NOTHING",
+            params![video_id, tag.id],
+        )?;
+        if inserted > 0 {
+            newly_tagged += 1;
+        } else {
+            already_tagged += 1;
+        }
+    }
+
+    tx.commit()?;
+    Ok(AssignTagOutcome {
+        tag,
+        newly_tagged,
+        already_tagged,
+        missing,
+    })
+}
+
 /// Un-assigns a tag from a video. Deletes only the `video_tags` row --
 /// **the `tags` master row is deliberately left in place** even if this was
 /// its last reference, so it stays available for reuse without the user

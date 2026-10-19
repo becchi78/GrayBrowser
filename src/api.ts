@@ -13,6 +13,7 @@ import type {
   SortDirection,
   SortField,
   TagDto,
+  AssignTagResultDto,
   ThumbnailProgress,
   VideoDto,
   VideoPropertiesDto,
@@ -56,6 +57,8 @@ export const listVideos = (opts?: ListVideosOptions) =>
   });
 export const assignTag = (videoId: string, tagName: string) =>
   invoke<TagDto>("assign_tag", { videoId, tagName });
+export const assignTagToVideos = (videoIds: string[], tagName: string) =>
+  invoke<AssignTagResultDto>("assign_tag_to_videos", { videoIds, tagName });
 export const removeTag = (videoId: string, tagId: number) =>
   invoke<void>("remove_tag", { videoId, tagId });
 export const listTagsForVideo = (videoId: string) =>

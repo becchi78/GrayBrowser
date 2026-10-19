@@ -38,6 +38,13 @@ export interface TagDto {
   name: string;
 }
 
+export interface AssignTagResultDto {
+  tag: TagDto;
+  newly_tagged: number;
+  already_tagged: number;
+  missing: number;
+}
+
 // Mirrors src-tauri's SortFieldParam/SortDirectionParam (serde
 // rename_all = "snake_case") -- these are the only valid strings the
 // list_videos command accepts for sorting.

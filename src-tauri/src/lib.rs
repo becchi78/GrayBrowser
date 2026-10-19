@@ -343,6 +343,7 @@ pub fn run() {
             commands::thumbnail_cmds::get_thumbnail_progress,
             commands::player_cmds::play_video,
             commands::tag_cmds::assign_tag,
+            commands::tag_cmds::assign_tag_to_videos,
             commands::tag_cmds::remove_tag,
             commands::tag_cmds::list_tags_for_video,
             commands::tag_cmds::list_all_tags,
