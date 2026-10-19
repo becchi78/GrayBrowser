@@ -179,6 +179,70 @@ pub fn set_watch_folder_check_enabled(
     Ok(disabled)
 }
 
+/// Reads the NAS polling interval for display, in whole minutes. A value
+/// hand-edited into the DB as sub-minute seconds is rounded up so the dialog
+/// never shows 0.
+#[tauri::command]
+pub fn get_nas_poll_interval_minutes(db: State<Db>) -> Result<u32, String> {
+    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+    let secs = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
+    Ok(gb_core::nas_poll_interval::secs_to_display_minutes(secs))
+}
+
+/// Validates `minutes`, persists it as seconds, and returns the saved seconds
+/// plus the watch folder list `reconfigure` needs. Nothing is written when
+/// validation fails. The caller holds the writer lock.
+fn apply_nas_poll_interval(
+    conn: &rusqlite::Connection,
+    minutes: i64,
+) -> Result<(i64, Vec<String>), String> {
+    use gb_core::nas_poll_interval::{minutes_to_secs, MAX_MINUTES, MIN_MINUTES};
+
+    let secs = minutes_to_secs(minutes).map_err(|_| {
+        format!("確認間隔は{MIN_MINUTES}〜{MAX_MINUTES}分の整数で指定してください: {minutes}")
+    })?;
+    queries::set_nas_poll_interval_secs(conn, secs).map_err(|e| e.to_string())?;
+    let folders = queries::get_watch_folders(conn).map_err(|e| e.to_string())?;
+    Ok((secs, folders))
+}
+
+/// Saves a new NAS polling interval and re-`reconfigure`s so the pollers
+/// restart with it at once. Returns the saved value in minutes.
+///
+/// `async` for the same reason as `set_watch_folder_check_enabled`:
+/// `reconfigure` does drive-type detection and watcher registration, which
+/// would otherwise block the UI thread.
+#[tauri::command(async)]
+pub fn set_nas_poll_interval_minutes(
+    app: tauri::AppHandle,
+    db: State<Db>,
+    watch_manager: State<RealtimeWatchManager>,
+    minutes: i64,
+) -> Result<u32, String> {
+    // Resolved before the DB write so a failure here cannot leave the new
+    // value saved while the command returns `Err`.
+    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
+        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
+    );
+
+    let (secs, folders) = {
+        let conn = db.writer.lock().unwrap();
+        apply_nas_poll_interval(&conn, minutes)?
+        // Writer lock drops here, before reconfigure does its own DB reads.
+    };
+
+    crate::watch::reconfigure_real_watch_manager(
+        &app,
+        db.inner(),
+        &watch_manager,
+        &thumbnails_root,
+        &folders,
+        secs,
+    );
+
+    Ok(gb_core::nas_poll_interval::secs_to_display_minutes(secs))
+}
+
 /// Rewrites `old` to `new` in the disabled list so a renamed folder keeps its
 /// update-check setting. No write when `old` is not in the list.
 fn rename_in_check_disabled(
@@ -640,6 +704,46 @@ mod tests {
         assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
         remove_from_check_disabled(&conn, "Q").unwrap();
         assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
+    }
+
+    // --- NAS poll interval ------------------------------------------------
+
+    #[test]
+    fn nas_interval_is_saved_as_seconds_and_read_back() {
+        let (_d, db) = db_with_folders(&["A", "B"]);
+        let conn = db.writer.lock().unwrap();
+        let (secs, folders) = apply_nas_poll_interval(&conn, 30).unwrap();
+        assert_eq!(secs, 1800);
+        assert_eq!(folders, v(&["A", "B"]));
+        assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 1800);
+    }
+
+    #[test]
+    fn nas_interval_out_of_range_is_rejected_and_not_saved() {
+        let (_d, db) = db_with_folders(&["A"]);
+        let conn = db.writer.lock().unwrap();
+        queries::set_nas_poll_interval_secs(&conn, 120).unwrap();
+        for bad in [i64::MIN, -1, 0, 1441, 100_000] {
+            assert!(apply_nas_poll_interval(&conn, bad).is_err(), "{bad}");
+        }
+        assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 120);
+    }
+
+    #[test]
+    fn nas_interval_boundaries_are_accepted() {
+        let (_d, db) = db_with_folders(&[]);
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(apply_nas_poll_interval(&conn, 1).unwrap().0, 60);
+        assert_eq!(apply_nas_poll_interval(&conn, 1440).unwrap().0, 86_400);
+    }
+
+    #[test]
+    fn stored_sub_minute_seconds_display_rounded_up() {
+        let (_d, db) = db_with_folders(&[]);
+        let conn = db.writer.lock().unwrap();
+        queries::set_nas_poll_interval_secs(&conn, 90).unwrap();
+        let secs = queries::get_nas_poll_interval_secs(&conn).unwrap();
+        assert_eq!(gb_core::nas_poll_interval::secs_to_display_minutes(secs), 2);
     }
 
     // --- rename_watch_folder's thumbnail-moving sequence -------------------

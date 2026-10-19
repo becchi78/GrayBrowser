@@ -9,6 +9,7 @@ pub mod file_delete_policy;
 pub mod filename_validation;
 pub mod hash;
 pub mod migrations;
+pub mod nas_poll_interval;
 pub mod paths;
 pub mod ports;
 pub mod rating;
