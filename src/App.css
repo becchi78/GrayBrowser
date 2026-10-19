@@ -2012,3 +2012,45 @@ button.link-button:focus-visible {
     color: #f0c674;
   }
 }
+
+.bulk-tag-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.bulk-tag-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.bulk-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  max-height: 12em;
+  overflow-y: auto;
+}
+
+.bulk-tag-candidate {
+  padding: 0.2em 0.7em;
+  border-radius: 999px;
+  font-size: 0.9em;
+}
+
+.bulk-tag-result p {
+  margin: 0 0 0.5em;
+}
+
+.bulk-tag-error {
+  margin: 0;
+  color: #8a1f1f;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  .bulk-tag-error {
+    color: #f3caca;
+  }
+}

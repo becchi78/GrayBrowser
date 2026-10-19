@@ -163,6 +163,162 @@ fn assign_tag_to_video_rejects_an_empty_tag_name() {
     ));
 }
 
+fn ids(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+fn count(conn: &Connection, sql: &str) -> i64 {
+    conn.query_row(sql, [], |r| r.get(0)).unwrap()
+}
+
+fn seed_videos(conn: &Connection, names: &[&str]) {
+    for n in names {
+        insert_test_video(conn, n, &format!("D:\\videos\\{n}.mp4"));
+    }
+}
+
+#[test]
+fn bulk_assign_tags_every_video_and_creates_the_tag_once() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    let out =
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2", "v3"]), "action").unwrap();
+    assert_eq!(out.tag.name, "action");
+    assert_eq!(
+        (out.newly_tagged, out.already_tagged, out.missing),
+        (3, 0, 0)
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM tags"), 1);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 3);
+    assert!(orphaned_video_tags_by_tag(&conn).is_empty());
+    assert!(orphaned_video_tags_by_video(&conn).is_empty());
+}
+
+#[test]
+fn bulk_assign_is_idempotent_and_reports_already_tagged() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    queries::assign_tag_to_video(&mut conn, "v2", "action").unwrap();
+
+    let out =
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2", "v3"]), "action").unwrap();
+    assert_eq!(
+        (out.newly_tagged, out.already_tagged, out.missing),
+        (2, 1, 0)
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 3);
+
+    let again =
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2", "v3"]), "action").unwrap();
+    assert_eq!(
+        (again.newly_tagged, again.already_tagged, again.missing),
+        (0, 3, 0)
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 3);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM tags"), 1);
+}
+
+#[test]
+fn bulk_assign_counts_unknown_ids_as_missing_and_tags_the_rest() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2"]);
+    let out =
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "gone", "v2"]), "action").unwrap();
+    assert_eq!(
+        (out.newly_tagged, out.already_tagged, out.missing),
+        (2, 0, 1)
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 2);
+    assert!(orphaned_video_tags_by_video(&conn).is_empty());
+}
+
+#[test]
+fn bulk_assign_counts_duplicate_ids_once() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1"]);
+    let out =
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v1", "gone", "gone"]), "a").unwrap();
+    assert_eq!(
+        (out.newly_tagged, out.already_tagged, out.missing),
+        (1, 0, 1)
+    );
+}
+
+#[test]
+fn bulk_assign_with_an_invalid_name_changes_nothing() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2"]);
+    for bad in ["", "   ", "\u{3000}"] {
+        let result = queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2"]), bad);
+        assert!(matches!(
+            result,
+            Err(queries::TagMutationError::InvalidName(_))
+        ));
+    }
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM tags"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 0);
+}
+
+#[test]
+fn bulk_assign_rolls_back_everything_on_a_mid_batch_failure() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    // Fails the insert for the second video, after the tag and the first
+    // assignment were already written inside the open transaction.
+    conn.execute(
+        "CREATE TRIGGER fail_on_v2 BEFORE INSERT ON video_tags
+         WHEN NEW.video_id = 'v2'
+         BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;",
+        [],
+    )
+    .unwrap();
+    let result = queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2", "v3"]), "action");
+    assert!(matches!(result, Err(queries::TagMutationError::Sqlite(_))));
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM tags"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 0);
+}
+
+#[test]
+fn bulk_assign_with_no_ids_tags_nothing() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1"]);
+    let out = queries::assign_tag_to_videos(&mut conn, &[], "action").unwrap();
+    assert_eq!(
+        (out.newly_tagged, out.already_tagged, out.missing),
+        (0, 0, 0)
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 0);
+}
+
+#[test]
+fn bulk_assign_does_not_touch_other_videos_or_tags() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    queries::assign_tag_to_video(&mut conn, "v3", "other").unwrap();
+    queries::assign_tag_to_video(&mut conn, "v1", "other").unwrap();
+
+    queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2"]), "action").unwrap();
+
+    let names_of = |id: &str| -> Vec<String> {
+        queries::list_tags_for_video(&db.read_pool, id)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
+    };
+    assert_eq!(names_of("v1"), vec!["action", "other"]);
+    assert_eq!(names_of("v2"), vec!["action"]);
+    assert_eq!(names_of("v3"), vec!["other"]);
+}
+
 #[test]
 fn remove_tag_from_video_deletes_only_the_video_tags_row_tags_master_survives() {
     let (_dir, db) = init_temp_db();

@@ -14,6 +14,8 @@ interface Props {
   cache: Map<string, string[]>;
   /** Bumped by the parent on every list re-fetch; see the properties effect. */
   catalogVersion: number;
+  /** Bumped by the parent when tags change outside this row's own TagEditor. */
+  tagsVersion: number;
   isSelected: boolean;
   /** True only while 2+ rows are selected; styled apart from a lone selection. */
   isMultiSelected: boolean;
@@ -51,6 +53,7 @@ export function VideoRow({
   video,
   cache,
   catalogVersion,
+  tagsVersion,
   isSelected,
   isMultiSelected,
   onSelect,
@@ -244,7 +247,7 @@ export function VideoRow({
         </dl>
 
         <StarRating videoId={video.id} value={rating} onChange={setRating} />
-        <TagEditor videoId={video.id} />
+        <TagEditor videoId={video.id} tagsVersion={tagsVersion} />
       </div>
     </div>
   );

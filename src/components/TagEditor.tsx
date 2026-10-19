@@ -5,13 +5,15 @@ import type { TagDto } from "../types";
 
 interface Props {
   videoId: string;
+  /** 親が増やす。タグが外部(一括付与など)で変わったときに、この行のタグを取り直す。 */
+  tagsVersion?: number;
 }
 
 // Tag name normalization (trim/full-width fold/empty rejection) happens
 // exclusively in gb_core::tags on the backend -- this component never
 // re-implements it, only forwards the raw input and surfaces whatever
 // error the backend returns.
-export function TagEditor({ videoId }: Props) {
+export function TagEditor({ videoId, tagsVersion = 0 }: Props) {
   const [tags, setTags] = useState<TagDto[]>([]);
   // A plain suggestion list fed by list_all_tags (existing tags across the
   // whole catalog), not an incremental tag search/management screen.
@@ -40,7 +42,7 @@ export function TagEditor({ videoId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [videoId]);
+  }, [videoId, tagsVersion]);
 
   async function handleAdd(e: FormEvent) {
     e.preventDefault();

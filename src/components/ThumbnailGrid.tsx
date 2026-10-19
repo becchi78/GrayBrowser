@@ -22,6 +22,7 @@ import {
 } from "../lib/multiSelect";
 import type { SortDirection, SortField, VideoDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { BulkTagDialog } from "./BulkTagDialog";
 import { ContextMenu } from "./ContextMenu";
 import { VideoRow } from "./VideoRow";
 
@@ -100,6 +101,11 @@ export function ThumbnailGrid({
   const [pendingUnregister, setPendingUnregister] = useState<string[] | null>(null);
   const [unregisterBusy, setUnregisterBusy] = useState(false);
   const [unregisterError, setUnregisterError] = useState<string | null>(null);
+  // 一括付与の対象(開いた時点で固定)。null のときダイアログは閉じている。
+  const [bulkTagIds, setBulkTagIds] = useState<string[] | null>(null);
+  // 一括付与で各行のタグが変わったことを行へ伝える。catalogVersion は生成進捗の
+  // たびに増えるので、タグの再取得には使わない。
+  const [tagsVersion, setTagsVersion] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
   const thumbnailCache = useRef(new Map<string, string[]>());
 
@@ -315,6 +321,10 @@ export function ThumbnailGrid({
           position={{ x: menu.x, y: menu.y }}
           items={[
             {
+              label: menu.ids.length >= 2 ? `タグを設定...(${menu.ids.length} 件)` : "タグを設定...",
+              onSelect: () => setBulkTagIds(menu.ids),
+            },
+            {
               label: menu.ids.length >= 2 ? `登録から削除(${menu.ids.length} 件)` : "登録から削除",
               danger: true,
               onSelect: () => {
@@ -326,6 +336,11 @@ export function ThumbnailGrid({
           onClose={closeMenu}
         />
       )}
+      <BulkTagDialog
+        videoIds={bulkTagIds}
+        onTagged={() => setTagsVersion((v) => v + 1)}
+        onClose={() => setBulkTagIds(null)}
+      />
       <ConfirmDialog
         open={pendingUnregister !== null}
         title="登録から削除"
@@ -396,6 +411,7 @@ export function ThumbnailGrid({
                   video={video}
                   cache={cache}
                   catalogVersion={catalogVersion}
+                  tagsVersion={tagsVersion}
                   isSelected={selection.ids.has(video.id)}
                   isMultiSelected={multiSelected && selection.ids.has(video.id)}
                   onSelect={handleSelect}
