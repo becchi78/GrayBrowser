@@ -14,6 +14,7 @@ pub mod paths;
 pub mod ports;
 pub mod rating;
 pub mod reconcile;
+pub mod rename_validation;
 pub mod retry;
 pub mod scan_pipeline;
 pub mod search;
