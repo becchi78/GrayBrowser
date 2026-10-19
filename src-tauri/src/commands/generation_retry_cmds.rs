@@ -331,6 +331,60 @@ pub fn regenerate_missing_thumbnails(
     Ok(ids.len() as u32)
 }
 
+/// Number of online videos whose metadata has not been probed yet, i.e. what
+/// `reprobe_missing_metadata` would (re)probe, exhausted videos included.
+/// A single SELECT with no filesystem access, so it is cheap, but it is
+/// `async` like the other bulk commands to stay off the main thread (a sync
+/// command executes there on Windows).
+#[tauri::command(async)]
+pub fn count_missing_metadata(db: State<Db>) -> Result<u32, String> {
+    let rows = queries::list_videos_missing_metadata_with_attempts(&db.read_pool)
+        .map_err(|e| e.to_string())?;
+    Ok(rows.len() as u32)
+}
+
+/// Picks every online video whose metadata is unprobed and gives the
+/// exhausted ones a fresh retry budget, returning the picked ids. Probed and
+/// offline videos are never selected, so their counters are never touched.
+/// The writer lock is released before returning, so the caller can start
+/// probing without holding it.
+fn prepare_metadata_reprobe(db: &Db) -> anyhow::Result<Vec<String>> {
+    let missing = queries::list_videos_missing_metadata_with_attempts(&db.read_pool)?;
+    let exhausted: Vec<String> = missing
+        .iter()
+        .filter(|(_, _, attempts)| {
+            !gb_core::retry::is_eligible_for_automatic_retry(*attempts as u32)
+        })
+        .map(|(id, _, _)| id.clone())
+        .collect();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        queries::reset_metadata_attempts_for(&mut conn, &exhausted)?;
+    }
+    Ok(missing.into_iter().map(|(id, _, _)| id).collect())
+}
+
+/// Resets the retry budget of exhausted videos with unprobed metadata and
+/// starts background probing for every such video. Returns how many videos
+/// were targeted; results arrive through the per-video `catalog:changed`
+/// events. There is no claim guarding against probing the same video twice,
+/// so a rapid repeat call can double-probe: a failing video's counter then
+/// rises twice, but it stops at the retry limit and a success just rewrites
+/// the same values.
+///
+/// `async` so the query and reset do not run on the main thread, where a
+/// sync command executes on Windows.
+#[tauri::command(async)]
+pub fn reprobe_missing_metadata(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u32, String> {
+    let ids = prepare_metadata_reprobe(&db).map_err(|e| e.to_string())?;
+    metadata::enqueue_missing_metadata_probes(
+        db.inner().clone(),
+        Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
+        Arc::new(TauriCatalogNotifier::new(app)),
+    );
+    Ok(ids.len() as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,6 +705,78 @@ mod tests {
         assert!(prepare_regeneration(&db, thumbs.path(), &[])
             .unwrap()
             .is_empty());
+    }
+
+    fn metadata_attempts_of(db: &Db, id: &str) -> i64 {
+        db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT metadata_attempts FROM videos WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn add_failed_metadata_attempts(db: &Db, id: &str, n: u32) {
+        let conn = db.writer.lock().unwrap();
+        for _ in 0..n {
+            queries::increment_metadata_attempts(&conn, id).unwrap();
+        }
+    }
+
+    #[test]
+    fn prepare_metadata_reprobe_resets_only_exhausted_unprobed_videos() {
+        let (_db_dir, db) = init_temp_db();
+        let max = gb_core::retry::MAX_GENERATION_ATTEMPTS;
+
+        insert_test_video(&db, "exhausted", "C:/videos/a.mp4");
+        add_failed_metadata_attempts(&db, "exhausted", max);
+        // Exhausted thumbnails must not be reset by the metadata path.
+        add_failed_attempts(&db, "exhausted", max);
+        insert_test_video(&db, "retryable", "C:/videos/b.mp4");
+        add_failed_metadata_attempts(&db, "retryable", 1);
+        insert_test_video(&db, "untouched", "C:/videos/c.mp4");
+
+        insert_test_video(&db, "probed", "C:/videos/d.mp4");
+        add_failed_metadata_attempts(&db, "probed", max);
+        db.writer
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE videos SET probed_at = CURRENT_TIMESTAMP WHERE id = 'probed'",
+                [],
+            )
+            .unwrap();
+
+        insert_test_video(&db, "offline", "C:/videos/e.mp4");
+        add_failed_metadata_attempts(&db, "offline", max);
+        db.writer
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE videos SET status = 'offline' WHERE id = 'offline'",
+                [],
+            )
+            .unwrap();
+
+        let mut ids = prepare_metadata_reprobe(&db).unwrap();
+        ids.sort();
+
+        assert_eq!(ids, vec!["exhausted", "retryable", "untouched"]);
+        assert_eq!(metadata_attempts_of(&db, "exhausted"), 0);
+        assert_eq!(metadata_attempts_of(&db, "retryable"), 1);
+        assert_eq!(metadata_attempts_of(&db, "untouched"), 0);
+        assert_eq!(metadata_attempts_of(&db, "probed"), i64::from(max));
+        assert_eq!(metadata_attempts_of(&db, "offline"), i64::from(max));
+        assert_eq!(thumbnail_attempts_of(&db, "exhausted"), i64::from(max));
+    }
+
+    #[test]
+    fn prepare_metadata_reprobe_with_nothing_missing_returns_empty() {
+        let (_db_dir, db) = init_temp_db();
+        assert!(prepare_metadata_reprobe(&db).unwrap().is_empty());
     }
 
     #[test]

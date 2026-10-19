@@ -363,7 +363,9 @@ pub fn run() {
             commands::generation_retry_cmds::retry_thumbnail_generation,
             commands::generation_retry_cmds::retry_metadata_probe,
             commands::generation_retry_cmds::count_missing_thumbnails,
-            commands::generation_retry_cmds::regenerate_missing_thumbnails
+            commands::generation_retry_cmds::regenerate_missing_thumbnails,
+            commands::generation_retry_cmds::count_missing_metadata,
+            commands::generation_retry_cmds::reprobe_missing_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
