@@ -67,6 +67,9 @@ export const setTagBarPinnedTagIds = (tagIds: number[]) =>
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>
   invoke<void>("set_info_pane_collapsed", { collapsed });
+export const getNasPollIntervalMinutes = () => invoke<number>("get_nas_poll_interval_minutes");
+export const setNasPollIntervalMinutes = (minutes: number) =>
+  invoke<number>("set_nas_poll_interval_minutes", { minutes });
 export const setRating = (videoId: string, rating: number) =>
   invoke<void>("set_rating", { videoId, rating });
 export const getVideoProperties = (videoId: string) =>

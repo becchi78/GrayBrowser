@@ -30,6 +30,7 @@ const MENU_ITEM_FOLDER_MANAGE: &str = "menu-folder-manage";
 const MENU_ITEM_WB_IMPORT: &str = "menu-wb-import";
 const MENU_ITEM_TAG_BAR_MANAGE: &str = "menu-tag-bar-manage";
 const MENU_ITEM_DB_BACKUP: &str = "menu-db-backup";
+const MENU_ITEM_SETTINGS: &str = "menu-settings";
 const MENU_ITEM_ABOUT: &str = "menu-about";
 // The "スタイル" menu. Only one style ("Default") exists today, so there is
 // nothing to select between yet -- the item exists so the menu bar has the
@@ -259,6 +260,12 @@ pub fn run() {
                 .item(&style_default_item)
                 .build()?;
 
+            let settings_item =
+                MenuItemBuilder::with_id(MENU_ITEM_SETTINGS, "設定...").build(app)?;
+            let settings_menu = SubmenuBuilder::new(app, "設定")
+                .item(&settings_item)
+                .build()?;
+
             let about_item =
                 MenuItemBuilder::with_id(MENU_ITEM_ABOUT, "バージョン情報").build(app)?;
             let help_menu = SubmenuBuilder::new(app, "ヘルプ")
@@ -269,6 +276,7 @@ pub fn run() {
                 .item(&file_menu)
                 .item(&tag_menu)
                 .item(&style_menu)
+                .item(&settings_menu)
                 .item(&help_menu)
                 .build()?;
             app.set_menu(menu)?;
@@ -301,6 +309,7 @@ pub fn run() {
                     id if id == MENU_ITEM_FOLDER_MANAGE => "menu:open-folder-dialog",
                     id if id == MENU_ITEM_WB_IMPORT => "menu:open-wb-import-dialog",
                     id if id == MENU_ITEM_TAG_BAR_MANAGE => "menu:open-tag-bar-dialog",
+                    id if id == MENU_ITEM_SETTINGS => "menu:open-settings-dialog",
                     id if id == MENU_ITEM_ABOUT => "menu:about",
                     // "終了" is Tauri's PredefinedMenuItem::quit -- it's
                     // handled natively and never reaches this listener.
@@ -321,6 +330,8 @@ pub fn run() {
             commands::settings_cmds::reorder_watch_folders,
             commands::settings_cmds::list_watch_check_disabled_folders,
             commands::settings_cmds::set_watch_folder_check_enabled,
+            commands::settings_cmds::get_nas_poll_interval_minutes,
+            commands::settings_cmds::set_nas_poll_interval_minutes,
             commands::settings_cmds::count_videos_under_folder,
             commands::settings_cmds::remove_watch_folder,
             commands::settings_cmds::rename_watch_folder,

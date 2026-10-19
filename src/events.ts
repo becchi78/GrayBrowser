@@ -102,6 +102,14 @@ export function onMenuOpenTagBarDialog(callback: () => void): () => void {
 }
 
 /**
+ * Subscribes to menu:open-settings-dialog, fired by the native "設定 >
+ * 設定..." menu item.
+ */
+export function onMenuOpenSettingsDialog(callback: () => void): () => void {
+  return subscribe<void>("menu:open-settings-dialog", callback);
+}
+
+/**
  * Subscribes to menu:about, fired by the native "ヘルプ > バージョン情報"
  * menu item.
  */

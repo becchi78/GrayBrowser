@@ -1554,6 +1554,39 @@ button.link-button:focus-visible {
   justify-content: center;
 }
 
+.settings-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+}
+
+.settings-dialog-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.settings-dialog-input {
+  width: 6em;
+}
+
+.settings-dialog-hint {
+  margin: 0;
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.settings-dialog-error {
+  color: #8a1f1f;
+  font-size: 0.85em;
+  margin: 0;
+}
+
+.settings-dialog-actions {
+  display: flex;
+  gap: 0.5em;
+}
+
 .confirm-dialog-body p {
   margin: 0 0 0.5em;
 }
@@ -1756,7 +1789,8 @@ button.link-button:focus-visible {
     color: #f3caca;
   }
 
-  .tag-bar-edit-error {
+  .tag-bar-edit-error,
+  .settings-dialog-error {
     color: #f3caca;
   }
 

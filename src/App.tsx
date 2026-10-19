@@ -5,6 +5,7 @@ import { AboutDialog } from "./components/AboutDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { FolderSidebar } from "./components/FolderSidebar";
 import { RatingBar } from "./components/RatingBar";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
@@ -16,6 +17,7 @@ import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } f
 import {
   onMenuAbout,
   onMenuOpenFolderDialog,
+  onMenuOpenSettingsDialog,
   onMenuOpenTagBarDialog,
   onMenuOpenWbImportDialog,
   onMenuStyleSelected,
@@ -52,6 +54,7 @@ function App() {
   // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
@@ -83,6 +86,11 @@ function App() {
 
   useEffect(() => {
     const unlisten = onMenuOpenTagBarDialog(() => setTagBarDialogOpen(true));
+    return () => unlisten();
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onMenuOpenSettingsDialog(() => setSettingsDialogOpen(true));
     return () => unlisten();
   }, []);
 
@@ -193,6 +201,7 @@ function App() {
         onClose={() => setTagBarDialogOpen(false)}
         onChanged={() => setTagBarRefreshKey((k) => k + 1)}
       />
+      <SettingsDialog open={settingsDialogOpen} onClose={() => setSettingsDialogOpen(false)} />
       <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
     </div>
   );
