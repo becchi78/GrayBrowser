@@ -676,6 +676,24 @@ button.search-box-clear {
   background-color: #e8f0fe;
 }
 
+/* Only applied with 2+ rows selected, so a lone selection keeps its old look. */
+.video-row--multi-selected {
+  background-color: #d6e4fd;
+  box-shadow: inset 4px 0 0 #3b78e7;
+}
+
+/* The list takes focus (tabIndex=-1) only to receive Ctrl+A/Esc; a focus
+   ring around the whole scroll area would be noise. */
+.video-list:focus {
+  outline: none;
+}
+
+.status-selection-count {
+  font-size: 0.75em;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
 /* This wrap sits one level up from `.video-row-thumbnails` itself, as the
    `position: relative` containing block shared by
    `.thumbnail-offline-badge--overlay` and the
@@ -1769,6 +1787,11 @@ button.link-button:focus-visible {
 
   .video-row--selected {
     background-color: #2a3a5c;
+  }
+
+  .video-row--multi-selected {
+    background-color: #34497a;
+    box-shadow: inset 4px 0 0 #7aa7ff;
   }
 
   .thumbnail-offline-badge {

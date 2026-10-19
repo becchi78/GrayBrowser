@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { getThumbnails, getVideoProperties, playVideo } from "../api";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
+import type { ClickModifiers } from "../lib/multiSelect";
 import { needsPropertiesRefresh } from "../lib/videoProperties";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { StarRating } from "./StarRating";
@@ -14,7 +15,9 @@ interface Props {
   /** Bumped by the parent on every list re-fetch; see the properties effect. */
   catalogVersion: number;
   isSelected: boolean;
-  onSelect: (video: VideoDto) => void;
+  /** True only while 2+ rows are selected; styled apart from a lone selection. */
+  isMultiSelected: boolean;
+  onSelect: (video: VideoDto, mods: ClickModifiers) => void;
 }
 
 // Every video shows exactly 6 evenly-spaced thumbnails (replaces the old
@@ -43,7 +46,14 @@ function formatFps(fps: number | null): string {
 // component itself by video id lets React remount it fresh whenever the
 // video shown at a given scroll position changes, resyncing `rating`'s
 // lazy initializer without a manual effect.
-export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }: Props) {
+export function VideoRow({
+  video,
+  cache,
+  catalogVersion,
+  isSelected,
+  isMultiSelected,
+  onSelect,
+}: Props) {
   const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(video.id) ?? null);
   const [rating, setRating] = useState(video.rating);
   const [properties, setProperties] = useState<VideoPropertiesDto | null>(null);
@@ -121,11 +131,17 @@ export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }:
     playVideo(video.file_path).catch(console.error);
   }
 
+  // metaKey is treated as Ctrl so the same gesture works on macOS keyboards.
+  function handleSelectClick(e: MouseEvent) {
+    onSelect(video, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+  }
+
   return (
     <div
       className={
         "video-row" +
         (isSelected ? " video-row--selected" : "") +
+        (isMultiSelected ? " video-row--multi-selected" : "") +
         (isOffline ? " video-row--offline" : "")
       }
       data-testid="video-row"
@@ -149,7 +165,7 @@ export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }:
           className="video-row-thumbnails"
           data-testid="video-row-thumbnails"
           title={video.file_name}
-          onClick={() => onSelect(video)}
+          onClick={handleSelectClick}
           onDoubleClick={handleDoubleClick}
         >
           {Array.from({ length: THUMBNAILS_PER_VIDEO }, (_, i) => {
@@ -191,7 +207,7 @@ export function VideoRow({ video, cache, catalogVersion, isSelected, onSelect }:
           className="video-row-filename-overlay"
           data-testid="video-row-filename"
           title={video.file_name}
-          onClick={() => onSelect(video)}
+          onClick={handleSelectClick}
         >
           {video.file_name}
         </span>

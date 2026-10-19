@@ -26,10 +26,12 @@ interface Props {
   refreshKey: number;
   /** Rows in the currently displayed list; the jump button is disabled at 0. */
   videoCount: number;
+  /** Selected rows in the list; shown only when at least one. */
+  selectedCount: number;
   onJump: (percent: number) => void;
 }
 
-export function StatusBar({ refreshKey, videoCount, onJump }: Props) {
+export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Props) {
   const [openPanel, setOpenPanel] = useState<PanelKind | null>(null);
   const [unregisteredCount, setUnregisteredCount] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
@@ -130,6 +132,11 @@ export function StatusBar({ refreshKey, videoCount, onJump }: Props) {
             data-testid="status-thumbnail-progress"
           >
             {thumbnailProgressText}
+          </span>
+        )}
+        {selectedCount > 0 && (
+          <span className="status-selection-count" data-testid="status-selection-count">
+            {selectedCount} 件選択中
           </span>
         )}
       </div>
