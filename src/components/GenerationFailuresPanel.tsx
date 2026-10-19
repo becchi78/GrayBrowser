@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
-import { listGenerationFailures, retryMetadataProbe, retryThumbnailGeneration } from "../api";
+import {
+  countMissingThumbnails,
+  listGenerationFailures,
+  regenerateMissingThumbnails,
+  retryMetadataProbe,
+  retryThumbnailGeneration,
+} from "../api";
 import { onCatalogChanged } from "../events";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { splitDirAndFileName } from "../lib/paths";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "../types";
 
@@ -22,6 +29,12 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
   const [failures, setFailures] = useState<GenerationFailuresDto>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<Set<string>>(new Set());
+
+  // null = dialog closed; otherwise the number of videos to regenerate.
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [counting, setCounting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function refresh() {
     listGenerationFailures()
@@ -84,6 +97,39 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
     }
   }
 
+  async function handleBulkRegenerateClick() {
+    setNotice(null);
+    setCounting(true);
+    try {
+      const count = await countMissingThumbnails();
+      if (count === 0) {
+        setNotice("再作成が必要なサムネイルはありません。");
+      } else {
+        setPendingCount(count);
+      }
+    } catch (e) {
+      console.error(e);
+      setError(String(e));
+    } finally {
+      setCounting(false);
+    }
+  }
+
+  async function handleBulkRegenerateConfirm() {
+    setRegenerating(true);
+    try {
+      // Returns right away; progress shows in the status bar and the list
+      // refreshes through catalog:changed.
+      await regenerateMissingThumbnails();
+    } catch (e) {
+      console.error(e);
+      setError(String(e));
+    } finally {
+      setRegenerating(false);
+      setPendingCount(null);
+    }
+  }
+
   const totalFailures = failures.thumbnail_failures.length + failures.metadata_failures.length;
 
   useEffect(() => {
@@ -99,6 +145,31 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
 
   return (
     <section className="generation-failures-panel status-panel" data-testid="status-panel">
+      <div className="generation-failures-bulk">
+        <button
+          type="button"
+          data-testid="regenerate-missing-thumbnails-btn"
+          onClick={handleBulkRegenerateClick}
+          disabled={counting || regenerating}
+        >
+          未作成のサムネイルをすべて再作成
+        </button>
+        {notice && (
+          <p className="generation-failures-notice" data-testid="regenerate-missing-notice">
+            {notice}
+          </p>
+        )}
+      </div>
+      <ConfirmDialog
+        open={pendingCount !== null}
+        title="サムネイルの再作成"
+        confirmLabel="再作成する"
+        busy={regenerating}
+        onConfirm={handleBulkRegenerateConfirm}
+        onCancel={() => setPendingCount(null)}
+      >
+        <p>{pendingCount} 件の動画のサムネイルを再作成します。時間がかかることがあります。</p>
+      </ConfirmDialog>
       {error && <p className="generation-failures-error">{error}</p>}
       {totalFailures === 0 ? (
         <p>生成に失敗したファイルはありません。</p>

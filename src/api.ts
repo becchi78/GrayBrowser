@@ -113,3 +113,5 @@ export const retryThumbnailGeneration = (videoId: string) =>
   invoke<void>("retry_thumbnail_generation", { videoId });
 export const retryMetadataProbe = (videoId: string) =>
   invoke<void>("retry_metadata_probe", { videoId });
+export const countMissingThumbnails = () => invoke<number>("count_missing_thumbnails");
+export const regenerateMissingThumbnails = () => invoke<number>("regenerate_missing_thumbnails");

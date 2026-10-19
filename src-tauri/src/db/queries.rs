@@ -525,6 +525,23 @@ pub fn reset_thumbnail_attempts(conn: &Connection, video_id: &str) -> rusqlite::
     Ok(())
 }
 
+/// Resets `thumbnail_attempts` to 0 for every id in `ids` in one transaction,
+/// so a bulk regeneration either clears all of them or none. Ids that match no
+/// row are ignored; an empty slice does not touch the database.
+pub fn reset_thumbnail_attempts_for(conn: &mut Connection, ids: &[String]) -> rusqlite::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("UPDATE videos SET thumbnail_attempts = 0 WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute(params![id])?;
+        }
+    }
+    tx.commit()
+}
+
 /// Resets `metadata_attempts` back to 0 for `video_id`. Intended for a manual
 /// "retry" action (surfaced in the UI) that gives an exhausted video another
 /// chance at automatic probing.

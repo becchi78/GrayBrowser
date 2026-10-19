@@ -232,6 +232,29 @@ pub fn list_videos_missing_thumbnails(
     thumbnails_root: &Path,
     watch_folders: &[String],
 ) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    Ok(
+        list_all_videos_missing_thumbnails(db, thumbnails_root, watch_folders)?
+            .into_iter()
+            .filter(|(_, _, attempts)| gb_core::retry::is_eligible_for_automatic_retry(*attempts))
+            .map(|(id, path, _)| (id, path))
+            .collect(),
+    )
+}
+
+/// `(id, file_path, thumbnail_attempts)` for every online video whose 6
+/// thumbnail files aren't all on disk, regardless of whether automatic retry
+/// budget is left. Callers that must only pick up still-retryable videos go
+/// through `list_videos_missing_thumbnails`; a user-initiated bulk
+/// regeneration uses this directly so it can also see exhausted videos (and
+/// reset their counters) instead of silently skipping them.
+///
+/// Shares `list_videos_missing_thumbnails`'s filesystem-as-source-of-truth
+/// check and its `thumbnail_ready` backfill side effect (described above).
+pub fn list_all_videos_missing_thumbnails(
+    db: &Db,
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+) -> anyhow::Result<Vec<(String, PathBuf, u32)>> {
     let all_online = queries::list_online_video_paths_with_thumbnail_attempts(&db.read_pool)?;
     let mut missing = Vec::new();
     for (id, path, attempts, thumbnail_ready) in all_online {
@@ -249,8 +272,8 @@ pub fn list_videos_missing_thumbnails(
                     log::warn!("failed to backfill thumbnail_ready for {id}: {e}");
                 }
             }
-        } else if gb_core::retry::is_eligible_for_automatic_retry(attempts as u32) {
-            missing.push((id, PathBuf::from(path)));
+        } else {
+            missing.push((id, PathBuf::from(path), attempts as u32));
         }
     }
     Ok(missing)

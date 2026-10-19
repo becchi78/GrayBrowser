@@ -1222,6 +1222,19 @@ button.search-box-clear {
   margin: 0;
 }
 
+.generation-failures-bulk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75em;
+}
+
+.generation-failures-notice {
+  color: #555;
+  font-size: 0.9em;
+  margin: 0;
+}
+
 .generation-failures-list {
   margin: 0;
   padding: 0;
@@ -1841,6 +1854,10 @@ button.link-button:focus-visible {
 
   .generation-failures-error {
     color: #f3caca;
+  }
+
+  .generation-failures-notice {
+    color: #cfcfcf;
   }
 
   .generation-failure-item {

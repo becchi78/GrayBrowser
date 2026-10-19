@@ -123,6 +123,49 @@ fn reset_thumbnail_attempts_returns_the_counter_to_zero() {
 }
 
 #[test]
+fn reset_thumbnail_attempts_for_zeroes_only_the_given_ids() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    for id in ["v1", "v2", "v3"] {
+        insert_video(&conn, id, &format!("D:\\videos\\{id}.mp4"), "online");
+        queries::increment_thumbnail_attempts(&conn, id).unwrap();
+        queries::increment_thumbnail_attempts(&conn, id).unwrap();
+    }
+    queries::increment_metadata_attempts(&conn, "v1").unwrap();
+
+    queries::reset_thumbnail_attempts_for(
+        &mut conn,
+        &["v1".to_string(), "v3".to_string(), "no-such-id".to_string()],
+    )
+    .unwrap();
+
+    assert_eq!(thumbnail_attempts(&conn, "v1"), 0);
+    assert_eq!(
+        thumbnail_attempts(&conn, "v2"),
+        2,
+        "unlisted id is untouched"
+    );
+    assert_eq!(thumbnail_attempts(&conn, "v3"), 0);
+    assert_eq!(
+        metadata_attempts(&conn, "v1"),
+        1,
+        "metadata counter is untouched"
+    );
+}
+
+#[test]
+fn reset_thumbnail_attempts_for_with_no_ids_changes_nothing() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_video(&conn, "v1", "D:\\videos\\a.mp4", "online");
+    queries::increment_thumbnail_attempts(&conn, "v1").unwrap();
+
+    queries::reset_thumbnail_attempts_for(&mut conn, &[]).unwrap();
+
+    assert_eq!(thumbnail_attempts(&conn, "v1"), 1);
+}
+
+#[test]
 fn reset_metadata_attempts_returns_the_counter_to_zero() {
     let (_dir, db) = init_temp_db();
     {
