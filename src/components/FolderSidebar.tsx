@@ -20,12 +20,9 @@ interface Props {
    * Bumped by the parent after a scan/folder-add/folder-remove completes so
    * this list picks up watch folder changes without a full remount. Folder
    * management itself lives in `FolderDialog` -- this component only
-   * mirrors `list_watch_folders` for the sidebar's selection UI, plus
-   * (below) the entry point that opens that dialog.
+   * mirrors `list_watch_folders` for the sidebar's selection UI.
    */
   refreshKey?: number;
-  /** Opens `FolderDialog`. */
-  onOpenFolderDialog: () => void;
 }
 
 // Registered-folder list + selection state for the always-visible sidebar
@@ -33,7 +30,7 @@ interface Props {
 // comments above). "すべて" clears the filter; clicking a folder scopes
 // the grid to it via `list_videos`'s `folder_path` argument (wired
 // end-to-end through ThumbnailGrid -> api.listVideos).
-export function FolderSidebar({ selected, onSelect, refreshKey, onOpenFolderDialog }: Props) {
+export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
   const [folders, setFolders] = useState<string[]>([]);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   // Mutable drag-session state, not React state -- read/written only inside
@@ -126,14 +123,6 @@ export function FolderSidebar({ selected, onSelect, refreshKey, onOpenFolderDial
           {folder}
         </button>
       ))}
-      <button
-        type="button"
-        className="folder-sidebar-manage-link"
-        data-testid="folder-sidebar-manage-link"
-        onClick={onOpenFolderDialog}
-      >
-        フォルダ管理 ▸
-      </button>
       {/* The drag handle -- see App.css's
           `.folder-sidebar-resize-handle` for the absolute positioning that
           overlays it along the sidebar's full-height right edge. Rendered

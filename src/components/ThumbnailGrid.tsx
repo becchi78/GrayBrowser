@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { listVideos, unregisterVideos } from "../api";
+import { listVideos, listWatchFolders, unregisterVideos } from "../api";
 import { onCatalogChanged } from "../events";
 import { jumpTargetIndex } from "../lib/jumpToPercent";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
@@ -85,6 +85,9 @@ export function ThumbnailGrid({
   // 行は自分で状況を知る手段がないため、「一覧が更新された」ことだけを行に
   // 伝えて、取得が終わっていない行に取り直させる。
   const [catalogVersion, setCatalogVersion] = useState(0);
+  // Starts false so the "register a folder" hint never flashes before the
+  // first fetch resolves; only a confirmed empty list shows it.
+  const [noWatchFolders, setNoWatchFolders] = useState(false);
   // Highlights the selected rows -- the detail panel selection used to open
   // is gone, so selection has no other effect than the CSS classes VideoRow
   // applies itself. Held by id so rows scrolled out of the virtualizer's
@@ -108,6 +111,19 @@ export function ThumbnailGrid({
   const [tagsVersion, setTagsVersion] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
   const thumbnailCache = useRef(new Map<string, string[]>());
+
+  // 登録フォルダが0件かどうか。空の一覧に、フォルダの登録先を案内するために使う。
+  useEffect(() => {
+    let cancelled = false;
+    listWatchFolders()
+      .then((rows) => {
+        if (!cancelled) setNoWatchFolders(rows.length === 0);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   // Re-fetches once on mount/refreshKey change, then again on every
   // catalog:changed event from the backend -- replaces the old finite
@@ -369,6 +385,11 @@ export function ThumbnailGrid({
       <>
         <div className="video-list-empty">
           {filtered ? "該当する動画が見つかりません。" : "動画がまだ登録されていません。"}
+          {!filtered && noWatchFolders && (
+            <div data-testid="video-list-empty-hint">
+              「ファイル &gt; フォルダ管理...」からフォルダを登録してください。
+            </div>
+          )}
         </div>
         {overlays}
       </>

@@ -465,26 +465,6 @@ button.search-box-clear {
   color: #ffffff;
 }
 
-/* Kept visually distinct from `.folder-sidebar-item` above (an italic,
-   muted, non-toggling entry) since it opens a dialog rather than filtering
-   the grid. `margin-top: auto` pins it to the bottom of the sidebar's flex
-   column regardless of how many folders are registered above it. */
-.folder-sidebar-manage-link {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  background: none;
-  padding: 0.5em 0.75em;
-  margin-top: auto;
-  font-size: 0.85em;
-  font-style: italic;
-  opacity: 0.75;
-  border-top: 1px solid #ddd;
-}
-
 /* The always-visible status bar (badges row). `flex-shrink: 0` + fixed
    `height: 26px` are the same guarantee the header rows above rely on --
    this row must never compete for `.video-list`'s `flex: 1` shrink-share.
@@ -1386,7 +1366,7 @@ button.search-box-clear {
 }
 
 /* FolderDialog/WbImportDialog's shared modal chrome. Both are reached
-   only from the native menu (or the sidebar's own "フォルダ管理 ▸" link)
+   only from the native menu
    rather than being always-mounted flex children of `.app`, so unlike
    every rule above, `flex`/`flex-shrink` sizing budgets don't apply here
    at all -- this is a `position: fixed` overlay stacked on top of the
@@ -1960,10 +1940,6 @@ button.link-button:focus-visible {
     background-color: #2f2f2f;
     color: #f6f6f6;
     border-color: #555;
-  }
-
-  .folder-sidebar-manage-link {
-    border-top-color: #555;
   }
 
   .dialog {
