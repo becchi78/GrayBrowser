@@ -23,6 +23,15 @@ pwsh -File e2e/run-sandboxed.ps1 -Mode manual -Profile debug
 
 **`pwsh`（PowerShell 7以上）での実行が必須。** Windows PowerShell 5.1（`powershell.exe`）ではパーサがトークン化に失敗し実行できない（Issue #33）。バージョンチェックに引っかかった場合でも、`GB_APP_PATH` を手動設定して回避しない。
 
+### 古いバイナリでの確認を防ぐ事前チェック
+
+サンドボックスのアプリが起動したままだと、exeが再リンクされず古いバイナリで確認してしまう。スクリプトはビルド前に次の2つを確認する。
+
+- `-SandboxRoot` 配下のexe（`debug\graybrowser.exe`・`release\GrayBrowser.exe`）とパスが一致する実行中プロセスがあれば、PID・開始時刻・パスを表示して中止する（exit 1）。判定はプロセス名ではなくexeのフルパスなので、実アプリ（`%LOCALAPPDATA%\GrayBrowser`）は対象外。スクリプトはプロセスを自動終了しない。
+- 選択したProfileのexeが既にあればビルド前に削除する（削除できなければ使用中として失敗）。ビルド後にexeが無ければ「再リンクされなかった」として失敗する。
+
+止まった場合は、**自分が起動したサンドボックスのアプリだけ**を閉じて再実行する。実アプリには触らない。表示されたパスが `-SandboxRoot` 配下であることを確認してから閉じること。
+
 詳細な仕組み（`sandboxGuard.mjs`によるガードの実装、パラメータ一覧）は `e2e/README.md` を参照。
 
 ## 実データに触れないはずの作業を行う場合のmtime照合
