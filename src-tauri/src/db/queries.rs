@@ -553,6 +553,23 @@ pub fn reset_metadata_attempts(conn: &Connection, video_id: &str) -> rusqlite::R
     Ok(())
 }
 
+/// Resets `metadata_attempts` to 0 for every id in `ids` in one transaction,
+/// so a bulk re-probe either clears all of them or none. Ids that match no
+/// row are ignored; an empty slice does not touch the database.
+pub fn reset_metadata_attempts_for(conn: &mut Connection, ids: &[String]) -> rusqlite::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("UPDATE videos SET metadata_attempts = 0 WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute(params![id])?;
+        }
+    }
+    tx.commit()
+}
+
 /// `(id, file_path, thumbnail_attempts, thumbnail_ready)` for every online
 /// video -- lets `thumbnail::worker::list_videos_missing_thumbnails`
 /// skip rows `gb_core::retry::is_eligible_for_automatic_retry`
