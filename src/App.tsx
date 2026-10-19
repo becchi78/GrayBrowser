@@ -59,6 +59,7 @@ function App() {
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
   const [videoCount, setVideoCount] = useState(0);
+  const [selectedCount, setSelectedCount] = useState(0);
   const [jumpRequest, setJumpRequest] = useState<{ percent: number; seq: number } | null>(null);
 
   useEffect(() => {
@@ -164,6 +165,7 @@ function App() {
                 infoCollapsed={infoPaneCollapsed}
                 jumpRequest={jumpRequest}
                 onCountChange={setVideoCount}
+                onSelectionCountChange={setSelectedCount}
               />
             ),
           }[viewStyle]
@@ -175,6 +177,7 @@ function App() {
       <StatusBar
         refreshKey={refreshKey}
         videoCount={videoCount}
+        selectedCount={selectedCount}
         onJump={(percent) => setJumpRequest((prev) => ({ percent, seq: (prev?.seq ?? 0) + 1 }))}
       />
 

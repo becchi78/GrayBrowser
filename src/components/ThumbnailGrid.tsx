@@ -1,9 +1,17 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { listVideos } from "../api";
 import { onCatalogChanged } from "../events";
 import { jumpTargetIndex } from "../lib/jumpToPercent";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
+import {
+  clearSelection,
+  clickSelect,
+  pruneSelection,
+  selectAll,
+  type ClickModifiers,
+  type SelectionState,
+} from "../lib/multiSelect";
 import type { SortDirection, SortField, VideoDto } from "../types";
 import { VideoRow } from "./VideoRow";
 
@@ -37,6 +45,17 @@ interface Props {
   jumpRequest: { percent: number; seq: number } | null;
   /** Reports the current (filtered/sorted) row count, for the jump button. */
   onCountChange: (count: number) => void;
+  /** Reports how many rows are currently selected, for the status bar. */
+  onSelectionCountChange: (count: number) => void;
+}
+
+// Keys typed into these must keep their native behavior (notably Ctrl+A as
+// "select all text"), so list-level shortcuts ignore them.
+function isTextEntryTarget(target: EventTarget): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+  );
 }
 
 export function ThumbnailGrid({
@@ -50,16 +69,18 @@ export function ThumbnailGrid({
   infoCollapsed,
   jumpRequest,
   onCountChange,
+  onSelectionCountChange,
 }: Props) {
   const [videos, setVideos] = useState<VideoDto[]>([]);
   // 一覧を再取得するたびに増える。VideoDtoには詳細情報の取得状況が含まれず、
   // 行は自分で状況を知る手段がないため、「一覧が更新された」ことだけを行に
   // 伝えて、取得が終わっていない行に取り直させる。
   const [catalogVersion, setCatalogVersion] = useState(0);
-  // Highlights the selected row -- the detail panel this used to open is
-  // gone, so selection no longer has any other effect than the
-  // `.video-row--selected` class VideoRow applies itself.
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  // Highlights the selected rows -- the detail panel selection used to open
+  // is gone, so selection has no other effect than the CSS classes VideoRow
+  // applies itself. Held by id so rows scrolled out of the virtualizer's
+  // window stay selected.
+  const [selection, setSelection] = useState<SelectionState>(clearSelection);
   const parentRef = useRef<HTMLDivElement>(null);
   const thumbnailCache = useRef(new Map<string, string[]>());
 
@@ -99,11 +120,14 @@ export function ThumbnailGrid({
         if (cancelled || !guard.isLatest(requestId)) return;
         setVideos(rows);
         setCatalogVersion((v) => v + 1);
-        // Clears the selection highlight if the selected video disappeared
-        // from the list entirely (e.g. its watch folder was removed) --
-        // otherwise `.video-row--selected` would just never match again.
-        setSelectedVideoId((prev) =>
-          prev && rows.some((v) => v.id === prev) ? prev : null,
+        // Only videos that vanished from the list (e.g. a watch folder was
+        // removed) are dropped; a plain refresh must not wipe the user's
+        // selection.
+        setSelection((prev) =>
+          pruneSelection(
+            prev,
+            rows.map((v) => v.id),
+          ),
         );
       } catch (e) {
         console.error(e);
@@ -148,6 +172,17 @@ export function ThumbnailGrid({
     // (not just refreshKey).
   }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath, rating]);
 
+  // A selection must never silently apply to rows the user can no longer
+  // see, so any change of what the list shows clears it. refreshKey is left
+  // out on purpose: it re-fetches the same view, which prune handles.
+  useEffect(() => {
+    setSelection(clearSelection());
+  }, [search, sortField, sortDirection, tagIds, folderPath, rating]);
+
+  useEffect(() => {
+    onSelectionCountChange(selection.ids.size);
+  }, [selection.ids.size, onSelectionCountChange]);
+
   // Resets scroll to the top only when the *search query* changes -- not on
   // sort-order change (still viewing the same result set, just reordered)
   // or catalog:changed refetches. A new search starting fresh at the top
@@ -188,6 +223,34 @@ export function ThumbnailGrid({
     scrollToIndexRef.current(index, { align: jumpRequest.percent === 100 ? "end" : "start" });
   }, [jumpRequest]);
 
+  function handleSelect(video: VideoDto, mods: ClickModifiers) {
+    const orderedIds = videos.map((v) => v.id);
+    setSelection((prev) => clickSelect(prev, orderedIds, video.id, mods));
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (isTextEntryTarget(e.target)) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      setSelection(selectAll(videos.map((v) => v.id)));
+    } else if (e.key === "Escape") {
+      setSelection(clearSelection());
+    }
+  }
+
+  // Shift/Ctrl+click would otherwise start the browser's own text selection.
+  // preventDefault also suppresses the focus change, and the keyboard
+  // shortcuts need the list focused, so focus it by hand.
+  function handleMouseDown(e: MouseEvent<HTMLDivElement>) {
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    if (e.target instanceof Element && e.target.closest("input, textarea, select, button, a")) {
+      return;
+    }
+    e.preventDefault();
+    parentRef.current?.focus({ preventScroll: true });
+  }
+
+  const multiSelected = selection.ids.size >= 2;
   const cache = thumbnailCache.current;
   const virtualRows = rowVirtualizer.getVirtualItems();
 
@@ -205,6 +268,9 @@ export function ThumbnailGrid({
       ref={parentRef}
       className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
       data-testid="video-list"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      onMouseDown={handleMouseDown}
     >
       <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
         {virtualRows.map((virtualRow) => {
@@ -226,8 +292,9 @@ export function ThumbnailGrid({
                 video={video}
                 cache={cache}
                 catalogVersion={catalogVersion}
-                isSelected={video.id === selectedVideoId}
-                onSelect={(v) => setSelectedVideoId(v.id)}
+                isSelected={selection.ids.has(video.id)}
+                isMultiSelected={multiSelected && selection.ids.has(video.id)}
+                onSelect={handleSelect}
               />
             </div>
           );
