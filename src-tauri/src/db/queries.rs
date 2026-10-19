@@ -457,6 +457,37 @@ pub fn list_skipped_files(
     Ok(rows)
 }
 
+pub fn get_skipped_file(
+    pool: &r2d2::Pool<SqliteConnectionManager>,
+    id: i64,
+) -> anyhow::Result<Option<SkippedFileRow>> {
+    let conn = pool.get()?;
+    let row = conn
+        .query_row(
+            "SELECT id, file_path, file_name, reason, detected_char, detected_at
+             FROM skipped_files WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(SkippedFileRow {
+                    id: r.get(0)?,
+                    file_path: r.get(1)?,
+                    file_name: r.get(2)?,
+                    reason: r.get(3)?,
+                    detected_char: r.get(4)?,
+                    detected_at: r.get(5)?,
+                })
+            },
+        )
+        .optional()?;
+    Ok(row)
+}
+
+/// Removes one skipped-file record. Returns whether a row was deleted.
+pub fn delete_skipped_file(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
+    let n = conn.execute("DELETE FROM skipped_files WHERE id = ?1", params![id])?;
+    Ok(n > 0)
+}
+
 // --- Generation retry-limit tracking (gb_core::retry's pure classification)
 // ----------------------------------------------------------------------
 //
@@ -2025,5 +2056,66 @@ mod watch_check_disabled_tests {
 
         set_watch_check_disabled(&conn, &[]).unwrap();
         assert!(get_watch_check_disabled(&conn).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod skipped_file_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+    use crate::db::Db;
+
+    fn skipped(path: &str) -> NewSkippedFile {
+        NewSkippedFile {
+            file_path: path.to_string(),
+            file_name: "a\u{2460}.mp4".to_string(),
+            reason: "machine_dependent_char",
+            detected_char: '\u{2460}',
+        }
+    }
+
+    fn id_of(db: &Db, path: &str) -> i64 {
+        list_skipped_files(&db.read_pool)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.file_path == path)
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn get_returns_the_row_or_none() {
+        let (_d, db) = init_temp_db();
+        upsert_skipped_file(&db.writer.lock().unwrap(), &skipped("C:/v/a.mp4")).unwrap();
+        let id = id_of(&db, "C:/v/a.mp4");
+
+        let row = get_skipped_file(&db.read_pool, id).unwrap().unwrap();
+        assert_eq!(row.file_path, "C:/v/a.mp4");
+        assert!(get_skipped_file(&db.read_pool, id + 1000)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn delete_removes_only_the_target_row() {
+        let (_d, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            upsert_skipped_file(&conn, &skipped("C:/v/a.mp4")).unwrap();
+            upsert_skipped_file(&conn, &skipped("C:/v/b.mp4")).unwrap();
+        }
+        let id = id_of(&db, "C:/v/a.mp4");
+
+        assert!(delete_skipped_file(&db.writer.lock().unwrap(), id).unwrap());
+
+        let left = list_skipped_files(&db.read_pool).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].file_path, "C:/v/b.mp4");
+    }
+
+    #[test]
+    fn delete_of_a_missing_id_reports_false() {
+        let (_d, db) = init_temp_db();
+        assert!(!delete_skipped_file(&db.writer.lock().unwrap(), 12345).unwrap());
     }
 }

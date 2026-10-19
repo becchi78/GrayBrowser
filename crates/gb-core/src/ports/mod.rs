@@ -4,6 +4,7 @@
 pub mod dialog;
 pub mod drive_type;
 pub mod ffmpeg;
+pub mod file_rename;
 pub mod player;
 pub mod trash;
 pub mod watcher;

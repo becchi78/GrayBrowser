@@ -5,6 +5,7 @@
 pub mod fake_dialog;
 pub mod fake_drive_type;
 pub mod fake_ffmpeg;
+pub mod fake_file_rename;
 pub mod fake_player;
 pub mod fake_trash;
 pub mod fake_watcher;

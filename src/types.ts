@@ -171,3 +171,8 @@ export interface ThumbnailProgress {
   done: number;
   total: number;
 }
+
+export interface RenameSkippedFileResult {
+  new_file_name: string;
+  registered: boolean;
+}
