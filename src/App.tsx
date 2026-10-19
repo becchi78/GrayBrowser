@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
+import { LogViewerDialog } from "./components/LogViewerDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { LeftPane } from "./components/LeftPane";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -15,6 +16,7 @@ import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } f
 import {
   onMenuAbout,
   onMenuOpenFolderDialog,
+  onMenuOpenLogDialog,
   onMenuOpenSettingsDialog,
   onMenuOpenTagBarDialog,
   onMenuOpenWbImportDialog,
@@ -51,6 +53,7 @@ function App() {
   // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
+  const [logDialogOpen, setLogDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
@@ -94,6 +97,11 @@ function App() {
 
   useEffect(() => {
     const unlisten = onMenuAbout(() => setAboutDialogOpen(true));
+    return () => unlisten();
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onMenuOpenLogDialog(() => setLogDialogOpen(true));
     return () => unlisten();
   }, []);
 
@@ -202,6 +210,7 @@ function App() {
         onChanged={() => setTagBarRefreshKey((k) => k + 1)}
       />
       <SettingsDialog open={settingsDialogOpen} onClose={() => setSettingsDialogOpen(false)} />
+      <LogViewerDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />
       <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
     </div>
   );

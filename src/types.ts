@@ -176,3 +176,17 @@ export interface RenameSkippedFileResult {
   new_file_name: string;
   registered: boolean;
 }
+
+export interface LogEntryDto {
+  /** ERROR / WARN / INFO / DEBUG / TRACE / UNKNOWN */
+  level: string;
+  target: string;
+  message: string;
+}
+
+export interface LogChunkDto {
+  entries: LogEntryDto[];
+  next_offset: number;
+  /** true のとき、保持している分を捨ててから entries を使う。 */
+  reset: boolean;
+}

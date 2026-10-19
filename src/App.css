@@ -1980,3 +1980,139 @@ button.link-button:focus-visible {
     color: #b7e4c0;
   }
 }
+
+.log-viewer-dialog {
+  width: min(80em, 95vw);
+  height: 85vh;
+  overflow: hidden;
+}
+
+.log-viewer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 1em;
+}
+
+.log-viewer-level,
+.log-viewer-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-size: 0.9em;
+}
+
+.log-viewer-search {
+  flex: 1 1 14em;
+  min-width: 10em;
+}
+
+.log-viewer-count {
+  font-size: 0.85em;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.log-viewer-error {
+  margin: 0;
+  color: #8a1f1f;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.log-viewer-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85em;
+}
+
+.log-viewer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 100%;
+  width: max-content;
+  max-width: 100%;
+  padding: 0 0.5em;
+  line-height: 22px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-viewer-row-level {
+  flex: none;
+  width: 5.5em;
+  font-weight: 600;
+}
+
+.log-viewer-row-target {
+  flex: none;
+  opacity: 0.5;
+}
+
+.log-viewer-row-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ライトテーマの文字色。チェックボックスのラベルと行のレベル表示で共有する。 */
+.log-level-error {
+  color: #b3261e;
+}
+.log-level-warn {
+  color: #9a5b00;
+}
+.log-level-info {
+  color: #1d5fa8;
+}
+.log-level-debug {
+  color: #5f6368;
+}
+.log-level-trace {
+  color: #8a8f94;
+}
+.log-level-unknown {
+  color: inherit;
+}
+
+.log-viewer-footer {
+  align-items: center;
+}
+
+.log-viewer-dir {
+  font-size: 0.8em;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  .log-viewer-error {
+    color: #f3caca;
+  }
+
+  .log-viewer-list {
+    border-color: #555;
+  }
+
+  .log-level-error {
+    color: #ff8a80;
+  }
+  .log-level-warn {
+    color: #ffcc66;
+  }
+  .log-level-info {
+    color: #8ab4f8;
+  }
+  .log-level-debug {
+    color: #b0b4b9;
+  }
+  .log-level-trace {
+    color: #8a8f94;
+  }
+}
