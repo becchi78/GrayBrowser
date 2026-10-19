@@ -61,12 +61,79 @@ GB_APP_PATH を手動で設定して回避しないでください。GB_APP_PATH
 
 $ErrorActionPreference = "Stop"
 
+function ConvertTo-ComparablePath([string]$Path) {
+    # 大文字小文字・区切り文字・末尾区切りの差を吸収して比較できる形にする。
+    $full = [System.IO.Path]::GetFullPath($Path).Replace('/', '\')
+    return $full.TrimEnd('\')
+}
+
+function Test-PathUnderRoot([string]$Path, [string]$Root) {
+    $p = ConvertTo-ComparablePath $Path
+    $r = ConvertTo-ComparablePath $Root
+    return $p.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Find-SandboxProcess([string[]]$ExePaths) {
+    # 名前ではなくexeのフルパスで判定する。名前一致だと、同名exeである実アプリ
+    # (%LOCALAPPDATA%\GrayBrowser)まで巻き込んでしまうため。
+    $targets = @($ExePaths | ForEach-Object { ConvertTo-ComparablePath $_ })
+    foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+        # 権限不足のプロセスは Path が取れず null になる。サンドボックス配下の
+        # exe は自分が起動したものなので、取れないものは対象外としてよい。
+        $procPath = $null
+        try { $procPath = $proc.Path } catch { }
+        if ([string]::IsNullOrEmpty($procPath)) { continue }
+        $comparable = ConvertTo-ComparablePath $procPath
+        if ($targets | Where-Object { $_ -ieq $comparable }) {
+            $proc
+        }
+    }
+}
+
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $RepoRoot
 try {
+    # 相対パス指定でも、以降の検証・削除が常に同じ絶対パスを指すようにする。
+    $SandboxRoot = ConvertTo-ComparablePath (
+        $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SandboxRoot))
+
+    # サンドボックスのアプリが動いたままだと、リンカがexeを上書きできず再リンクが
+    # 失敗するか、古いバイナリのまま確認してしまう。自動終了はしない: 閉じるべきか
+    # 判断できるのは起動した本人だけで、未保存の状態を壊す恐れもある。
+    $sandboxExes = @(
+        (Join-Path $SandboxRoot "debug\graybrowser.exe"),
+        (Join-Path $SandboxRoot "release\GrayBrowser.exe")
+    )
+    $running = @(Find-SandboxProcess $sandboxExes)
+    if ($running.Count -gt 0) {
+        Write-Host "サンドボックスのアプリが起動したままです。ビルドしても古いバイナリが残るため中止します:"
+        foreach ($p in $running) {
+            Write-Host ("  PID {0}  開始 {1}  {2}" -f $p.Id, $p.StartTime, $p.Path)
+        }
+        Write-Host "そのアプリを閉じてから、このスクリプトを再実行してください（スクリプトはプロセスを終了しません）。"
+        exit 1
+    }
+
     # 実データを保持する既存の target/ には一切触れない、専用のビルド出力先。
     $env:CARGO_TARGET_DIR = $SandboxRoot
     Write-Host "CARGO_TARGET_DIR = $env:CARGO_TARGET_DIR (isolated from the real target/)"
+
+    $exeRelative = if ($Profile -eq "release") { "release\GrayBrowser.exe" } else { "debug\graybrowser.exe" }
+    $staleExe = Join-Path $SandboxRoot $exeRelative
+    # 古いexeを残すと「再リンクされなかった」ことをビルド後に検知できない。
+    # 削除対象はサンドボックス配下の当該exe1ファイルに限定する。
+    if (-not (Test-PathUnderRoot $staleExe $SandboxRoot)) {
+        throw "削除対象がSandboxRoot配下ではありません: $staleExe"
+    }
+    if (Test-Path -LiteralPath $staleExe -PathType Leaf) {
+        try {
+            Remove-Item -LiteralPath $staleExe -Force -ErrorAction Stop
+        }
+        catch {
+            throw "既存のexeを削除できません（使用中の可能性があります。サンドボックスのアプリを閉じて再実行してください）: $staleExe"
+        }
+        Write-Host "Removed stale exe: $staleExe"
+    }
 
     if ($Profile -eq "release") {
         Write-Host "Building release (npm run tauri build -- --no-bundle; frontend build runs automatically via beforeBuildCommand)..."
@@ -92,7 +159,7 @@ try {
     }
 
     if (-not (Test-Path $exePath)) {
-        throw "Expected built exe not found at $exePath"
+        throw "Expected built exe not found at $exePath (ビルド前に削除済みのため、再リンクされなかったことを意味します)"
     }
 
     # ビルド出力先ディレクトリにsentinelを作成する（無ければ）。
