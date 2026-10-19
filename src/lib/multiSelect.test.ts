@@ -5,6 +5,7 @@ import {
   clickSelect,
   pruneSelection,
   selectAll,
+  selectionForContextMenu,
   type SelectionState,
 } from "./multiSelect.ts";
 
@@ -135,5 +136,42 @@ describe("pruneSelection", () => {
   it("does not select ids that were never selected", () => {
     const s = pruneSelection(sel(["a"], "a"), order);
     assert.deepEqual(sorted(s), ["a"]);
+  });
+});
+
+describe("selectionForContextMenu", () => {
+  it("keeps the whole selection when the clicked row is already selected", () => {
+    const state = sel(["a", "c", "d"], "a");
+    const result = selectionForContextMenu(state, "c");
+    assert.deepEqual(sorted(result), ["a", "c", "d"]);
+    assert.equal(result.anchorId, "a");
+  });
+
+  it("keeps a lone selection when that row is clicked", () => {
+    const result = selectionForContextMenu(sel(["b"], "b"), "b");
+    assert.deepEqual(sorted(result), ["b"]);
+  });
+
+  it("replaces the selection with the clicked row when it is not selected", () => {
+    const result = selectionForContextMenu(sel(["a", "b"], "a"), "d");
+    assert.deepEqual(sorted(result), ["d"]);
+  });
+
+  it("moves the range anchor to the newly selected row", () => {
+    const result = selectionForContextMenu(sel(["a", "b"], "a"), "d");
+    assert.equal(result.anchorId, "d");
+  });
+
+  it("selects the clicked row when nothing was selected", () => {
+    const result = selectionForContextMenu(clearSelection(), "e");
+    assert.deepEqual(sorted(result), ["e"]);
+    assert.equal(result.anchorId, "e");
+  });
+
+  it("does not mutate its input", () => {
+    const state = sel(["a", "b"], "a");
+    selectionForContextMenu(state, "d");
+    assert.deepEqual(sorted(state), ["a", "b"]);
+    assert.equal(state.anchorId, "a");
   });
 });

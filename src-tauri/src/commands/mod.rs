@@ -1,3 +1,4 @@
+pub mod catalog_cmds;
 pub mod dedup_cmds;
 pub mod ffmpeg_cmds;
 pub mod generation_retry_cmds;

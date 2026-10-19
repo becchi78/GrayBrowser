@@ -107,6 +107,8 @@ export const deleteDuplicateVideo = (videoId: string) =>
   invoke<void>("delete_duplicate_video", { videoId });
 export const deleteDuplicateVideoAndFile = (videoId: string) =>
   invoke<void>("delete_duplicate_video_and_file", { videoId });
+export const unregisterVideos = (videoIds: string[]) =>
+  invoke<number>("unregister_videos", { videoIds });
 export const listGenerationFailures = () =>
   invoke<GenerationFailuresDto>("list_generation_failures");
 export const retryThumbnailGeneration = (videoId: string) =>

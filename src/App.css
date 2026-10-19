@@ -1639,6 +1639,47 @@ button.link-button:focus-visible {
   opacity: 0.6;
 }
 
+.confirm-dialog-error {
+  color: #8a1f1f;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 12em;
+  padding: 4px;
+  background-color: #ffffff;
+  color: #0f0f0f;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.4em 0.8em;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  background-color: transparent;
+  color: inherit;
+  font-size: 0.95em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
+  background-color: #e8e8e8;
+}
+
+.context-menu-item--danger {
+  color: #b00020;
+}
+
 .wb-import-dialog-row {
   display: flex;
   align-items: center;
@@ -1928,6 +1969,25 @@ button.link-button:focus-visible {
   .dialog {
     background-color: #2f2f2f;
     color: #f6f6f6;
+  }
+
+  .confirm-dialog-error {
+    color: #f3caca;
+  }
+
+  .context-menu {
+    background-color: #2f2f2f;
+    color: #f6f6f6;
+    border-color: #555;
+  }
+
+  .context-menu-item:hover,
+  .context-menu-item:focus-visible {
+    background-color: #444;
+  }
+
+  .context-menu-item--danger {
+    color: #ff8a80;
   }
 
   .confirm-dialog-confirm--danger {

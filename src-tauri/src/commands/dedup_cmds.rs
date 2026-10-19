@@ -48,6 +48,24 @@ pub async fn refresh_duplicate_groups(
     Ok(())
 }
 
+/// Deletes the cached thumbnail slot files of `video_id` (only the cache under
+/// `thumbnails_root`, never the source video). Best-effort: the thumbnails may
+/// never have been generated (e.g. an offline video), same "may not exist"
+/// reasoning as thumbnail::worker's own tmp-file cleanup.
+pub(crate) fn delete_thumbnail_files(
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+    file_path: &str,
+    video_id: &str,
+) {
+    let video_dir =
+        crate::thumbnail::paths::video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
+    for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
+        let thumb_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+}
+
 /// Removes the catalog entry for `video_id` -- the `videos` row plus every
 /// `video_tags`/`path_collisions` row referencing it
 /// (`queries::delete_video_cascade`) -- and deletes its cached thumbnails
@@ -80,18 +98,7 @@ fn remove_video_from_catalog(
             .ok()
             .and_then(|conn| crate::db::queries::get_watch_folders(&conn).ok())
             .unwrap_or_default();
-        let video_dir = crate::thumbnail::paths::video_thumbnail_dir(
-            thumbnails_root,
-            &watch_folders,
-            &file_path,
-        );
-        // Best-effort: the thumbnails may never have been generated (e.g.
-        // an offline video), same "may not exist" reasoning as
-        // thumbnail::worker's own tmp-file cleanup.
-        for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
-            let thumb_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
-            let _ = std::fs::remove_file(&thumb_path);
-        }
+        delete_thumbnail_files(thumbnails_root, &watch_folders, &file_path, video_id);
     }
 
     let mut conn = db.writer.lock().unwrap();
@@ -108,7 +115,7 @@ fn log_identity(db: &Db, video_id: &str) -> (String, String) {
         .unwrap_or_else(|| ("(unknown)".to_string(), "(unknown)".to_string()))
 }
 
-fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
+pub(crate) fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
     crate::paths::app_data_dir()
         .ok()
         .map(|app_dir| crate::thumbnail::paths::thumbnails_root(&app_dir))
