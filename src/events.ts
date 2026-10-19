@@ -110,6 +110,14 @@ export function onMenuOpenSettingsDialog(callback: () => void): () => void {
 }
 
 /**
+ * Subscribes to menu:open-log-dialog, fired by the native "ヘルプ > 動作ログ..."
+ * menu item.
+ */
+export function onMenuOpenLogDialog(callback: () => void): () => void {
+  return subscribe<void>("menu:open-log-dialog", callback);
+}
+
+/**
  * Subscribes to menu:about, fired by the native "ヘルプ > バージョン情報"
  * menu item.
  */
