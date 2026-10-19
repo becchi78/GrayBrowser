@@ -1,5 +1,6 @@
-// E2E flow: the TagBar (Phase A-D) -- pinned-tag position stability,
-// "すべて解除"'s fixed leading position, and the ▾ overflow dropdown.
+// E2E flow: the left-pane TagBar -- pinned-tag position stability,
+// "すべて解除"'s fixed leading position, and the 「その他のタグ」 list with
+// promotion.
 //
 // Tags/pinned list are seeded directly via DB (fixtures.mjs's
 // seedTags/seedTagBarPinnedTagIds), the same "skip the native-adjacent flow,
@@ -129,12 +130,9 @@ test('"すべて解除" stays the first element of the bar, disabled, with nothi
 
     // Checks the first `<button>` descendant in document order (not
     // `.tag-bar`'s own `firstElementChild`) -- deliberately
-    // structure-agnostic to `.tag-bar`'s internal wrapper elements (e.g.
-    // `.tag-bar-row`, added to scope the chip-row's own `overflow: hidden`
-    // clip away from the ▾ dropdown popover -- see App.css's own comment).
-    // `.tag-bar` is a plain `display: flex` row (no `flex-direction:
-    // row-reverse`/`order`), so document order and left-to-right visual
-    // order still coincide here.
+    // structure-agnostic to `.tag-bar`'s internal wrapper elements. `.tag-bar`
+    // is a plain column (no `order`/`*-reverse`), so document order and
+    // top-to-bottom visual order coincide.
     const isFirstButton = await browser.execute(() => {
       const firstButton = document.querySelector('[data-testid="tag-bar"] button');
       return firstButton?.getAttribute("data-testid") === "tag-bar-clear-all";
@@ -155,159 +153,49 @@ test('"すべて解除" stays the first element of the bar, disabled, with nothi
   }
 });
 
-test("a narrow window routes pinned tags that don't fit into the ▾ overflow dropdown", async () => {
+test("tags that are not pinned are reachable from the 「その他のタグ」 list and get promoted when selected", async () => {
   await ensureAppDbExists();
 
-  // 15 long-enough names that `.tag-bar-chip`'s own `max-width: 12em` clamp
-  // (App.css) kicks in on every one of them -- their *rendered* (clamped)
-  // width is what TagBar.tsx's hidden measurement row actually measures, so
-  // padding them out further than 12em worth of characters would be
-  // pointless; going past the clamp just guarantees each one measures at
-  // its full 12em ceiling rather than depending on font-metric specifics.
-  const token = `e2e${Date.now()}ovf`;
-  const names = Array.from(
-    { length: 15 },
-    (_, i) => `${token}_overflow_candidate_number_${i}_long_enough_to_clamp`,
-  );
+  const token = `e2e${Date.now()}others`;
+  const names = [`${token}_pinned`, `${token}_other`];
   const ids = seedTags(names);
   const originalPinned = getTagBarPinnedTagIds();
-  seedTagBarPinnedTagIds(ids);
+  seedTagBarPinnedTagIds([ids[0]]);
 
   const browser = await createSession();
   try {
-    // tauri.conf.json's real minWidth (900x580) -- a genuinely reachable
-    // window size (unlike layout-shrink-regression.e2e.mjs's sub-minWidth
-    // SHRUNK_WIDTH trick), still narrow enough that 15 max-width-clamped
-    // chips can't possibly all fit alongside "すべて解除".
-    await browser.setWindowSize(900, 580);
+    await browser.setWindowSize(DEFAULT_WINDOW.width, DEFAULT_WINDOW.height);
     await waitForAppReady(browser);
-    await browser.pause(500);
+    await waitForTagBarChipCount(browser, 1);
 
-    const barChipNames = await tagBarChipNames(browser);
-    assert.ok(
-      barChipNames.length > 0 && barChipNames.length < names.length,
-      `expected some (but not all) of the ${names.length} pinned chips to fit in the bar at 900px, got ${barChipNames.length}: ${JSON.stringify(barChipNames)}`,
+    const othersToggle = await browser.$('[data-testid="tag-bar-others-toggle"]');
+    await othersToggle.waitForExist({ timeout: 10_000 });
+    assert.equal(
+      await othersToggle.getAttribute("aria-expanded"),
+      "false",
+      "the 「その他のタグ」 list must start collapsed",
     );
-    // computeVisibleChipCount always keeps the *first* N candidates (in
-    // order) and routes the rest to the dropdown -- never a scattered
-    // subset -- so whatever fit must be an exact prefix of the pinned order.
+    await othersToggle.click();
+
+    const otherChip = await browser.$(
+      `//button[@data-testid="tag-bar-others-chip" and text()="${names[1]}"]`,
+    );
+    await otherChip.waitForDisplayed({ timeout: 10_000 });
+    assert.ok(
+      !(await tagBarChipNames(browser)).includes(names[1]),
+      "an unpinned, unselected tag must not appear among the primary chips",
+    );
+
+    await otherChip.click();
+    // Selecting it promotes it ahead of the pinned chips.
+    await waitForTagBarChipCount(browser, 2);
     assert.deepEqual(
-      barChipNames,
-      names.slice(0, barChipNames.length),
-      `expected the chips that fit to be an exact prefix of the pinned order, got ${JSON.stringify(barChipNames)}`,
+      (await tagBarChipNames(browser)).slice(0, 2),
+      [names[1], names[0]],
+      "a selected, unpinned tag must be promoted before the pinned chips",
     );
-
-    const overflowToggle = await browser.$('[data-testid="tag-bar-overflow-toggle"]');
-    await overflowToggle.waitForExist({ timeout: 10_000 });
-    await overflowToggle.click();
-
-    // `waitForExist()` alone is exactly what missed a real bug here: the
-    // panel was correctly present in the DOM (React's `overflowOpen` state
-    // toggled fine) while still invisible on screen, because `.tag-bar`'s
-    // own `overflow: hidden` (meant only to clip an over-budget chip row)
-    // clipped this panel's `position: absolute; top: 100%` popover too --
-    // CSS clips a descendant to its clipping ancestor's box regardless of
-    // the descendant's own `position` (see TagBar.tsx/App.css's own
-    // comments on `.tag-bar`/`.tag-bar-row` for the fix).
-    const overflowPanel = await browser.$('[data-testid="tag-bar-overflow-panel"]');
-    await overflowPanel.waitForExist({ timeout: 10_000 });
-    // A necessary but NOT sufficient check for this specific bug class --
-    // kept as a basic sanity gate (still catches an unrelated `display:
-    // none`/`visibility: hidden`/`opacity: 0` regression), but empirically
-    // confirmed (a temporary, reverted mutation re-adding `overflow: hidden`
-    // to `.tag-bar` itself, then rebuilding against a real sandboxed app)
-    // that it stays `true` even while the panel is fully clipped out of view
-    // by an ancestor's `overflow: hidden` box: WebDriver's "is element
-    // displayed" check only looks at computed `display`/`visibility`/
-    // `opacity`, never whether an ancestor's overflow clips the element's
-    // box out of the visible area. The `clipCheck` geometric assertion below
-    // is what actually guards against *this* bug.
-    await overflowPanel.waitForDisplayed({ timeout: 10_000 });
-
-    // Asserts something `isDisplayed()` can't: that the panel isn't (even
-    // partially) clipped away by the nearest real clipping ancestor found by
-    // walking up the DOM -- the same "find the real clipping ancestor,
-    // don't assume which class it is" pattern
-    // layout-shrink-regression.e2e.mjs's generation-failures-panel test
-    // already uses for the same reason.
-    const clipCheck = await browser.execute(() => {
-      const panel = document.querySelector('[data-testid="tag-bar-overflow-panel"]');
-      const panelRect = panel.getBoundingClientRect();
-      let clipEl = null;
-      let node = panel.parentElement;
-      while (node && node !== document.body) {
-        const style = window.getComputedStyle(node);
-        if (style.overflowX !== "visible" || style.overflowY !== "visible") {
-          clipEl = node;
-          break;
-        }
-        node = node.parentElement;
-      }
-      const clipRect = clipEl ? clipEl.getBoundingClientRect() : null;
-      return {
-        panelRect: {
-          top: panelRect.top,
-          bottom: panelRect.bottom,
-          left: panelRect.left,
-          right: panelRect.right,
-        },
-        clipTag: clipEl ? `${clipEl.tagName}.${Array.from(clipEl.classList).join(".")}` : null,
-        clipRect: clipRect
-          ? { top: clipRect.top, bottom: clipRect.bottom, left: clipRect.left, right: clipRect.right }
-          : null,
-      };
-    });
-    if (clipCheck.clipTag) {
-      const verticalOverlap =
-        Math.min(clipCheck.panelRect.bottom, clipCheck.clipRect.bottom) -
-        Math.max(clipCheck.panelRect.top, clipCheck.clipRect.top);
-      const horizontalOverlap =
-        Math.min(clipCheck.panelRect.right, clipCheck.clipRect.right) -
-        Math.max(clipCheck.panelRect.left, clipCheck.clipRect.left);
-      assert.ok(
-        verticalOverlap > 0 && horizontalOverlap > 0,
-        `expected the ▾ dropdown panel to actually overlap its nearest clipping ancestor (${clipCheck.clipTag}), i.e. not be entirely clipped out of view -- got ${JSON.stringify(clipCheck)}`,
-      );
-    }
-
-    const overflowChipElements = await browser.$$('[data-testid="tag-bar-overflow-chip"]');
-    assert.ok(
-      overflowChipElements.length > 0,
-      "expected at least one chip inside the ▾ dropdown panel",
-    );
-
-    const overflowChipNames = await browser.execute(() =>
-      Array.from(document.querySelectorAll('[data-testid="tag-bar-overflow-chip"]')).map(
-        (el) => el.textContent,
-      ),
-    );
-    const expectedOverflowNames = names.slice(barChipNames.length);
-    for (const name of expectedOverflowNames) {
-      assert.ok(
-        overflowChipNames.includes(name),
-        `expected overflowed pinned tag "${name}" to appear in the ▾ dropdown, got ${JSON.stringify(overflowChipNames)}`,
-      );
-    }
-    // MUTATION TEST: re-adding `overflow: hidden` to `.tag-bar` itself
-    // (App.css) -- i.e. reverting just the clip-scoping fix while keeping
-    // everything else in this file unchanged -- and rebuilding against a
-    // real sandboxed app confirmed this exact `clipCheck` assertion goes
-    // red (`verticalOverlap` negative: the panel's top edge sat below
-    // `.tag-bar`'s own clipped bottom edge). Also confirmed in the same run:
-    // `isDisplayed()`/`waitForDisplayed()` on the panel stayed `true`
-    // throughout that mutation -- i.e. those checks alone do NOT catch this
-    // bug class at all (WebDriver's displayedness check doesn't model
-    // ancestor-overflow clipping), which is why this test asserts the
-    // geometric overlap directly instead of relying on them. Reverted
-    // before finishing. The other core claims here (an exact prefix fits,
-    // the rest reach the dropdown) are separately already
-    // functional/behavioral, not just a measurement that could pass for the
-    // wrong reason -- a `computeVisibleChipCount` regression that returned
-    // e.g. always-0 or always-all would fail the `length > 0 && length <
-    // names.length` assertion directly, and one that scrambled order would
-    // fail the prefix-equality assertion.
   } catch (e) {
-    await saveFailureScreenshot(browser, "tag-bar-overflow");
+    await saveFailureScreenshot(browser, "tag-bar-others");
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});

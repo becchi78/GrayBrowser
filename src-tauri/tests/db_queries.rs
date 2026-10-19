@@ -507,3 +507,67 @@ fn info_pane_collapsed_treats_unrecognized_value_as_false() {
     .unwrap();
     assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
 }
+
+#[test]
+fn sidebar_sections_collapsed_defaults_to_all_expanded_when_unset() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    assert_eq!(
+        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
+        queries::SidebarSectionsCollapsed::default()
+    );
+}
+
+#[test]
+fn sidebar_sections_collapsed_round_trips_through_set_and_get() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    let state = queries::SidebarSectionsCollapsed {
+        folders: false,
+        rating: true,
+        tags: true,
+    };
+    queries::set_sidebar_sections_collapsed(&conn, state).unwrap();
+    assert_eq!(
+        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
+        state
+    );
+
+    queries::set_sidebar_sections_collapsed(&conn, Default::default()).unwrap();
+    assert_eq!(
+        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
+        Default::default()
+    );
+}
+
+#[test]
+fn sidebar_sections_collapsed_falls_back_to_default_on_corrupt_json() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('sidebar_sections_collapsed', '{not json')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
+        Default::default()
+    );
+}
+
+#[test]
+fn sidebar_sections_collapsed_treats_missing_keys_as_expanded() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('sidebar_sections_collapsed', '{\"tags\":true}')",
+        [],
+    )
+    .unwrap();
+    let got = queries::get_sidebar_sections_collapsed(&conn).unwrap();
+    assert!(got.tags && !got.folders && !got.rating);
+}

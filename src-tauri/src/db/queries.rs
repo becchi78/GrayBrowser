@@ -812,6 +812,40 @@ pub fn set_info_pane_collapsed(conn: &Connection, collapsed: bool) -> anyhow::Re
     Ok(())
 }
 
+const SIDEBAR_SECTIONS_COLLAPSED_KEY: &str = "sidebar_sections_collapsed";
+
+/// Collapsed flags of the left-pane sections. `true` means collapsed; every
+/// section defaults to expanded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SidebarSectionsCollapsed {
+    pub folders: bool,
+    pub rating: bool,
+    pub tags: bool,
+}
+
+/// Unset and unparseable values both read as all-expanded: a corrupt or
+/// hand-edited value must never leave a section hidden with no obvious cause.
+pub fn get_sidebar_sections_collapsed(
+    conn: &Connection,
+) -> anyhow::Result<SidebarSectionsCollapsed> {
+    Ok(get_setting(conn, SIDEBAR_SECTIONS_COLLAPSED_KEY)?
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default())
+}
+
+pub fn set_sidebar_sections_collapsed(
+    conn: &Connection,
+    state: SidebarSectionsCollapsed,
+) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        SIDEBAR_SECTIONS_COLLAPSED_KEY,
+        &serde_json::to_string(&state)?,
+    )?;
+    Ok(())
+}
+
 pub struct TagRow {
     pub id: i64,
     pub name: String,

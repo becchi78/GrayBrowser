@@ -131,17 +131,6 @@ button:disabled {
   font-size: 0.9em;
 }
 
-/* Row 2 (38px budget, tag bar chips only). Same `flex-shrink: 0` rule as
-   row 1. `TagBar` renders nothing (`null`) when the library has no tags yet,
-   so this wrapper naturally collapses to 0 height in that case -- no
-   special-casing needed here. */
-.header-row-filters {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
-  flex-shrink: 0;
-}
-
 /* 入力欄の右端に✕を重ねるための相対配置。元の`.search-box`のflex指定は
    ラッパー側に移し、行内での伸縮は従来どおりにする。 */
 .search-box-wrap {
@@ -197,72 +186,32 @@ button.search-box-clear {
   background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
 }
 
-/* Outer row: holds `.tag-bar-row` (the chip row, see below) and
-   `.tag-bar-overflow` (the ▾ toggle + its popover) side by side.
-   Deliberately does NOT have `overflow: hidden` itself -- see
-   `.tag-bar-row`'s own comment for why that clip must stay scoped to just
-   the chip row, not this element. */
+/* 左ペインのタグ部品。縦のペインなので幅の計算は不要で、チップは折り返して並べる。 */
 .tag-bar {
-  position: relative;
   display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 0.4em;
   min-width: 0;
-  /* `.header-row-filters`の唯一のflexアイテムとして行の全幅を使う。 */
-  flex: 1;
 }
 
-/* 単一の`<select>`のみを持つ固定幅ラッパー。ヘッダー1行目で検索欄(flex: 1)
-   と並ぶため、`flex-shrink: 0`で窓が狭いときに潰れないようにする。
-   padding/font-sizeは`.header-row-primary select`が既に掛かるのでここでは
-   指定しない(二重指定による高さのずれを避ける)。 */
-.rating-bar {
-  flex-shrink: 0;
-  width: 8em;
-}
-
-.rating-bar select {
-  width: 100%;
-}
-
-/* The chip row (「すべて解除」+ pinned/promoted chips) -- its own wrapper,
-   separate from `.tag-bar` itself, specifically so `overflow: hidden`
-   clips only this element's contents. `overflow: hidden` here is a safety
-   net, not the primary mechanism (TagBar.tsx's own `computeVisibleChipCount`
-   measurement is what decides how many chips actually render) -- it only
-   guards against the 38px row-height budget ever being broken by a
-   measurement edge case, instead of silently wrapping to a second row.
-   Real-machine repro (a minimal Edge-headless before/after comparison)
-   confirmed this same `overflow: hidden` on the *outer* `.tag-bar` used to
-   clip `.tag-bar-overflow-panel` too -- CSS clips a descendant to its
-   clipping ancestor's box regardless of the descendant's own `position:
-   absolute`, so a popover opening via `top: 100%` off the bottom of a
-   `.tag-bar`-scoped `overflow: hidden` was always invisible. `.tag-bar-
-   overflow` (the ▾ button/popover) is a *sibling* of this wrapper, not a
-   child, so it's never subject to this clip at all -- see TagBar.tsx's own
-   JSX structure comment. */
-.tag-bar-row {
+.tag-bar-chips {
   display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.4em;
   min-width: 0;
-  overflow: hidden;
+  max-width: 100%;
 }
 
-/* `.header-row-primary`と同じ理由で、タグバー行(`.header-row-filters`)
-   の高さを縮める -- チップのpadding/font-sizeを一段階小さくする。 */
 .tag-bar-chip {
-  flex-shrink: 0;
   border-radius: 999px;
   padding: 0.15em 0.6em;
   font-size: 0.8em;
   box-shadow: none;
   background-color: #e8e8e8;
-  /* 長いタグ名1つが計測幅を無制限に広げてバー全体を専有しないためのクランプ。
+  /* 長いタグ名1つがペイン幅を超えないためのクランプ。
      `title`属性でフルネームをツールチップ表示する(TagBar.tsx参照)。 */
-  max-width: 12em;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -274,39 +223,43 @@ button.search-box-clear {
 }
 
 .tag-bar-clear-all,
-.tag-bar-overflow-toggle {
-  flex-shrink: 0;
+.tag-bar-others-toggle {
   padding: 0.15em 0.6em;
   font-size: 0.8em;
   box-shadow: none;
 }
 
-.tag-bar-overflow {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.tag-bar-overflow-panel {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.4em;
-  width: max-content;
-  max-width: min(28em, 90vw);
-  max-height: 40vh;
-  overflow: auto;
-  background-color: #ffffff;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 0.5em;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 20;
-}
-
-.tag-bar-overflow-list {
+.tag-bar-others {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 0.4em;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 評価の一覧。フォルダ一覧と同じ縦並びのボタン。 */
+.rating-bar {
+  display: flex;
+  flex-direction: column;
+}
+
+.rating-bar-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0.5em 0.75em;
+  font-size: 0.85em;
+}
+
+.folder-sidebar-item--active,
+.rating-bar-item--active {
+  background-color: #396cd8;
+  color: #ffffff;
 }
 
 /* TagBarEditDialog: 2-column "常設タグ / その他のタグ" layout, wider than
@@ -390,13 +343,13 @@ button.search-box-clear {
   margin: 0;
 }
 
-/* MainArea, the `flex: 1` body row that hosts FolderSidebar + the video
+/* MainArea, the `flex: 1` body row that hosts LeftPane + the video
    list side by side (the old 3rd column, the detail panel, is gone --
    folded into each `.video-row`). `min-height: 0` overrides this item's
    default `min-height: auto` in `.app`'s *column* flex layout -- without
    it, this item's automatic
    minimum height would be based on its children's own content sizes
-   (FolderSidebar's list, `.video-list`'s explicit `min-height: 226px`,
+   (LeftPane's sections, `.video-list`'s explicit `min-height: 226px`,
    etc.) rather than being allowed to shrink freely, which would silently
    reintroduce the same "flex-basis-0 item can't actually get smaller"
    class of bug this file's other comments document (see `.video-list`
@@ -407,42 +360,62 @@ button.search-box-clear {
   min-height: 0;
 }
 
-/* Registered-folder list, always visible, user-resizable (200px〜500px)
-   via a drag handle -- see FolderSidebar.tsx, which owns the width as its
-   own component state (`style={{ width }}` on this element) and is why
-   there's no fixed `width` rule here.
-   `flex-shrink: 0` is still needed so `.video-list`'s own flex-basis-0
-   shrink never eats into whatever width FolderSidebar's state currently
-   reports -- same reasoning as the header rows above, just against a
-   variable width now instead of a constant one. */
-.folder-sidebar {
+/* 左ペイン。幅はLeftPane.tsxがstateとして持つ(インラインstyle)ので、ここに
+   固定の`width`は置かない。`flex-shrink: 0`は、`.video-list`のflex-basis-0の
+   縮小がペインの現在幅を食わないようにするために必要(ヘッダー行と同じ理由)。 */
+.left-pane {
   position: relative;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   border-right: 1px solid #ddd;
+  min-height: 0;
 }
 
-/* The drag handle itself -- absolutely positioned
-   (against `.folder-sidebar`'s own `position: relative` above) as a thin
-   strip spanning the sidebar's full height along its right edge, straddling
-   the 1px `border-right`. Positioned this way (rather than as a normal flex
-   child of the column layout above) so it overlays the whole sidebar height
-   regardless of how much content (folder count) the column itself has,
-   instead of being just one more stacked item at the bottom. `cursor:
-   col-resize` is the only visual affordance; the actual resize logic
-   (mousedown/mousemove/mouseup) lives entirely in FolderSidebar.tsx, not
-   here. Deliberately given its own small hit area (6px, wider than the 1px
-   border-right it straddles) rather than relying on the border pixel
-   itself, which would be unreasonably hard to grab with a mouse. */
-.folder-sidebar-resize-handle {
+/* 縦スクロールはこの内側の要素が受け持つ。リサイズハンドルは外側のペインに
+   絶対配置してあるので、スクロールしても端に残る。 */
+.left-pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ペインの右端を縦に覆う細い帯(1pxの`border-right`をまたぐ)。1pxの枠線だけでは
+   マウスで掴めないので、6pxのヒット領域を持たせる。 */
+.left-pane-resize-handle {
   position: absolute;
   top: 0;
   bottom: 0;
   right: -3px;
   width: 6px;
   cursor: col-resize;
+}
+
+.sidebar-section-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0.5em 0.75em;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.sidebar-section-body {
+  padding-bottom: 0.5em;
+}
+
+.sidebar-section-body .tag-bar {
+  padding: 0 0.75em;
+}
+
+.folder-sidebar {
+  display: flex;
+  flex-direction: column;
 }
 
 .folder-sidebar-item {
@@ -458,11 +431,6 @@ button.search-box-clear {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.folder-sidebar-item--active {
-  background-color: #396cd8;
-  color: #ffffff;
 }
 
 /* The always-visible status bar (badges row). `flex-shrink: 0` + fixed
@@ -622,7 +590,7 @@ button.search-box-clear {
      scrollbar on `.video-list` itself -- not visual breakage -- but
      matching the floor to the real content avoids that scrollbar appearing
      needlessly. `sidebarResize.ts`'s `VIDEO_LIST_MIN_WIDTH_PX` must match
-     this value; the sidebar's own resizable max width (FolderSidebar.tsx,
+     this value; the sidebar's own resizable max width (LeftPane.tsx,
      500px) is additionally clamped against the window's actual available
      width so dragging it wide at a narrow window can't force `.video-list`
      below this floor in the first place -- see that component's own
@@ -1820,11 +1788,12 @@ button.link-button:focus-visible {
     background-color: #5a3d00;
   }
 
-  .folder-sidebar {
+  .left-pane {
     border-right-color: #555;
   }
 
-  .folder-sidebar-item--active {
+  .folder-sidebar-item--active,
+  .rating-bar-item--active {
     background-color: #5a8ef0;
     color: #0f0f0f;
   }
@@ -1888,12 +1857,6 @@ button.link-button:focus-visible {
   .tag-bar-chip--active {
     background-color: #5a8ef0;
     color: #0f0f0f;
-  }
-
-  .tag-bar-overflow-panel {
-    background-color: #2f2f2f;
-    color: #f6f6f6;
-    border-color: #555;
   }
 
   .generation-failures-error {

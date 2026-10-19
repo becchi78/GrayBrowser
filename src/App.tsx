@@ -3,13 +3,11 @@ import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
 import { FolderDialog } from "./components/FolderDialog";
-import { FolderSidebar } from "./components/FolderSidebar";
-import { RatingBar } from "./components/RatingBar";
+import { LeftPane } from "./components/LeftPane";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
-import { TagBar } from "./components/TagBar";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
@@ -37,7 +35,7 @@ function App() {
   const [tagIds, setTagIds] = useState<number[]>([]);
   // `null` = "すべて" (no folder filter).
   const [folderPath, setFolderPath] = useState<string | null>(null);
-  // `null` = "すべて表示" (no rating filter). Independent filter axis from
+  // `null` = "ALL" (no rating filter). Independent filter axis from
   // tagIds -- see RatingBar's own comment.
   const [rating, setRating] = useState<number | null>(null);
   // FolderDialog/WbImportDialog are reached only via the native menu
@@ -119,7 +117,6 @@ function App() {
           the DOM) is the title-bar equivalent now. */}
       <div className="header-row-primary" data-testid="header-row-primary">
         <SearchBox value={search} onChange={setSearch} />
-        <RatingBar value={rating} onChange={setRating} />
         <SortControl
           field={sortField}
           direction={sortDirection}
@@ -138,14 +135,16 @@ function App() {
           {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
         </button>
       </div>
-      <div className="header-row-filters" data-testid="header-row-filters">
-        <TagBar selected={tagIds} onChange={setTagIds} refreshKey={tagBarRefreshKey} />
-      </div>
       <div className="main-area">
-        <FolderSidebar
-          selected={folderPath}
-          onSelect={setFolderPath}
+        <LeftPane
+          folderPath={folderPath}
+          onFolderPathChange={setFolderPath}
+          rating={rating}
+          onRatingChange={setRating}
+          tagIds={tagIds}
+          onTagIdsChange={setTagIds}
           refreshKey={refreshKey}
+          tagBarRefreshKey={tagBarRefreshKey}
         />
         {
           // viewStyle -> component mapping, kept as a single map so a

@@ -39,7 +39,7 @@ const DEFAULT_WINDOW = { width: 1280, height: 900 };
 // the window (a positive-free-space case, `min-width` irrelevant either
 // way). A later redesign removed the detail panel entirely (folded into
 // each `.video-row` -- App.css's own `.main-area` comment), so MainArea is
-// now just two columns: FolderSidebar (200px default, user-resizable --
+// now just two columns: the left pane (200px default, user-resizable --
 // this test never touches the drag handle, so it stays at its 200px
 // default here) + `.video-list` (flex:1, `min-width`, see below). That's
 // still enough columns to reproduce the trap on its own -- shrinking the
@@ -143,7 +143,7 @@ test("shrinking the window well below the 900px minWidth still leaves .video-lis
   }
 });
 
-test("the always-visible non-grid chrome (header rows + status bar) totals at most 122px", async () => {
+test("the always-visible non-grid chrome (header row + status bar) totals at most 84px", async () => {
   await ensureAppDbExists();
 
   const browser = await createSession();
@@ -152,8 +152,8 @@ test("the always-visible non-grid chrome (header rows + status bar) totals at mo
     await waitForAppReady(browser);
     await browser.pause(300);
 
-    // Always-visible non-grid area budget = 90px (header: row1 52px + row2
-    // 38px) + 32px (status bar) = 122px. Measured directly as the sum of
+    // Always-visible non-grid area budget = 52px (header row) + 32px
+    // (status bar) = 84px; the filter row moved into the left pane. Measured directly as the sum of
     // each always-mounted region's own offsetHeight (not the .app
     // padding/gap around them, which is separate from the "non-grid chrome"
     // budget this is about) so a regression in any one row is individually
@@ -161,33 +161,31 @@ test("the always-visible non-grid chrome (header rows + status bar) totals at mo
     // while another grows.
     const layout = await browser.execute(() => {
       const primary = document.querySelector('[data-testid="header-row-primary"]');
-      const filters = document.querySelector('[data-testid="header-row-filters"]');
       const statusBar = document.querySelector('[data-testid="status-bar"]');
       return {
         primaryHeight: primary ? primary.offsetHeight : null,
-        filtersHeight: filters ? filters.offsetHeight : null,
         statusBarHeight: statusBar ? statusBar.offsetHeight : null,
       };
     });
 
     assert.ok(
-      layout.primaryHeight !== null && layout.filtersHeight !== null && layout.statusBarHeight !== null,
-      `expected header-row-primary/header-row-filters/status-bar to all be mounted, got ${JSON.stringify(layout)}`,
+      layout.primaryHeight !== null && layout.statusBarHeight !== null,
+      `expected header-row-primary/status-bar to both be mounted, got ${JSON.stringify(layout)}`,
     );
 
-    const total = layout.primaryHeight + layout.filtersHeight + layout.statusBarHeight;
+    const total = layout.primaryHeight + layout.statusBarHeight;
     assert.ok(
-      total <= 122,
-      `expected the always-visible non-grid chrome (header-row-primary + header-row-filters + status-bar) ` +
-        `to total at most 122px, got ${total}px: ${JSON.stringify(layout)}`,
+      total <= 84,
+      `expected the always-visible non-grid chrome (header-row-primary + status-bar) ` +
+        `to total at most 84px, got ${total}px: ${JSON.stringify(layout)}`,
     );
     // MUTATION TEST: with a temporary `padding-top: 50px` added to
     // `.header-row-primary` in App.css and the app rebuilt, this assertion
-    // went red (total > 122) -- confirming the test actually catches a
+    // went red (total > 84) -- confirming the test actually catches a
     // chrome-height regression, not just recomputing a value that always
     // happens to pass. Reverted before committing.
   } catch (e) {
-    await saveFailureScreenshot(browser, "layout-122px-budget");
+    await saveFailureScreenshot(browser, "layout-84px-budget");
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});

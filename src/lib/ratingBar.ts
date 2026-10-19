@@ -1,5 +1,5 @@
 // RatingBar.tsx（JSXを含むコンポーネントファイル）から切り出した、JSX非依存の
-// 純粋関数/定数群。src/lib/tagBarLayout.ts・src/lib/sidebarResize.ts と同じ
+// 純粋関数/定数群。src/lib/sidebarResize.ts と同じ
 // パターン（コンポーネント側からimportして使う）。
 
 /**

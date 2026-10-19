@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts src/lib/tagBarLayout.test.ts src/lib/reorderablePinnedTags.test.ts src/lib/ratingBar.test.ts src/lib/duplicateDiff.test.ts src/lib/duplicateDelete.test.ts src/lib/videoProperties.test.ts src/lib/thumbnailProgress.test.ts src/lib/jumpToPercent.test.ts src/lib/latestRequest.test.ts src/lib/nasInterval.test.ts src/lib/multiSelect.test.ts src/lib/contextMenu.test.ts src/lib/bulkTag.test.ts e2e/sandboxGuard.test.mjs",
+    "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts src/lib/sidebarSections.test.ts src/lib/reorderablePinnedTags.test.ts src/lib/ratingBar.test.ts src/lib/duplicateDiff.test.ts src/lib/duplicateDelete.test.ts src/lib/videoProperties.test.ts src/lib/thumbnailProgress.test.ts src/lib/jumpToPercent.test.ts src/lib/latestRequest.test.ts src/lib/nasInterval.test.ts src/lib/multiSelect.test.ts src/lib/contextMenu.test.ts src/lib/bulkTag.test.ts e2e/sandboxGuard.test.mjs",
     "test:e2e": "node --test --test-concurrency=1 e2e/specs/tag-management.e2e.mjs e2e/specs/incremental-search.e2e.mjs e2e/specs/grid-visible-after-scan.e2e.mjs e2e/specs/layout-shrink-regression.e2e.mjs e2e/specs/tag-bar.e2e.mjs"
   },
   "dependencies": {
