@@ -40,8 +40,11 @@ export async function ensureAppDbExists() {
   }
 }
 
-// Runs a scan via FolderDialog: opens the dialog through the sidebar's
-// "フォルダ管理 ▸" link, triggers the dialog's own scan button, waits for the
+// Runs a scan via FolderDialog: opens the dialog by emitting the same
+// "menu:open-folder-dialog" event the native "ファイル > フォルダ管理..." item
+// emits (WebDriver cannot click native menus; the event is reachable through
+// `window.__TAURI__` because `withGlobalTauri` is enabled), triggers the
+// dialog's own scan button, waits for the
 // scan summary, then closes the dialog again. This replaces the previous
 // always-visible "スキャン開始" button, which moved into FolderDialog (see
 // that component's own handleScan comment for why a scan trigger lives
@@ -51,9 +54,7 @@ export async function ensureAppDbExists() {
 // native folder picker `pickWatchFolders()` would otherwise open, so this
 // never exercises "+ フォルダを追加" itself.
 export async function scanViaFolderDialog(browser, { scanTimeout = 30_000 } = {}) {
-  const manageLink = await browser.$('[data-testid="folder-sidebar-manage-link"]');
-  await manageLink.waitForExist({ timeout: 10_000 });
-  await manageLink.click();
+  await browser.execute(() => window.__TAURI__.event.emit("menu:open-folder-dialog"));
 
   const dialog = await browser.$('[data-testid="folder-dialog"]');
   await dialog.waitForExist({ timeout: 10_000 });

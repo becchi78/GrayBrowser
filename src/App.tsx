@@ -42,8 +42,7 @@ function App() {
   const [rating, setRating] = useState<number | null>(null);
   // FolderDialog/WbImportDialog are reached only via the native menu
   // ("ファイル > フォルダ管理.../.wbインポート..." -- see the two
-  // onMenuOpen*Dialog subscriptions below) or, for FolderDialog, the
-  // sidebar's own "フォルダ管理 ▸" link.
+  // onMenuOpen*Dialog subscriptions below).
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
   // TagBarEditDialog is reached only via the native menu ("タグ > タグ
@@ -147,7 +146,6 @@ function App() {
           selected={folderPath}
           onSelect={setFolderPath}
           refreshKey={refreshKey}
-          onOpenFolderDialog={() => setFolderDialogOpen(true)}
         />
         {
           // viewStyle -> component mapping, kept as a single map so a
