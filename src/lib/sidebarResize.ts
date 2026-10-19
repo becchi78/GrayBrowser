@@ -1,4 +1,4 @@
-// FolderSidebar.tsx（JSXを含むコンポーネントファイル）にあった純粋関数
+// LeftPane.tsx（JSXを含むコンポーネントファイル）にあった純粋関数
 // effectiveMaxWidth を単体テスト可能にするため、JSX非依存のこのファイルに
 // 切り出した。src/lib/paths.ts・src/lib/boundedCache.ts と同じパターン
 // （コンポーネント側からimportして使う）。

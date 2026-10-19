@@ -201,9 +201,9 @@ pub async fn start_scan(
 /// falls under that folder (the folder sidebar) -- if the frontend never
 /// passes it, this argument is a no-op (matches every row, same as
 /// omitting it).
-/// `rating`, when present, restricts results to videos whose `rating` equals
-/// that value exactly (the rating bar) -- if the frontend never passes it,
-/// this argument is a no-op (matches every row, same as omitting it).
+/// `ratings`, when non-empty, restricts results to videos whose `rating`
+/// equals any listed value exactly (the rating bar; OR) -- `None` or an empty
+/// list is a no-op (matches every row, same as omitting it).
 #[tauri::command]
 pub fn list_videos(
     db: State<Db>,
@@ -212,7 +212,7 @@ pub fn list_videos(
     sort_direction: Option<SortDirectionParam>,
     tag_ids: Option<Vec<i64>>,
     folder_path: Option<String>,
-    rating: Option<u8>,
+    ratings: Option<Vec<u8>>,
 ) -> Result<Vec<VideoDto>, String> {
     let terms = search
         .as_deref()
@@ -225,6 +225,14 @@ pub fn list_videos(
         .map(Into::into)
         .unwrap_or(gb_core::sort::SortDirection::Desc);
     let tag_ids = tag_ids.unwrap_or_default();
+    let ratings = ratings
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            gb_core::rating::validate_rating(r)
+                .map_err(|e| format!("rating {} is out of range (must be 0-5)", e.value))
+        })
+        .collect::<Result<Vec<u8>, String>>()?;
 
     queries::list_videos_filtered(
         &db.read_pool,
@@ -233,7 +241,7 @@ pub fn list_videos(
         direction,
         &tag_ids,
         folder_path.as_deref(),
-        rating,
+        &ratings,
     )
     .map(|rows| rows.into_iter().map(VideoDto::from_row).collect())
     .map_err(|e| e.to_string())

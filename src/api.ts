@@ -3,6 +3,7 @@
 // argument-name conversion are only dealt with in one place.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { SidebarSectionsCollapsed } from "./lib/sidebarSections";
 import type {
   DuplicateGroup,
   FfmpegStatusDto,
@@ -28,8 +29,8 @@ export interface ListVideosOptions {
   tagIds?: number[];
   /** Restricts to videos under this watch folder; `null`/omitted = every folder ("すべて"). */
   folderPath?: string | null;
-  /** Restricts to videos whose rating equals this value exactly; `null`/omitted = every rating ("すべて表示"). */
-  rating?: number | null;
+  /** Restricts to videos whose rating equals any of these values exactly (OR); empty/omitted = every rating. */
+  ratings?: number[];
 }
 
 // Keys are always present (explicit null rather than omitted) so Tauri's
@@ -53,7 +54,7 @@ export const listVideos = (opts?: ListVideosOptions) =>
     sortDirection: opts?.sortDirection ?? null,
     tagIds: opts?.tagIds ?? null,
     folderPath: opts?.folderPath ?? null,
-    rating: opts?.rating ?? null,
+    ratings: opts?.ratings ?? null,
   });
 export const assignTag = (videoId: string, tagName: string) =>
   invoke<TagDto>("assign_tag", { videoId, tagName });
@@ -70,6 +71,10 @@ export const setTagBarPinnedTagIds = (tagIds: number[]) =>
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>
   invoke<void>("set_info_pane_collapsed", { collapsed });
+export const getSidebarSectionsCollapsed = () =>
+  invoke<SidebarSectionsCollapsed>("get_sidebar_sections_collapsed");
+export const saveSidebarSectionsCollapsed = (state: SidebarSectionsCollapsed) =>
+  invoke<void>("set_sidebar_sections_collapsed", { state });
 export const getNasPollIntervalMinutes = () => invoke<number>("get_nas_poll_interval_minutes");
 export const setNasPollIntervalMinutes = (minutes: number) =>
   invoke<number>("set_nas_poll_interval_minutes", { minutes });

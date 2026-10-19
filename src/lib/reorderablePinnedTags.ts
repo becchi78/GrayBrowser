@@ -2,7 +2,7 @@
 // (↑/↓ reorder, ✕ remove, + 追加). Generic over the element type so the
 // folder dialog can reuse them for string paths. Split out into this JSX非依存 file so
 // they're unit-testable without mounting the dialog, same pattern as
-// src/lib/sidebarResize.ts/tagBarLayout.ts. Every function returns a new
+// src/lib/sidebarResize.ts. Every function returns a new
 // array (never mutates `ids`), matching how React state setters are used
 // at each call site (`setDraftPinnedIds((ids) => moveUp(ids, index))`).
 

@@ -1,5 +1,5 @@
-//! Integration tests for `queries::list_videos_filtered`'s `rating`
-//! argument (the rating bar's filter, an exact match), against a real
+//! Integration tests for `queries::list_videos_filtered`'s `ratings`
+//! argument (the rating bar's filter, an exact match against any listed value), against a real
 //! tempdir-backed SQLite file. Same structure as `db_folder_filter.rs`.
 
 use gb_core::sort::{SortDirection, SortField};
@@ -25,7 +25,7 @@ fn insert_video(conn: &Connection, id: &str, file_path: &str, rating: i64) {
     .unwrap();
 }
 
-fn list_with_rating(pool: &r2d2::Pool<SqliteConnectionManager>, rating: Option<u8>) -> Vec<String> {
+fn list_with_rating(pool: &r2d2::Pool<SqliteConnectionManager>, ratings: &[u8]) -> Vec<String> {
     queries::list_videos_filtered(
         pool,
         &[],
@@ -33,7 +33,7 @@ fn list_with_rating(pool: &r2d2::Pool<SqliteConnectionManager>, rating: Option<u
         SortDirection::Desc,
         &[],
         None,
-        rating,
+        ratings,
     )
     .unwrap()
     .into_iter()
@@ -42,7 +42,7 @@ fn list_with_rating(pool: &r2d2::Pool<SqliteConnectionManager>, rating: Option<u
 }
 
 #[test]
-fn rating_none_returns_every_row_regardless_of_rating() {
+fn empty_ratings_returns_every_row_regardless_of_rating() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
@@ -50,7 +50,7 @@ fn rating_none_returns_every_row_regardless_of_rating() {
         insert_video(&conn, "rated_5", r"C:\Videos\b.mp4", 5);
     }
 
-    let mut ids = list_with_rating(&db.read_pool, None);
+    let mut ids = list_with_rating(&db.read_pool, &[]);
     ids.sort();
 
     assert_eq!(ids, vec!["rated_5", "unrated"]);
@@ -69,12 +69,12 @@ fn rating_filters_by_exact_match() {
     }
 
     // Middle value: neither lower nor higher ratings may leak in.
-    assert_eq!(list_with_rating(&db.read_pool, Some(2)), vec!["r2"]);
-    assert_eq!(list_with_rating(&db.read_pool, Some(3)), vec!["r3"]);
+    assert_eq!(list_with_rating(&db.read_pool, &[2]), vec!["r2"]);
+    assert_eq!(list_with_rating(&db.read_pool, &[3]), vec!["r3"]);
 
     // Both ends of the range.
-    assert_eq!(list_with_rating(&db.read_pool, Some(1)), vec!["r1"]);
-    assert_eq!(list_with_rating(&db.read_pool, Some(5)), vec!["r5"]);
+    assert_eq!(list_with_rating(&db.read_pool, &[1]), vec!["r1"]);
+    assert_eq!(list_with_rating(&db.read_pool, &[5]), vec!["r5"]);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn rating_returns_every_video_with_the_same_rating() {
         insert_video(&conn, "c", r"C:\Videos\c.mp4", 3);
     }
 
-    let mut ids = list_with_rating(&db.read_pool, Some(2));
+    let mut ids = list_with_rating(&db.read_pool, &[2]);
     ids.sort();
     assert_eq!(ids, vec!["a", "b"]);
 }
@@ -101,7 +101,7 @@ fn rating_with_no_matching_video_returns_empty() {
         insert_video(&conn, "r5", r"C:\Videos\b.mp4", 5);
     }
 
-    assert!(list_with_rating(&db.read_pool, Some(3)).is_empty());
+    assert!(list_with_rating(&db.read_pool, &[3]).is_empty());
 }
 
 #[test]
@@ -117,13 +117,13 @@ fn rating_always_excludes_unrated_videos() {
     // The unrated (rating=0) video must never appear for any selectable
     // rating (1..=5).
     for n in 1..=5u8 {
-        let ids = list_with_rating(&db.read_pool, Some(n));
+        let ids = list_with_rating(&db.read_pool, &[n]);
         assert!(
             !ids.contains(&"unrated".to_string()),
             "an unrated (rating=0) video must never match a rating filter (n={n})"
         );
     }
-    assert_eq!(list_with_rating(&db.read_pool, Some(1)), vec!["rated_1"]);
+    assert_eq!(list_with_rating(&db.read_pool, &[1]), vec!["rated_1"]);
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn rating_combines_with_search_tag_and_folder_filters_as_an_and_condition() {
         SortDirection::Desc,
         &[tag.id],
         Some(r"C:\Videos"),
-        Some(4),
+        &[4],
     )
     .unwrap()
     .into_iter()
@@ -173,4 +173,94 @@ fn rating_combines_with_search_tag_and_folder_filters_as_an_and_condition() {
     .collect();
 
     assert_eq!(ids, vec!["matches_all"]);
+}
+
+#[test]
+fn multiple_ratings_match_any_of_them() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "unrated", r"C:\Videos\u.mp4", 0);
+        insert_video(&conn, "r1", r"C:\Videos\a.mp4", 1);
+        insert_video(&conn, "r2", r"C:\Videos\b.mp4", 2);
+        insert_video(&conn, "r3", r"C:\Videos\c.mp4", 3);
+    }
+
+    let mut ids = list_with_rating(&db.read_pool, &[1, 2]);
+    ids.sort();
+    assert_eq!(ids, vec!["r1", "r2"]);
+
+    // Order of the requested values must not matter.
+    let mut reversed = list_with_rating(&db.read_pool, &[2, 1]);
+    reversed.sort();
+    assert_eq!(reversed, vec!["r1", "r2"]);
+}
+
+#[test]
+fn duplicate_ratings_behave_like_a_single_value() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "r1", r"C:\Videos\a.mp4", 1);
+        insert_video(&conn, "r2", r"C:\Videos\b.mp4", 2);
+    }
+
+    assert_eq!(list_with_rating(&db.read_pool, &[2, 2, 2]), vec!["r2"]);
+}
+
+#[test]
+fn all_five_ratings_exclude_only_unrated_videos() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "unrated", r"C:\Videos\u.mp4", 0);
+        for n in 1..=5 {
+            insert_video(&conn, &format!("r{n}"), &format!(r"C:\Videos\{n}.mp4"), n);
+        }
+    }
+
+    let mut ids = list_with_rating(&db.read_pool, &[1, 2, 3, 4, 5]);
+    ids.sort();
+    assert_eq!(ids, vec!["r1", "r2", "r3", "r4", "r5"]);
+}
+
+#[test]
+fn multiple_ratings_still_and_with_search_tag_and_folder_filters() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "match_r4", r"C:\Videos\action_a.mp4", 4);
+        insert_video(&conn, "match_r5", r"C:\Videos\action_b.mp4", 5);
+        insert_video(&conn, "other_rating", r"C:\Videos\action_c.mp4", 2);
+        insert_video(&conn, "missing_tag", r"C:\Videos\action_d.mp4", 5);
+        insert_video(&conn, "wrong_folder", r"D:\Other\action_e.mp4", 4);
+        insert_video(&conn, "wrong_term", r"C:\Videos\comedy_f.mp4", 4);
+    }
+
+    let tag = {
+        let mut conn = db.writer.lock().unwrap();
+        let tag = queries::assign_tag_to_video(&mut conn, "match_r4", "favorite").unwrap();
+        for id in ["match_r5", "other_rating", "wrong_folder", "wrong_term"] {
+            queries::assign_tag_to_video(&mut conn, id, "favorite").unwrap();
+        }
+        tag
+    };
+
+    let terms = gb_core::search::parse_search_terms("action");
+    let mut ids: Vec<String> = queries::list_videos_filtered(
+        &db.read_pool,
+        &terms,
+        SortField::CreatedAt,
+        SortDirection::Desc,
+        &[tag.id],
+        Some(r"C:\Videos"),
+        &[4, 5],
+    )
+    .unwrap()
+    .into_iter()
+    .map(|v| v.id)
+    .collect();
+    ids.sort();
+
+    assert_eq!(ids, vec!["match_r4", "match_r5"]);
 }

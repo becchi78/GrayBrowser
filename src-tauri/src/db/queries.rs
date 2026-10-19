@@ -224,13 +224,14 @@ pub fn get_video_properties(
 /// whose `file_path` falls *under* that folder (honoring folder boundaries,
 /// not a bare string prefix -- see `gb_core::paths::folder_like_prefix`'s
 /// doc comment for why a plain prefix match is wrong here) are returned.
-/// `rating` (the rating bar's filter) is a fifth, independently-ANDed
-/// filter: when `Some(n)`, only rows with `rating = n` exactly are returned
-/// (not "n or higher"). The frontend only ever sends `n >= 1` (there is no
-/// "show only unrated" mode), so unrated rows (`rating = 0`) are naturally
-/// excluded whenever this filter is active, with no special-casing needed
-/// here. An empty `search_terms`+`tag_ids`, `folder_path: None` and
-/// `rating: None`
+/// `ratings` (the rating bar's filter) is a fifth, independently-ANDed
+/// filter: when non-empty, a row matches if its `rating` equals any listed
+/// value exactly (OR within this filter; not "n or higher"). Duplicates are
+/// dropped so the placeholder list stays minimal. The frontend only ever
+/// sends values `>= 1` (there is no "show only unrated" mode), so unrated
+/// rows (`rating = 0`) are naturally excluded whenever this filter is
+/// active, with no special-casing needed here. An empty `search_terms`+
+/// `tag_ids`+`ratings` and `folder_path: None`
 /// (the common "browse everything" case) degrades to the original unfiltered
 /// `list_videos` query this function replaces.
 pub fn list_videos_filtered(
@@ -240,7 +241,7 @@ pub fn list_videos_filtered(
     sort_direction: gb_core::sort::SortDirection,
     tag_ids: &[i64],
     folder_path: Option<&str>,
-    rating: Option<u8>,
+    ratings: &[u8],
 ) -> anyhow::Result<Vec<VideoRow>> {
     let conn = pool.get()?;
 
@@ -275,9 +276,17 @@ pub fn list_videos_filtered(
         bound_params.push(Box::new(pattern));
     }
 
-    if let Some(rating) = rating {
-        clauses.push("rating = ?".to_string());
-        bound_params.push(Box::new(rating as i64));
+    let mut unique_ratings: Vec<u8> = ratings.to_vec();
+    unique_ratings.sort_unstable();
+    unique_ratings.dedup();
+    if !unique_ratings.is_empty() {
+        // Placeholders are generated per value; the values themselves are
+        // only ever bound, never interpolated into the SQL text.
+        let placeholders = vec!["?"; unique_ratings.len()].join(", ");
+        clauses.push(format!("rating IN ({placeholders})"));
+        for rating in unique_ratings {
+            bound_params.push(Box::new(rating as i64));
+        }
     }
 
     let where_sql = if clauses.is_empty() {
@@ -808,6 +817,40 @@ pub fn set_info_pane_collapsed(conn: &Connection, collapsed: bool) -> anyhow::Re
         conn,
         INFO_PANE_COLLAPSED_KEY,
         if collapsed { "1" } else { "0" },
+    )?;
+    Ok(())
+}
+
+const SIDEBAR_SECTIONS_COLLAPSED_KEY: &str = "sidebar_sections_collapsed";
+
+/// Collapsed flags of the left-pane sections. `true` means collapsed; every
+/// section defaults to expanded.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SidebarSectionsCollapsed {
+    pub folders: bool,
+    pub rating: bool,
+    pub tags: bool,
+}
+
+/// Unset and unparseable values both read as all-expanded: a corrupt or
+/// hand-edited value must never leave a section hidden with no obvious cause.
+pub fn get_sidebar_sections_collapsed(
+    conn: &Connection,
+) -> anyhow::Result<SidebarSectionsCollapsed> {
+    Ok(get_setting(conn, SIDEBAR_SECTIONS_COLLAPSED_KEY)?
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default())
+}
+
+pub fn set_sidebar_sections_collapsed(
+    conn: &Connection,
+    state: SidebarSectionsCollapsed,
+) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        SIDEBAR_SECTIONS_COLLAPSED_KEY,
+        &serde_json::to_string(&state)?,
     )?;
     Ok(())
 }

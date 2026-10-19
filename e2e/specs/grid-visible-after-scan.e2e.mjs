@@ -38,7 +38,7 @@
 // mechanics under test (flex-basis-0 shrink, the min-height floor) are
 // unchanged -- only the selectors/flow used to reach a populated grid were
 // updated. See layout-shrink-regression.e2e.mjs for two additional
-// regression tests (horizontal shrink, 122px non-grid budget) this file's
+// regression tests (horizontal shrink, 84px non-grid budget) this file's
 // sibling adds.
 //
 // UI/UX re-design note: a later redesign replaced the multi-column
