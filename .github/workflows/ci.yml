@@ -268,7 +268,7 @@ jobs:
           # 22+ required: e2e/fixtures.mjs uses node:sqlite (stable from
           # 22.5), which the other jobs' Node 20 doesn't have at all
           # (ERR_UNKNOWN_BUILTIN_MODULE, found via a real CI run on PR #4).
-          # Scoped to this job only -- checks/build/release never touch
+          # Scoped to this job only -- checks/build never touch
           # node:sqlite.
           node-version: "22"
           cache: "npm"
@@ -362,33 +362,3 @@ jobs:
           name: e2e-failure-screenshots
           path: e2e/screenshots/**
           retention-days: 7
-
-  # ---------------------------------------------------------------
-  # 4. リリース（タグpush時のみ。tauri-actionでビルド＆GitHub Release作成）
-  # ---------------------------------------------------------------
-  release:
-    runs-on: windows-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "GrayBrowser ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false

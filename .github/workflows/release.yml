@@ -1,0 +1,105 @@
+name: Release
+
+# v* タグのpushでのみ起動し、インストーラーをビルドしてDraftのReleaseを作る。
+# 公開（Draft解除）は取り消しにくいため、人が内容を確認してから行う。
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+# 既定は読み取りのみ。書き込み権限は Release を作るジョブにだけ付与する。
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ビルド（約10分）より前に、タグと各ファイルのバージョン・CHANGELOGの
+      # 不一致で失敗させる。失敗したらこれ以降のステップは実行されない。
+      # タグ名はシェルに直接埋め込まず、環境変数経由で渡す。
+      - name: Verify tag matches versions and CHANGELOG
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release/check-version.mjs "$TAG"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # MSIは配布しないためNSISだけを作る。
+      - name: Build installer (NSIS)
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Collect installer and generate release notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          installer="target/release/bundle/nsis/GrayBrowser_${version}_x64-setup.exe"
+          if [ ! -f "$installer" ]; then
+            echo "error: installer not found: $installer" >&2
+            ls -la target/release/bundle/nsis >&2 || true
+            exit 1
+          fi
+          mkdir release-out
+          cp "$installer" release-out/
+          node scripts/release/release-notes.mjs "$TAG" "release-out/$(basename "$installer")" > release-out/notes.md
+
+      - name: Upload installer and notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  draft-release:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer and notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-out
+
+      # 既存のRelease（Draft含む）があれば上書きせず失敗させる。
+      # `gh release view <tag>` はDraftを見つけられないため、一覧で調べる。
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          if gh release list --limit 1000 --json tagName --jq '.[].tagName' | grep -Fxq -- "$TAG"; then
+            echo "error: a release for $TAG already exists" >&2
+            exit 1
+          fi
+          gh release create "$TAG" release-out/*-setup.exe \
+            --draft --verify-tag \
+            --title "$TAG" \
+            --notes-file release-out/notes.md
