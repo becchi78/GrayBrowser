@@ -21,9 +21,9 @@ interface Props {
   /** `null` = "すべて" (no folder filter). */
   folderPath: string | null;
   onFolderPathChange: (folderPath: string | null) => void;
-  /** `null` = "ALL" (no rating filter). */
-  rating: number | null;
-  onRatingChange: (rating: number | null) => void;
+  /** Empty = "ALL" (no rating filter). */
+  ratings: number[];
+  onRatingsChange: (ratings: number[]) => void;
   tagIds: number[];
   onTagIdsChange: (tagIds: number[]) => void;
   /** Bumped after a scan/folder change so the folder list reloads. */
@@ -37,8 +37,8 @@ interface Props {
 export function LeftPane({
   folderPath,
   onFolderPathChange,
-  rating,
-  onRatingChange,
+  ratings,
+  onRatingsChange,
   tagIds,
   onTagIdsChange,
   refreshKey,
@@ -126,7 +126,7 @@ export function LeftPane({
           collapsed={collapsed.rating}
           onToggle={() => handleToggle("rating")}
         >
-          <RatingBar value={rating} onChange={onRatingChange} />
+          <RatingBar value={ratings} onChange={onRatingsChange} />
         </SidebarSection>
         <SidebarSection
           id="tags"

@@ -35,9 +35,9 @@ function App() {
   const [tagIds, setTagIds] = useState<number[]>([]);
   // `null` = "すべて" (no folder filter).
   const [folderPath, setFolderPath] = useState<string | null>(null);
-  // `null` = "ALL" (no rating filter). Independent filter axis from
+  // Empty = "ALL" (no rating filter). Independent filter axis from
   // tagIds -- see RatingBar's own comment.
-  const [rating, setRating] = useState<number | null>(null);
+  const [ratings, setRatings] = useState<number[]>([]);
   // FolderDialog/WbImportDialog are reached only via the native menu
   // ("ファイル > フォルダ管理.../.wbインポート..." -- see the two
   // onMenuOpen*Dialog subscriptions below).
@@ -139,8 +139,8 @@ function App() {
         <LeftPane
           folderPath={folderPath}
           onFolderPathChange={setFolderPath}
-          rating={rating}
-          onRatingChange={setRating}
+          ratings={ratings}
+          onRatingsChange={setRatings}
           tagIds={tagIds}
           onTagIdsChange={setTagIds}
           refreshKey={refreshKey}
@@ -158,7 +158,7 @@ function App() {
                 sortDirection={sortDirection}
                 tagIds={tagIds}
                 folderPath={folderPath}
-                rating={rating}
+                ratings={ratings}
                 infoCollapsed={infoPaneCollapsed}
                 jumpRequest={jumpRequest}
                 onCountChange={setVideoCount}

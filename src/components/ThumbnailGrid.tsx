@@ -48,8 +48,8 @@ interface Props {
   tagIds: number[];
   /** `null` = "すべて" (no folder filter); see FolderSidebar. */
   folderPath: string | null;
-  /** `null` = "すべて表示" (no rating filter); see RatingBar. */
-  rating: number | null;
+  /** Empty = "すべて表示" (no rating filter); see RatingBar. */
+  ratings: number[];
   /** Hides every row's right-hand info column (CSS only; rows still mount it). */
   infoCollapsed: boolean;
   /** `seq` lets pressing the same percent twice in a row still count as a new request. */
@@ -74,7 +74,7 @@ export function ThumbnailGrid({
   sortDirection,
   tagIds,
   folderPath,
-  rating,
+  ratings,
   infoCollapsed,
   jumpRequest,
   onCountChange,
@@ -156,7 +156,7 @@ export function ThumbnailGrid({
           sortDirection,
           tagIds,
           folderPath,
-          rating,
+          ratings,
         });
         if (cancelled || !guard.isLatest(requestId)) return;
         setVideos(rows);
@@ -209,16 +209,16 @@ export function ThumbnailGrid({
       if (trailingTimer !== null) clearTimeout(trailingTimer);
     };
     // catalog:changed re-fetches always use the latest search/sort/tagIds/
-    // folderPath/rating via closure, so those need to be dependencies too
+    // folderPath/ratings via closure, so those need to be dependencies too
     // (not just refreshKey).
-  }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath, rating]);
+  }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath, ratings]);
 
   // A selection must never silently apply to rows the user can no longer
   // see, so any change of what the list shows clears it. refreshKey is left
   // out on purpose: it re-fetches the same view, which prune handles.
   useEffect(() => {
     setSelection(clearSelection());
-  }, [search, sortField, sortDirection, tagIds, folderPath, rating]);
+  }, [search, sortField, sortDirection, tagIds, folderPath, ratings]);
 
   useEffect(() => {
     onSelectionCountChange(selection.ids.size);

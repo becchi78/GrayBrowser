@@ -50,7 +50,7 @@ fn list(
     tag_ids: &[i64],
 ) -> Vec<String> {
     let terms = gb_core::search::parse_search_terms(search);
-    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, None, None)
+    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, None, &[])
         .unwrap()
         .into_iter()
         .map(|v| v.id)
@@ -489,10 +489,10 @@ fn list_filtered(
     direction: SortDirection,
     tag_ids: &[i64],
     folder: Option<&str>,
-    rating: Option<u8>,
+    ratings: &[u8],
 ) -> Vec<String> {
     let terms = gb_core::search::parse_search_terms(search);
-    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, folder, rating)
+    queries::list_videos_filtered(pool, &terms, field, direction, tag_ids, folder, ratings)
         .unwrap()
         .into_iter()
         .map(|v| v.id)
@@ -606,7 +606,7 @@ fn new_sort_fields_combine_with_search_tag_folder_and_rating_filters() {
         SortDirection::Desc,
         &[fav],
         Some("C:\\videos\\a"),
-        Some(4),
+        &[4],
     );
     assert_eq!(by_size, vec!["keep_big", "keep_sub", "keep_small"]);
     let by_folder = list_filtered(
@@ -616,7 +616,7 @@ fn new_sort_fields_combine_with_search_tag_folder_and_rating_filters() {
         SortDirection::Desc,
         &[fav],
         Some("C:\\videos\\a"),
-        Some(4),
+        &[4],
     );
     assert_eq!(by_folder, vec!["keep_sub", "keep_small", "keep_big"]);
 }

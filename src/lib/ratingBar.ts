@@ -3,25 +3,25 @@
 // パターン（コンポーネント側からimportして使う）。
 
 /**
- * `<select>`の選択肢一覧。空文字列は「フィルタなし」を表し、ラベルは
- * `StarRating`の入力用★列と同じ「★をN個並べる」表記に揃える(「N以上」の
- * 文言を省き、★の個数自体が絞り込む評価(その評価と一致するもののみ)を表す)。
+ * 絞り込みに使える評価の選択肢。ラベルは`StarRating`の入力用★列と同じ
+ * 「★をN個並べる」表記に揃える。未評価(0)での抽出は提供しない。
  */
-export const RATING_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "ALL" },
-  { value: "1", label: "★" },
-  { value: "2", label: "★★" },
-  { value: "3", label: "★★★" },
-  { value: "4", label: "★★★★" },
-  { value: "5", label: "★★★★★" },
+export const RATING_FILTER_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "★" },
+  { value: 2, label: "★★" },
+  { value: 3, label: "★★★" },
+  { value: 4, label: "★★★★" },
+  { value: 5, label: "★★★★★" },
 ];
 
 /**
- * `<select>`のonChangeイベントで受け取る生の文字列値を、`rating`
- * (number | null)に変換する。空文字列("すべて表示")はnull、それ以外は
- * Numberに変換する。
+ * 有効な評価の集合に対して`value`の有効/無効を切り替えた、新しい配列を返す
+ * (入力は変更しない)。結果は常に昇順にそろえる: クリック順で配列の中身が
+ * 変わると、同じ集合なのに再取得が走ってしまうため。
  */
-export function parseRatingFilterValue(raw: string): number | null {
-  if (raw === "") return null;
-  return Number(raw);
+export function toggleRating(ratings: readonly number[], value: number): number[] {
+  const next = ratings.includes(value)
+    ? ratings.filter((r) => r !== value)
+    : [...ratings, value];
+  return next.sort((a, b) => a - b);
 }
