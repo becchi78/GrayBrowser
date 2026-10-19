@@ -1032,6 +1032,30 @@ pub fn delete_video_cascade(conn: &mut Connection, video_id: &str) -> rusqlite::
     tx.commit()
 }
 
+/// Batch form of `delete_video_cascade`: deletes every listed video row plus
+/// the `video_tags`/`path_collisions` rows referencing any of them, all in one
+/// transaction so a failure part-way leaves no video half-removed. Ids with no
+/// matching row are ignored; returns how many `videos` rows were deleted.
+/// Does not touch thumbnail files.
+pub fn delete_videos_cascade(conn: &mut Connection, ids: &[String]) -> rusqlite::Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    let mut deleted = 0;
+    for id in ids {
+        tx.execute("DELETE FROM video_tags WHERE video_id = ?1", params![id])?;
+        // Both sides of a collision pair, same as `delete_video_cascade`.
+        tx.execute(
+            "DELETE FROM path_collisions WHERE video_id = ?1 OR colliding_video_id = ?1",
+            params![id],
+        )?;
+        deleted += tx.execute("DELETE FROM videos WHERE id = ?1", params![id])?;
+    }
+    tx.commit()?;
+    Ok(deleted)
+}
+
 /// Counts `videos` rows currently under `folder_path` (same folder-boundary-
 /// safe `LIKE` matching as `list_videos_filtered`'s `folder_path` argument,
 /// via `gb_core::paths::folder_like_prefix`), for the folder-management

@@ -206,3 +206,112 @@ fn delete_video_cascade_removes_path_collisions_where_deleted_video_is_the_video
         "the collision referencing the deleted video (as video_id) must be gone"
     );
 }
+
+#[test]
+fn delete_videos_cascade_removes_listed_videos_and_leaves_others_intact() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
+        insert_video(&conn, "b", "D:\\v\\b.mp4", "offline", "qh2");
+        insert_video(&conn, "c", "D:\\v\\c.mp4", "online", "qh3");
+        insert_video(&conn, "d", "D:\\v\\d.mp4", "online", "qh4");
+        queries::record_path_collision(&conn, "b", "a", "D:\\v\\a.mp4").unwrap();
+        queries::record_path_collision(&conn, "c", "d", "D:\\v\\d.mp4").unwrap();
+    }
+    {
+        let mut conn = db.writer.lock().unwrap();
+        for id in ["a", "c", "d"] {
+            queries::assign_tag_to_video(&mut conn, id, "tag").unwrap();
+        }
+    }
+
+    let deleted = {
+        let mut conn = db.writer.lock().unwrap();
+        let ids = vec!["a".to_string(), "missing".to_string(), "c".to_string()];
+        queries::delete_videos_cascade(&mut conn, &ids).unwrap()
+    };
+    assert_eq!(deleted, 2);
+
+    let conn = db.writer.lock().unwrap();
+    let remaining: Vec<String> = conn
+        .prepare("SELECT id FROM videos ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(remaining, vec!["b", "d"]);
+    let tagged: Vec<String> = conn
+        .prepare("SELECT video_id FROM video_tags ORDER BY video_id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(tagged, vec!["d"], "only the surviving video keeps its tag");
+    // Both collisions touched a deleted video (a, or c), so none may remain.
+    let collisions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM path_collisions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(collisions, 0);
+    assert!(orphaned_path_collisions(&conn).is_empty());
+}
+
+#[test]
+fn delete_videos_cascade_keeps_collisions_between_surviving_videos() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
+        insert_video(&conn, "b", "D:\\v\\b.mp4", "offline", "qh2");
+        insert_video(&conn, "c", "D:\\v\\c.mp4", "online", "qh3");
+        queries::record_path_collision(&conn, "b", "a", "D:\\v\\a.mp4").unwrap();
+    }
+    {
+        let mut conn = db.writer.lock().unwrap();
+        assert_eq!(
+            queries::delete_videos_cascade(&mut conn, &["c".to_string()]).unwrap(),
+            1
+        );
+        assert_eq!(queries::delete_videos_cascade(&mut conn, &[]).unwrap(), 0);
+    }
+    assert_eq!(
+        queries::list_path_collisions(&db.read_pool).unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn delete_videos_cascade_rolls_back_everything_when_a_later_delete_fails() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
+        insert_video(&conn, "b", "D:\\v\\b.mp4", "online", "qh2");
+        conn.execute_batch(
+            "CREATE TRIGGER block_b BEFORE DELETE ON videos WHEN OLD.id = 'b'
+             BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        )
+        .unwrap();
+    }
+    {
+        let mut conn = db.writer.lock().unwrap();
+        queries::assign_tag_to_video(&mut conn, "a", "tag").unwrap();
+        let ids = vec!["a".to_string(), "b".to_string()];
+        assert!(queries::delete_videos_cascade(&mut conn, &ids).is_err());
+    }
+
+    let conn = db.writer.lock().unwrap();
+    let videos: i64 = conn
+        .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+        .unwrap();
+    let tags: i64 = conn
+        .query_row("SELECT COUNT(*) FROM video_tags", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        (videos, tags),
+        (2, 1),
+        "the first video's delete must roll back"
+    );
+}

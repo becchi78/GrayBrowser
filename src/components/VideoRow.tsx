@@ -18,6 +18,7 @@ interface Props {
   /** True only while 2+ rows are selected; styled apart from a lone selection. */
   isMultiSelected: boolean;
   onSelect: (video: VideoDto, mods: ClickModifiers) => void;
+  onContextMenu: (video: VideoDto, e: MouseEvent) => void;
 }
 
 // Every video shows exactly 6 evenly-spaced thumbnails (replaces the old
@@ -53,6 +54,7 @@ export function VideoRow({
   isSelected,
   isMultiSelected,
   onSelect,
+  onContextMenu,
 }: Props) {
   const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(video.id) ?? null);
   const [rating, setRating] = useState(video.rating);
@@ -145,6 +147,7 @@ export function VideoRow({
         (isOffline ? " video-row--offline" : "")
       }
       data-testid="video-row"
+      onContextMenu={(e) => onContextMenu(video, e)}
     >
       {/* Single click selects (highlight only,
           no panel to open anymore); double click plays via the external

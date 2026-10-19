@@ -1,6 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { listVideos } from "../api";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
+import { listVideos, unregisterVideos } from "../api";
 import { onCatalogChanged } from "../events";
 import { jumpTargetIndex } from "../lib/jumpToPercent";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
@@ -9,10 +16,13 @@ import {
   clickSelect,
   pruneSelection,
   selectAll,
+  selectionForContextMenu,
   type ClickModifiers,
   type SelectionState,
 } from "../lib/multiSelect";
 import type { SortDirection, SortField, VideoDto } from "../types";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { ContextMenu } from "./ContextMenu";
 import { VideoRow } from "./VideoRow";
 
 // A row hosts 6 thumbnails + metadata/rating/tag-editor instead of a
@@ -53,9 +63,7 @@ interface Props {
 // "select all text"), so list-level shortcuts ignore them.
 function isTextEntryTarget(target: EventTarget): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
-  );
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
 export function ThumbnailGrid({
@@ -81,6 +89,17 @@ export function ThumbnailGrid({
   // applies itself. Held by id so rows scrolled out of the virtualizer's
   // window stay selected.
   const [selection, setSelection] = useState<SelectionState>(clearSelection);
+  // 右クリックで開くメニューの位置と対象。対象はメニューを開いた時点の選択で
+  // 固定する(メニューを開いている間に選択が変わっても、見せた件数と実行する
+  // 対象がずれないようにする)。
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    ids: string[];
+  } | null>(null);
+  const [pendingUnregister, setPendingUnregister] = useState<string[] | null>(null);
+  const [unregisterBusy, setUnregisterBusy] = useState(false);
+  const [unregisterError, setUnregisterError] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const thumbnailCache = useRef(new Map<string, string[]>());
 
@@ -220,12 +239,45 @@ export function ThumbnailGrid({
     if (jumpRequest === null) return;
     const index = jumpTargetIndex(videoCountRef.current, jumpRequest.percent);
     if (index === null) return;
-    scrollToIndexRef.current(index, { align: jumpRequest.percent === 100 ? "end" : "start" });
+    scrollToIndexRef.current(index, {
+      align: jumpRequest.percent === 100 ? "end" : "start",
+    });
   }, [jumpRequest]);
 
   function handleSelect(video: VideoDto, mods: ClickModifiers) {
     const orderedIds = videos.map((v) => v.id);
     setSelection((prev) => clickSelect(prev, orderedIds, video.id, mods));
+  }
+
+  function handleContextMenu(video: VideoDto, e: MouseEvent) {
+    // 行内の入力欄(タグ入力など)では、標準の切り取り/貼り付けメニューを残す。
+    if (isTextEntryTarget(e.target)) return;
+    e.preventDefault();
+    const next = selectionForContextMenu(selection, video.id);
+    setSelection(next);
+    setMenu({ x: e.clientX, y: e.clientY, ids: [...next.ids] });
+  }
+
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  function cancelUnregister() {
+    setPendingUnregister(null);
+    setUnregisterError(null);
+  }
+
+  async function runUnregister() {
+    if (pendingUnregister === null || unregisterBusy) return;
+    setUnregisterBusy(true);
+    setUnregisterError(null);
+    try {
+      await unregisterVideos(pendingUnregister);
+      setPendingUnregister(null);
+    } catch (e) {
+      console.error(e);
+      setUnregisterError(String(e));
+    } finally {
+      setUnregisterBusy(false);
+    }
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -254,52 +306,107 @@ export function ThumbnailGrid({
   const cache = thumbnailCache.current;
   const virtualRows = rowVirtualizer.getVirtualItems();
 
+  // 削除で一覧が空になっても、確認ダイアログの後始末が途切れないよう、
+  // メニューと確認ダイアログは一覧の空表示と共通で描画する。
+  const overlays = (
+    <>
+      {menu && (
+        <ContextMenu
+          position={{ x: menu.x, y: menu.y }}
+          items={[
+            {
+              label: menu.ids.length >= 2 ? `登録から削除(${menu.ids.length} 件)` : "登録から削除",
+              danger: true,
+              onSelect: () => {
+                setUnregisterError(null);
+                setPendingUnregister(menu.ids);
+              },
+            },
+          ]}
+          onClose={closeMenu}
+        />
+      )}
+      <ConfirmDialog
+        open={pendingUnregister !== null}
+        title="登録から削除"
+        confirmLabel="登録から削除する"
+        danger
+        busy={unregisterBusy}
+        onConfirm={runUnregister}
+        onCancel={cancelUnregister}
+      >
+        <p>{pendingUnregister?.length ?? 0} 件の動画を登録から削除します。</p>
+        <p>
+          元の動画ファイルは削除されません。登録フォルダが監視・再スキャンの対象のままだと、次の更新チェックで再登録される場合があります。
+        </p>
+        {unregisterError && (
+          <p className="confirm-dialog-error" role="alert" data-testid="confirm-dialog-error">
+            {unregisterError}
+          </p>
+        )}
+      </ConfirmDialog>
+    </>
+  );
+
   if (videos.length === 0) {
     const filtered = search.trim() !== "" || tagIds.length > 0;
     return (
-      <div className="video-list-empty">
-        {filtered ? "該当する動画が見つかりません。" : "動画がまだ登録されていません。"}
-      </div>
+      <>
+        <div className="video-list-empty">
+          {filtered ? "該当する動画が見つかりません。" : "動画がまだ登録されていません。"}
+        </div>
+        {overlays}
+      </>
     );
   }
 
   return (
-    <div
-      ref={parentRef}
-      className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
-      data-testid="video-list"
-      tabIndex={-1}
-      onKeyDown={handleKeyDown}
-      onMouseDown={handleMouseDown}
-    >
-      <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
-        {virtualRows.map((virtualRow) => {
-          const video = videos[virtualRow.index];
-          return (
-            <div
-              key={virtualRow.key}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: virtualRow.size,
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              <VideoRow
-                key={video.id}
-                video={video}
-                cache={cache}
-                catalogVersion={catalogVersion}
-                isSelected={selection.ids.has(video.id)}
-                isMultiSelected={multiSelected && selection.ids.has(video.id)}
-                onSelect={handleSelect}
-              />
-            </div>
-          );
-        })}
+    <>
+      <div
+        ref={parentRef}
+        className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
+        data-testid="video-list"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+        onMouseDown={handleMouseDown}
+      >
+        <div
+          style={{
+            height: rowVirtualizer.getTotalSize(),
+            position: "relative",
+            width: "100%",
+          }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const video = videos[virtualRow.index];
+            return (
+              <div
+                key={virtualRow.key}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: virtualRow.size,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <VideoRow
+                  key={video.id}
+                  video={video}
+                  cache={cache}
+                  catalogVersion={catalogVersion}
+                  isSelected={selection.ids.has(video.id)}
+                  isMultiSelected={multiSelected && selection.ids.has(video.id)}
+                  onSelect={handleSelect}
+                  onContextMenu={handleContextMenu}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </div>
+      {overlays}
+    </>
   );
 }

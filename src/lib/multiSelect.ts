@@ -69,3 +69,14 @@ export function pruneSelection(
     anchorId: state.anchorId !== null && present.has(state.anchorId) ? state.anchorId : null,
   };
 }
+
+/**
+ * Selection after right-clicking `clickedId`. A row inside the selection
+ * keeps the whole selection (so a multi-selection can be acted on at once); a
+ * row outside it replaces the selection with just that row, like a file
+ * manager, so the menu never acts on rows the user did not point at.
+ */
+export function selectionForContextMenu(state: SelectionState, clickedId: string): SelectionState {
+  if (state.ids.has(clickedId)) return state;
+  return { ids: new Set([clickedId]), anchorId: clickedId };
+}
