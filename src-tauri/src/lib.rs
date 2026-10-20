@@ -33,6 +33,7 @@ const MENU_ITEM_DB_BACKUP: &str = "menu-db-backup";
 const MENU_ITEM_SETTINGS: &str = "menu-settings";
 const MENU_ITEM_ABOUT: &str = "menu-about";
 const MENU_ITEM_LOG_VIEWER: &str = "menu-log-viewer";
+const MENU_ITEM_CHECK_UPDATE: &str = "menu-check-update";
 // The "スタイル" menu. Only one style ("Default") exists today, so there is
 // nothing to select between yet -- the item exists so the menu bar has the
 // intended shape, and clicking it just re-asserts its own checked state
@@ -82,6 +83,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_dir = paths::app_data_dir()?;
             std::fs::create_dir_all(&app_dir)?;
@@ -271,8 +273,11 @@ pub fn run() {
                 MenuItemBuilder::with_id(MENU_ITEM_ABOUT, "バージョン情報").build(app)?;
             let log_viewer_item =
                 MenuItemBuilder::with_id(MENU_ITEM_LOG_VIEWER, "動作ログ...").build(app)?;
+            let check_update_item =
+                MenuItemBuilder::with_id(MENU_ITEM_CHECK_UPDATE, "更新の確認...").build(app)?;
             let help_menu = SubmenuBuilder::new(app, "ヘルプ")
                 .item(&log_viewer_item)
+                .item(&check_update_item)
                 .item(&about_item)
                 .build()?;
 
@@ -315,6 +320,7 @@ pub fn run() {
                     id if id == MENU_ITEM_TAG_BAR_MANAGE => "menu:open-tag-bar-dialog",
                     id if id == MENU_ITEM_SETTINGS => "menu:open-settings-dialog",
                     id if id == MENU_ITEM_LOG_VIEWER => "menu:open-log-dialog",
+                    id if id == MENU_ITEM_CHECK_UPDATE => "menu:check-update",
                     id if id == MENU_ITEM_ABOUT => "menu:about",
                     // "終了" is Tauri's PredefinedMenuItem::quit -- it's
                     // handled natively and never reaches this listener.
@@ -332,6 +338,9 @@ pub fn run() {
             commands::ffmpeg_cmds::get_ffmpeg_status,
             commands::log_cmds::read_log,
             commands::log_cmds::get_log_dir,
+            commands::update_cmds::get_update_check_on_startup,
+            commands::update_cmds::set_update_check_on_startup,
+            commands::update_cmds::check_for_update,
             commands::settings_cmds::pick_watch_folders,
             commands::settings_cmds::list_watch_folders,
             commands::settings_cmds::reorder_watch_folders,

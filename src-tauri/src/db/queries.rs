@@ -852,6 +852,24 @@ pub fn set_info_pane_collapsed(conn: &Connection, collapsed: bool) -> anyhow::Re
     Ok(())
 }
 
+const UPDATE_CHECK_ON_STARTUP_KEY: &str = "update_check_on_startup";
+
+/// Unset and unrecognized values both read as `true`: the check is opt-out, and
+/// a corrupt or hand-edited value must not silently stop users from hearing
+/// about security fixes.
+pub fn get_update_check_on_startup(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(get_setting(conn, UPDATE_CHECK_ON_STARTUP_KEY)?.as_deref() != Some("0"))
+}
+
+pub fn set_update_check_on_startup(conn: &Connection, enabled: bool) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        UPDATE_CHECK_ON_STARTUP_KEY,
+        if enabled { "1" } else { "0" },
+    )?;
+    Ok(())
+}
+
 const SIDEBAR_SECTIONS_COLLAPSED_KEY: &str = "sidebar_sections_collapsed";
 
 /// Collapsed flags of the left-pane sections. `true` means collapsed; every

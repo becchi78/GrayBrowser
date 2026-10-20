@@ -118,6 +118,14 @@ export function onMenuOpenLogDialog(callback: () => void): () => void {
 }
 
 /**
+ * Subscribes to menu:check-update, fired by the native "ヘルプ > 更新の確認..."
+ * menu item.
+ */
+export function onMenuCheckUpdate(callback: () => void): () => void {
+  return subscribe<void>("menu:check-update", callback);
+}
+
+/**
  * Subscribes to menu:about, fired by the native "ヘルプ > バージョン情報"
  * menu item.
  */

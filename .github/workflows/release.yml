@@ -1,7 +1,8 @@
 name: Release
 
 # v* タグのpushでのみ起動し、インストーラーをビルドしてDraftのReleaseを作る。
-# 公開（Draft解除）は取り消しにくいため、人が内容を確認してから行う。
+# 公開（Draft解除）は取り消しにくく、公開した瞬間にアプリ内アップデートの配信も
+# 始まるため、人が内容を確認してから行う。
 on:
   push:
     tags:
@@ -47,26 +48,54 @@ jobs:
         run: npm ci
 
       # MSIは配布しないためNSISだけを作る。
+      # 署名鍵はこのステップにだけ渡す（他のステップ・ジョブには渡さない）。
+      # 鍵はパスワード無しで作ってあり、Secretには空文字を登録できないため、
+      # パスワードは空文字をここで明示する（未設定だと鍵の復号に失敗しうる）。
+      # アップデーター用の成果物（.sig）の生成は署名鍵が要るので、ローカルの開発
+      # ビルドに影響しないよう、その有効化の設定はCIのビルドでだけ重ねる。
       - name: Build installer (NSIS)
-        run: npm run tauri build -- --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.release.conf.json
 
-      - name: Collect installer and generate release notes
+      # 検証用の配信元・公開鍵の上書き（デバッグビルド限定）が、配布する実行
+      # ファイルに残っていないことを確認する。
+      - name: Verify release binary has no debug update overrides
+        shell: bash
+        run: |
+          exe="target/release/GrayBrowser.exe"
+          if [ ! -f "$exe" ]; then
+            echo "error: release binary not found: $exe" >&2
+            exit 1
+          fi
+          if grep -aqE "GB_UPDATE_(ENDPOINT|PUBKEY)" "$exe"; then
+            echo "error: debug-only update override found in the release binary" >&2
+            exit 1
+          fi
+
+      # .sig か latest.json が作れなければここで失敗し、Draftは作られない。
+      - name: Collect installer, update manifest and release notes
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
         run: |
           version="${TAG#v}"
           installer="target/release/bundle/nsis/GrayBrowser_${version}_x64-setup.exe"
-          if [ ! -f "$installer" ]; then
-            echo "error: installer not found: $installer" >&2
-            ls -la target/release/bundle/nsis >&2 || true
-            exit 1
-          fi
+          signature="$installer.sig"
+          for f in "$installer" "$signature"; do
+            if [ ! -f "$f" ]; then
+              echo "error: not found: $f" >&2
+              ls -la target/release/bundle/nsis >&2 || true
+              exit 1
+            fi
+          done
           mkdir release-out
           cp "$installer" release-out/
+          node scripts/release/update-manifest.mjs "$TAG" "$signature" > release-out/latest.json
           node scripts/release/release-notes.mjs "$TAG" "release-out/$(basename "$installer")" > release-out/notes.md
 
-      - name: Upload installer and notes
+      - name: Upload installer, update manifest and notes
         uses: actions/upload-artifact@v4
         with:
           name: release-assets
@@ -80,7 +109,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download installer and notes
+      - name: Download installer, update manifest and notes
         uses: actions/download-artifact@v4
         with:
           name: release-assets
@@ -99,7 +128,7 @@ jobs:
             echo "error: a release for $TAG already exists" >&2
             exit 1
           fi
-          gh release create "$TAG" release-out/*-setup.exe \
+          gh release create "$TAG" release-out/*-setup.exe release-out/latest.json \
             --draft --verify-tag \
             --title "$TAG" \
             --notes-file release-out/notes.md
