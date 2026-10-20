@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { getNasPollIntervalMinutes, setNasPollIntervalMinutes } from "../api";
+import {
+  getNasPollIntervalMinutes,
+  getUpdateCheckOnStartup,
+  setNasPollIntervalMinutes,
+  setUpdateCheckOnStartup,
+} from "../api";
 import { DEFAULT_MINUTES, MAX_MINUTES, MIN_MINUTES, parseIntervalMinutes } from "../lib/nasInterval";
 
 interface Props {
@@ -24,6 +29,7 @@ export function SettingsDialog({ open, onClose }: Props) {
 function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
+  const [updateCheck, setUpdateCheck] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,10 +46,11 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     // 閉じた後に取得結果が遅れて反映されないようにする。
     let cancelled = false;
-    getNasPollIntervalMinutes()
-      .then((minutes) => {
+    Promise.all([getNasPollIntervalMinutes(), getUpdateCheckOnStartup()])
+      .then(([minutes, updateCheckOnStartup]) => {
         if (!cancelled) {
           setText(String(minutes));
+          setUpdateCheck(updateCheckOnStartup);
           setLoading(false);
         }
       })
@@ -96,6 +103,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
     setSaving(true);
     try {
       await setNasPollIntervalMinutes(parsed.minutes);
+      await setUpdateCheckOnStartup(updateCheck);
       if (mountedRef.current) {
         onClose();
       }
@@ -142,6 +150,21 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             {MIN_MINUTES}〜{MAX_MINUTES} 分。ローカルドライブは、変更を検知して即座に反映するため、この設定は関係しません。
           </p>
         </div>
+        <div className="settings-dialog-field">
+          <label className="settings-dialog-check">
+            <input
+              type="checkbox"
+              checked={updateCheck}
+              disabled={busy}
+              data-testid="settings-update-check-input"
+              onChange={(e) => setUpdateCheck(e.target.checked)}
+            />
+            起動時に更新を確認する
+          </label>
+          <p className="settings-dialog-hint">
+            オフにしても、「ヘルプ &gt; 更新の確認...」からいつでも確認できます。
+          </p>
+        </div>
         {error !== null && (
           <p className="settings-dialog-error" role="alert" data-testid="settings-dialog-error">
             {error}
@@ -154,6 +177,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             data-testid="settings-dialog-reset-btn"
             onClick={() => {
               setText(String(DEFAULT_MINUTES));
+              setUpdateCheck(true);
               setError(null);
             }}
           >

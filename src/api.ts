@@ -3,6 +3,7 @@
 // argument-name conversion are only dealt with in one place.
 
 import { invoke } from "@tauri-apps/api/core";
+import { Update } from "@tauri-apps/plugin-updater";
 import type { SidebarSectionsCollapsed } from "./lib/sidebarSections";
 import type {
   DuplicateGroup,
@@ -77,6 +78,19 @@ export const getSidebarSectionsCollapsed = () =>
   invoke<SidebarSectionsCollapsed>("get_sidebar_sections_collapsed");
 export const saveSidebarSectionsCollapsed = (state: SidebarSectionsCollapsed) =>
   invoke<void>("set_sidebar_sections_collapsed", { state });
+export const getUpdateCheckOnStartup = () => invoke<boolean>("get_update_check_on_startup");
+export const setUpdateCheckOnStartup = (enabled: boolean) =>
+  invoke<void>("set_update_check_on_startup", { enabled });
+/**
+ * 新しい版があれば、ダウンロード・インストールに使う Update を返す(無ければ null)。
+ * プラグインの check() ではなく自前のコマンドを使うのは、フロントに check の許可を
+ * 与えず、配信元と公開鍵をビルド時の設定に固定したままにするため。
+ * 使い終わって適用しない場合は close() を呼ぶこと。
+ */
+export async function checkForUpdate(): Promise<Update | null> {
+  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>("check_for_update");
+  return metadata === null ? null : new Update(metadata);
+}
 export const getNasPollIntervalMinutes = () => invoke<number>("get_nas_poll_interval_minutes");
 export const setNasPollIntervalMinutes = (minutes: number) =>
   invoke<number>("set_nas_poll_interval_minutes", { minutes });

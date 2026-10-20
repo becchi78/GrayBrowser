@@ -1551,6 +1551,59 @@ button.link-button:focus-visible {
   margin: 0;
 }
 
+.settings-dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.update-dialog p {
+  margin: 0;
+}
+
+.update-dialog-footer {
+  justify-content: flex-end;
+}
+
+.update-dialog-progress {
+  width: 100%;
+}
+
+/* リリースノート(CHANGELOG の項)をそのまま見せる。長い版でもダイアログ内で
+   スクロールし、ボタンを押し出さない。 */
+.update-dialog-notes {
+  margin: 0;
+  padding: 0.6em 0.8em;
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 0.9em;
+  background-color: #f1f1f1;
+  border-radius: 6px;
+}
+
+/* 画面下部に出す控えめな通知。FFmpeg の警告のような目立つ色にはしない。
+   position: fixed なのでレイアウトの高さ計算には影響しない。 */
+.update-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 2.2em;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding: 0.5em 0.9em;
+  font-size: 0.9em;
+  color: #0f0f0f;
+  background-color: #e8eefc;
+  border: 1px solid #b9c8ee;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
 .settings-dialog-actions {
   display: flex;
   gap: 0.5em;
@@ -1747,6 +1800,16 @@ button.link-button:focus-visible {
   .ffmpeg-notice {
     background-color: #5a3d00;
     color: #f8d7a3;
+  }
+
+  .update-notice {
+    color: #f6f6f6;
+    background-color: #2a3a5c;
+    border-color: #4a5f8f;
+  }
+
+  .update-dialog-notes {
+    background-color: #3a3a3a;
   }
 
   .video-row-thumbnail-wrap img,

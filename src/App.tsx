@@ -9,12 +9,15 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
+import { UpdateDialog } from "./components/UpdateDialog";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
 import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } from "./api";
 import {
   onMenuAbout,
+  onMenuCheckUpdate,
   onMenuOpenFolderDialog,
   onMenuOpenLogDialog,
   onMenuOpenSettingsDialog,
@@ -55,6 +58,7 @@ function App() {
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
@@ -92,6 +96,11 @@ function App() {
 
   useEffect(() => {
     const unlisten = onMenuOpenSettingsDialog(() => setSettingsDialogOpen(true));
+    return () => unlisten();
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onMenuCheckUpdate(() => setUpdateDialogOpen(true));
     return () => unlisten();
   }, []);
 
@@ -190,6 +199,7 @@ function App() {
           top-level, always-visible notice (unlike FolderControls/
           WbImportPanel below, both of which moved into modals). */}
       <FfmpegNotice />
+      <UpdateNotice onOpenDetails={() => setUpdateDialogOpen(true)} />
 
       {/* FolderControls/WbImportPanel's former direct App.tsx mounts are
           gone -- their logic now lives inside these two modals, reachable
@@ -211,6 +221,7 @@ function App() {
       />
       <SettingsDialog open={settingsDialogOpen} onClose={() => setSettingsDialogOpen(false)} />
       <LogViewerDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />
+      <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
       <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
     </div>
   );
