@@ -21,57 +21,61 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 
 3. **README.mdを確認・更新する**(手順2と同じくPR経由): 今回のバージョンで加わった変更が、ユーザーが直接体感する機能(「主な機能」等に載せるべきもの)であれば追記する。内部実装のみの変更(ファイル配置の変更等、ユーザーから見えないもの)であれば更新不要。
 
-4. **ビルド**:
+4. **タグをpush**(承認を得てから。`main`の、リリース用PRがマージされた状態で行う):
 
    ```bash
-   npm run tauri build
-   ```
-
-   出力先(ワークスペース直下の`target/`): `target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe`
-
-   ビルド後、配布するインストーラーのSHA256ハッシュを算出しておく(手順7のリリースノートに記載する):
-
-   ```powershell
-   Get-FileHash -Algorithm SHA256 target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe
-   ```
-
-5. **動作確認**: 生成されたインストーラーを実機で実際にインストールし、起動確認を行う(`sandboxed-verification`スキルの手順に従い、実データを汚さないサンドボックス環境で確認する)。
-
-6. **タグを作成しpush**:
-
-   ```bash
+   git switch main && git pull
+   node scripts/release/check-version.mjs v<version>   # 手元でも事前確認できる
    git tag v<version>
    git push origin v<version>
    ```
 
-7. **リリースを作成しインストーラーを添付**:
+   `v*`タグのpushで`.github/workflows/release.yml`が起動し、クリーンな`windows-latest`上で次を行う。
+   - タグ・`package.json`・`tauri.conf.json`・`Cargo.toml`のバージョンと`CHANGELOG.md`の項の一致を検証(不一致ならビルド前に失敗し、Releaseは作られない)
+   - `npm run tauri build -- --bundles nsis`でNSISインストーラーだけをビルド(MSIは配布しない)
+   - `CHANGELOG.md`の当該項・SmartScreenの案内・インストーラーのSHA256からリリースノートを自動生成
+   - インストーラーを添付した**Draft**のReleaseを作成(同じタグのReleaseが既にあれば上書きせず失敗)
+
+   Actionsの実行結果は`gh run list --workflow release.yml`や`gh run watch`で確認する。
+
+5. **Draftを確認して公開**: DraftのReleaseを開き、ノートの体裁(変更点・SmartScreenの節・SHA256の節)と添付ファイル(`GrayBrowser_<version>_x64-setup.exe`)を確認する。可能ならDraftからインストーラーをダウンロードして実機で起動確認する(`sandboxed-verification`スキルの手順に従い、実データを汚さない環境で)。問題なければ、承認を得てから公開する。
+
+   ```bash
+   gh release edit v<version> --draft=false
+   ```
+
+   問題があった場合は公開せず、Draftとタグを削除して修正し、やり直す(Draftの削除・タグの削除も他者から見える操作のため、承認を得てから行う)。
+
+## Actionsが失敗した場合の手元ビルド(代替手順)
+
+Actionsを直せない・急ぐ場合のみ、手元でビルドして手動でReleaseを作る。
+
+1. ビルド(出力先はワークスペース直下の`target/`):
+
+   ```bash
+   npm run tauri build -- --bundles nsis
+   ```
+
+   出力: `target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe`
+
+2. リリースノートを、リポジトリ外の一時ディレクトリへ生成する(誤ってコミットしないため。公開後に削除する)。SHA256はインストーラーから自動で算出される。
+
+   ```bash
+   node scripts/release/release-notes.mjs v<version> target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe > <一時ディレクトリ>/notes.md
+   ```
+
+3. タグ(未pushなら手順4)の後、Draftで作成して確認してから公開する。
 
    ```bash
    gh release create v<version> "target/release/bundle/nsis/GrayBrowser_<version>_x64-setup.exe" \
-     --title "v<version>" \
-     --notes-file <リリースノートのファイル>
+     --draft --verify-tag --title "v<version>" \
+     --notes-file <一時ディレクトリ>/notes.md
    ```
 
-   リリースノートのファイルは、誤ってコミットしないよう、リポジトリ外の一時ディレクトリに作成し、公開後に削除する。内容は次のテンプレートに沿って作成する。変更点は`CHANGELOG.md`に書いた当該バージョンの内容を転記する(二重管理を避けるため、CHANGELOGを一次情報とする)。SHA256は手順4で算出した値を記載する。
-
-   ```markdown
-   ## 変更点
-
-   <CHANGELOG.mdの当該バージョンの内容を転記>
-
-   ## インストールについて
-
-   インストーラーはコード署名をしていないため、実行時に Windows SmartScreen の警告が表示される場合があります。「詳細情報」→「実行」の順にクリックして進めてください。ダウンロードは、このリポジトリの Releases ページのファイルから行ってください。
-
-   ダウンロードしたファイルは、PowerShell の `Get-FileHash -Algorithm SHA256 <ファイル名>` で算出したハッシュが、下記の値と一致することを確認できます。
-
-   ## SHA256
-
-   `GrayBrowser_<version>_x64-setup.exe`: `<SHA256ハッシュ>`
-   ```
+   タグのpushでActionsが既にDraftを作っていた場合は重複させない(先にそのDraftを削除する)。
 
 ## 注意事項
 
-- タグのpush・リリースの公開はいずれも他者から見える・取り消しにくい操作である。実行前に必ずユーザーに内容(バージョン番号・リリースノート)を提示し、承認を得てから行う。
-- リリースノートには、主要な変更点をユーザー視点で簡潔にまとめる(内部リファクタ等、利用者に関係ない変更は割愛してよい)。
+- タグのpush・リリースの公開はいずれも他者から見える・取り消しにくい操作である。実行前に必ずユーザーに内容(バージョン番号・リリースノート)を提示し、承認を得てから行う。タグをpushした時点でActionsが走るため、`CHANGELOG.md`の内容(=リリースノートの変更点)はタグ前に確定させる。
+- リリースノートの変更点は`CHANGELOG.md`が一次情報(`###`見出しは`##`に上げて転記される)。利用者視点で簡潔に書く(内部リファクタ等、利用者に関係ない変更は割愛してよい)。
 - `main`ブランチの状態からタグを打つ(featureブランチの途中状態でリリースしない)。
