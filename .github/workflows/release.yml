@@ -18,6 +18,11 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    # 署名鍵はこの Environment の Secret にだけ置く。Environment 側で v* タグ
+    # からの実行に限定し承認者の承認を必須にしてあるため、リポジトリに書き込める
+    # だけの人はブランチ上のワークフロー改変では鍵に届かず、タグを切っても承認
+    # なしには鍵が使われない。
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
