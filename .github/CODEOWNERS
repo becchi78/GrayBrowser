@@ -1,0 +1,9 @@
+# 署名・配信の信頼境界になるファイル。ここを書き換えられると、署名鍵の持ち出し、
+# 配信先や公開鍵の差し替えができてしまうため、オーナーのレビューを必須にする
+# (main の保護で「コードオーナーのレビューを必須」を有効にしている)。
+/.github/                                  @becchi78
+/scripts/release/                          @becchi78
+/src-tauri/tauri.conf.json                 @becchi78
+/src-tauri/tauri.release.conf.json         @becchi78
+/src-tauri/capabilities/                   @becchi78
+/src-tauri/src/commands/update_cmds.rs     @becchi78
