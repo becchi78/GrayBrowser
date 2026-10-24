@@ -15,6 +15,31 @@ use std::process::Command;
 use gb_core::ports::player::{LaunchError, PlayerLauncher};
 use tauri_plugin_opener::OpenerExt;
 
+/// The launch runs on a `spawn_blocking` worker thread, which (unlike the
+/// main thread) has no COM apartment. `open::that_detached` does not
+/// initialize COM for plain files, and `ShellExecuteExW` without an apartment
+/// can fail for file associations that are handled through COM. The result is
+/// deliberately ignored: S_FALSE (already initialized) is fine, and
+/// RPC_E_CHANGED_MODE just means the thread already has another apartment,
+/// which is equally usable. The apartment is intentionally never uninitialized
+/// since pool threads are reused.
+#[cfg(windows)]
+fn init_com_for_shell() {
+    use windows_sys::Win32::System::Com::{
+        CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+    };
+    // SAFETY: a null reserved pointer is the documented required value.
+    unsafe {
+        CoInitializeEx(
+            std::ptr::null(),
+            (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn init_com_for_shell() {}
+
 pub struct RealPlayerLauncher {
     app_handle: tauri::AppHandle,
 }
@@ -39,6 +64,7 @@ impl PlayerLauncher for RealPlayerLauncher {
                 let path_str = video_path.to_str().ok_or_else(|| {
                     LaunchError::Spawn(format!("path is not valid UTF-8: {}", video_path.display()))
                 })?;
+                init_com_for_shell();
                 self.app_handle
                     .opener()
                     .open_path(path_str, None::<&str>)
