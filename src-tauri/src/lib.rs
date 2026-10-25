@@ -227,6 +227,8 @@ pub fn run() {
                 let follow_up = std::sync::Arc::clone(&follow_up);
                 reachability.set_on_recovered(move || follow_up.trigger());
             }
+            // Detached on purpose: it runs for the life of the process.
+            let _ = reachability.start_recheck(reachability::DEFAULT_RECHECK_INTERVAL);
             let watch_manager = watch::RealtimeWatchManager::new(follow_up, reachability.clone());
             let (watch_folders, nas_poll_interval_secs) = {
                 let conn = db.read_pool.get()?;
