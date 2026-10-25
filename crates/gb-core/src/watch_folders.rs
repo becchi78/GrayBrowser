@@ -14,6 +14,69 @@ pub fn merge(existing: Vec<String>, picked: Vec<String>) -> Vec<String> {
     merged
 }
 
+/// The parent folder of `video_path`, split on the last `\` or `/` rather than
+/// via `std::path::Path::parent`, whose notion of a separator depends on the
+/// host OS while stored paths may use either. Returns the folder with `/`
+/// folded into `\` and no trailing separator (a bare drive such as `D:` gets
+/// its `\` back, since `D:` alone means "current directory on D"). `None` for
+/// a path with no folder part.
+fn parent_folder(video_path: &str) -> Option<String> {
+    let idx = video_path.rfind(['\\', '/'])?;
+    let folder = video_path[..idx].replace('/', "\\");
+    let folder = folder.trim_end_matches('\\');
+    if folder.is_empty() {
+        return None;
+    }
+    if folder.ends_with(':') {
+        return Some(format!("{folder}\\"));
+    }
+    Some(folder.to_string())
+}
+
+/// Watch folders to register for a batch of imported videos: the distinct
+/// parent folders of `video_paths`, minus those already covered by
+/// `existing_folders`.
+///
+/// - Duplicates are collapsed case-insensitively and regardless of a trailing
+///   separator or `/` vs `\`.
+/// - A candidate equal to, or inside, an existing watch folder is dropped:
+///   it is already watched.
+/// - Candidates nested inside another candidate collapse into the outer one;
+///   unrelated siblings are never widened to their common parent, which could
+///   pull in folders the user never meant to watch.
+/// - Sorted ascending so the result is stable for the same input.
+pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]) -> Vec<String> {
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for path in video_paths {
+        let Some(folder) = parent_folder(path) else {
+            continue;
+        };
+        let key = crate::paths::normalize_folder_path(&folder).to_lowercase();
+        if candidates.iter().any(|(k, _)| *k == key) {
+            continue;
+        }
+        if crate::paths::is_under_any_folder(&key, existing_folders) {
+            continue;
+        }
+        candidates.push((key, folder));
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Sorted order puts an ancestor before everything inside it, so a single
+    // pass against the already-kept folders is enough.
+    let mut kept: Vec<String> = Vec::new();
+    for (_, folder) in candidates {
+        if kept
+            .iter()
+            .any(|outer| crate::paths::folder_paths_conflict(outer, &folder))
+        {
+            continue;
+        }
+        kept.push(folder);
+    }
+    kept
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReorderError {
     #[error("duplicate folder in the requested order: {0}")]
@@ -60,6 +123,84 @@ mod tests {
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn suggest_collects_distinct_parent_folders_sorted() {
+        let got = suggest_watch_folders(&v(&[r"D:\b\x.mp4", r"D:\a\y.mp4", r"D:\b\z.mp4"]), &[]);
+        assert_eq!(got, v(&[r"D:\a", r"D:\b"]));
+    }
+
+    #[test]
+    fn suggest_dedups_case_insensitively_and_across_separators() {
+        let got = suggest_watch_folders(
+            &v(&[r"D:\Videos\a.mp4", r"d:\VIDEOS\b.mp4", "D:/Videos/c.mp4"]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"D:\Videos"]));
+    }
+
+    #[test]
+    fn suggest_excludes_existing_folders_and_their_descendants() {
+        let got = suggest_watch_folders(
+            &v(&[
+                r"D:\Videos\a.mp4",
+                r"D:\Videos\Sub\b.mp4",
+                r"d:\videos\sub\deep\c.mp4",
+                r"E:\Other\d.mp4",
+            ]),
+            &v(&[r"D:\Videos\"]),
+        );
+        assert_eq!(got, v(&[r"E:\Other"]));
+    }
+
+    #[test]
+    fn suggest_does_not_treat_a_sibling_sharing_a_prefix_as_existing() {
+        let got = suggest_watch_folders(&v(&[r"D:\Videos2\a.mp4"]), &v(&[r"D:\Videos"]));
+        assert_eq!(got, v(&[r"D:\Videos2"]));
+    }
+
+    #[test]
+    fn suggest_merges_nested_candidates_into_the_outer_one() {
+        let got = suggest_watch_folders(
+            &v(&[r"D:\A\Sub\x.mp4", r"D:\A\y.mp4", r"D:\A\Sub\Deep\z.mp4"]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"D:\A"]));
+    }
+
+    #[test]
+    fn suggest_does_not_merge_siblings_into_their_common_parent() {
+        let got = suggest_watch_folders(&v(&[r"D:\A\x\1.mp4", r"D:\A\y\2.mp4"]), &[]);
+        assert_eq!(got, v(&[r"D:\A\x", r"D:\A\y"]));
+    }
+
+    #[test]
+    fn suggest_handles_a_file_directly_under_a_drive_root() {
+        assert_eq!(suggest_watch_folders(&v(&[r"D:\a.mp4"]), &[]), v(&[r"D:\"]));
+        assert_eq!(suggest_watch_folders(&v(&["D:/a.mp4"]), &[]), v(&[r"D:\"]));
+    }
+
+    #[test]
+    fn suggest_keeps_unc_folders() {
+        let got = suggest_watch_folders(&v(&[r"\\nas\share\v\a.mp4"]), &[]);
+        assert_eq!(got, v(&[r"\\nas\share\v"]));
+    }
+
+    #[test]
+    fn suggest_skips_paths_without_a_folder_part() {
+        assert!(suggest_watch_folders(&v(&["a.mp4", "/a.mp4", ""]), &[]).is_empty());
+    }
+
+    #[test]
+    fn suggest_of_empty_input_is_empty() {
+        assert!(suggest_watch_folders(&[], &v(&[r"D:\x"])).is_empty());
+    }
+
+    #[test]
+    fn suggest_drops_a_candidate_equal_to_an_existing_folder() {
+        let got = suggest_watch_folders(&v(&[r"D:\Videos\a.mp4"]), &v(&[r"d:\videos"]));
+        assert!(got.is_empty());
     }
 
     #[test]
