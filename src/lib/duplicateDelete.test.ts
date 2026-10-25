@@ -78,6 +78,17 @@ test("内容未確認のグループ(パス衝突・内容未確認)は無効", 
   );
 });
 
+test("候補・内容未確認のグループ(NAS 到達不能)は無効", () => {
+  const a = member("a", "online");
+  assert.equal(
+    fileDeleteDisabledReason(
+      a,
+      group([a, member("b", "online")], "quick_hash_candidate_unverified"),
+    ),
+    "内容の一致が確認できていないため削除できません",
+  );
+});
+
 test("内容確認済みの2種類のグループは有効", () => {
   const a = member("a", "online");
   for (const kind of ["quick_hash_confirmed", "path_collision_confirmed"]) {

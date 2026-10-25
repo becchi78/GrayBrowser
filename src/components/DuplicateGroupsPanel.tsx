@@ -19,7 +19,10 @@ const KIND_LABELS: Record<DuplicateGroupKind, string> = {
   quick_hash_confirmed: "内容一致（確定）",
   path_collision_confirmed: "パス衝突・内容確認済み",
   path_collision_unconfirmed: "パス衝突・内容未確認",
+  quick_hash_candidate_unverified: "候補・内容未確認",
 };
+
+const UNVERIFIED_CANDIDATE_NOTE = "NAS に接続できないため、内容が同じか確認できません";
 
 interface PendingAction {
   kind: "unregister" | "file";
@@ -227,6 +230,9 @@ function DuplicateGroupItem({
     <li className="duplicate-group">
       <div className="duplicate-group-header">
         <span className="duplicate-group-kind">{KIND_LABELS[group.kind]}</span>
+        {group.kind === "quick_hash_candidate_unverified" && (
+          <span className="duplicate-group-member-play-note">{UNVERIFIED_CANDIDATE_NOTE}</span>
+        )}
       </div>
       <ul className="duplicate-group-members">
         {members.map((member) => (
