@@ -22,6 +22,37 @@ pub fn split_tags(tag: &str) -> Vec<String> {
         .collect()
 }
 
+/// Max star rating; also the cap for a star-only tag with more stars than that.
+const MAX_RATING: u8 = 5;
+
+/// If `tag` consists solely of `★` (after width folding and trimming),
+/// returns the star count capped at 5. WhiteBrowser users encoded ratings as
+/// tags like `★★★`; anything mixed with other characters (`★お気に入り`) or
+/// using a different glyph (`☆`) is a real tag and yields `None`.
+pub fn star_tag_rating(tag: &str) -> Option<u8> {
+    let folded = wb_fold_width(tag);
+    let trimmed = folded.trim();
+    if trimmed.is_empty() || !trimmed.chars().all(|c| c == '★') {
+        return None;
+    }
+    let count = trimmed.chars().count();
+    Some(count.min(MAX_RATING as usize) as u8)
+}
+
+/// Splits a `.wb` `tag` column into ordinary tags and the rating encoded by
+/// star-only tags (the maximum when several are present).
+fn split_tags_and_star_rating(tag: &str) -> (Vec<String>, Option<u8>) {
+    let mut star_rating: Option<u8> = None;
+    let mut tags = Vec::new();
+    for t in split_tags(tag) {
+        match star_tag_rating(&t) {
+            Some(r) => star_rating = Some(star_rating.map_or(r, |cur| cur.max(r))),
+            None => tags.push(t),
+        }
+    }
+    (tags, star_rating)
+}
+
 /// Extracts the 8-hex-digit thumbnail hash from a legacy thumbnail filename
 /// of the form `[video filename].#<hash>.jpg`. Matches lowercase hex only
 /// -- real data never produced uppercase.
@@ -180,6 +211,8 @@ pub struct ImportCandidate {
     pub movie_path: String,
     pub tags: Vec<String>,
     pub rating: u8,
+    /// True when `rating` came from a star-only tag rather than `score`.
+    pub rating_from_star_tags: bool,
     /// `None` for the small number of real rows with an empty `hash`
     /// (a known gap in the source data: 1 of 3072 rows) -- these import
     /// without a thumbnail rather than failing.
@@ -193,11 +226,15 @@ pub struct ImportCandidate {
 
 /// Converts one `.wb` `movie` row into an import candidate.
 pub fn wb_row_to_import_candidate(row: &WbMovieRow) -> Result<ImportCandidate, WbImportError> {
+    // A star tag wins over `score`: the user typed it deliberately, whereas
+    // `score` may be a leftover default.
+    let (tags, star_rating) = split_tags_and_star_rating(&row.tag);
     Ok(ImportCandidate {
         movie_name: row.movie_name.clone(),
         movie_path: row.movie_path.clone(),
-        tags: split_tags(&row.tag),
-        rating: parse_score_to_rating(row.score),
+        tags,
+        rating: star_rating.unwrap_or_else(|| parse_score_to_rating(row.score)),
+        rating_from_star_tags: star_rating.is_some(),
         thumbnail_hash: (!row.hash.is_empty()).then(|| row.hash.clone()),
         kana: row.kana.clone(),
         roma: row.roma.clone(),
@@ -225,8 +262,14 @@ pub fn count_clamped_scores(rows: &[WbMovieRow]) -> usize {
 /// dialog the other half of that comparison: `source_tag_count == 0` means
 /// the source `.wb` genuinely never had tag data to migrate in the first
 /// place, independent of what actually got written.
+///
+/// Star-only tags are excluded because they become a rating, never a
+/// `video_tags` row; counting them would make `tags_assigned` fall short of
+/// this number and trigger the dialog's "要確認" warning for a correct import.
 pub fn count_source_tags(rows: &[WbMovieRow]) -> usize {
-    rows.iter().map(|r| split_tags(&r.tag).len()).sum()
+    rows.iter()
+        .map(|r| split_tags_and_star_rating(&r.tag).0.len())
+        .sum()
 }
 
 #[cfg(test)]
@@ -385,6 +428,88 @@ mod tests {
         // below -- a trailing/doubled newline must not inflate the count.
         let rows = vec![row(|r| r.tag = "foo\n\nbar\n".to_string())];
         assert_eq!(count_source_tags(&rows), 2);
+    }
+
+    fn star_row(tag: &str, score: i64) -> WbMovieRow {
+        row(|r| {
+            r.tag = tag.to_string();
+            r.score = score;
+        })
+    }
+
+    #[test]
+    fn star_tag_rating_counts_stars_and_caps_at_five() {
+        assert_eq!(star_tag_rating("★"), Some(1));
+        assert_eq!(star_tag_rating("★★★"), Some(3));
+        assert_eq!(star_tag_rating("★★★★★"), Some(5));
+        assert_eq!(star_tag_rating("★★★★★★"), Some(5));
+        assert_eq!(star_tag_rating("★★★★★★★"), Some(5));
+    }
+
+    #[test]
+    fn star_tag_rating_tolerates_surrounding_whitespace() {
+        assert_eq!(star_tag_rating("  ★★ "), Some(2));
+        assert_eq!(star_tag_rating("\u{3000}★★★\u{3000}"), Some(3));
+    }
+
+    #[test]
+    fn star_tag_rating_rejects_non_star_only_tags() {
+        assert_eq!(star_tag_rating("☆"), None);
+        assert_eq!(star_tag_rating("★お気に入り"), None);
+        assert_eq!(star_tag_rating("★ ★"), None);
+        assert_eq!(star_tag_rating("★☆"), None);
+        assert_eq!(star_tag_rating(""), None);
+        assert_eq!(star_tag_rating("   "), None);
+    }
+
+    #[test]
+    fn candidate_converts_star_tag_to_rating_and_removes_it_from_tags() {
+        let c = wb_row_to_import_candidate(&star_row("★★★\nfoo", 0)).unwrap();
+        assert_eq!(c.rating, 3);
+        assert!(c.rating_from_star_tags);
+        assert_eq!(c.tags, vec!["foo"]);
+    }
+
+    #[test]
+    fn candidate_caps_star_tag_rating_at_five() {
+        let c = wb_row_to_import_candidate(&star_row("★★★★★★★", 0)).unwrap();
+        assert_eq!(c.rating, 5);
+        assert!(c.tags.is_empty());
+    }
+
+    #[test]
+    fn candidate_keeps_hollow_star_and_mixed_tags_as_ordinary_tags() {
+        let c = wb_row_to_import_candidate(&star_row("☆\n★お気に入り", 2)).unwrap();
+        assert_eq!(c.tags, vec!["☆", "★お気に入り"]);
+        assert_eq!(c.rating, 2);
+        assert!(!c.rating_from_star_tags);
+    }
+
+    #[test]
+    fn candidate_uses_max_of_multiple_star_tags() {
+        let c = wb_row_to_import_candidate(&star_row("★\n★★★\n★★", 0)).unwrap();
+        assert_eq!(c.rating, 3);
+        assert!(c.tags.is_empty());
+    }
+
+    #[test]
+    fn candidate_prefers_star_tag_over_score() {
+        let c = wb_row_to_import_candidate(&star_row("★★", 5)).unwrap();
+        assert_eq!(c.rating, 2);
+        assert!(c.rating_from_star_tags);
+    }
+
+    #[test]
+    fn candidate_without_star_tag_uses_score() {
+        let c = wb_row_to_import_candidate(&star_row("foo", 4)).unwrap();
+        assert_eq!(c.rating, 4);
+        assert!(!c.rating_from_star_tags);
+    }
+
+    #[test]
+    fn count_source_tags_excludes_star_only_tags() {
+        let rows = vec![star_row("★★\nfoo", 0), star_row("★", 0)];
+        assert_eq!(count_source_tags(&rows), 1);
     }
 
     #[test]

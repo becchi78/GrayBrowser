@@ -79,6 +79,8 @@ export interface WbImportSummary {
    * import dialog can tell "tags_assigned === 0 because the source had
    * none" apart from "...because something went wrong". */
   source_tag_count: number;
+  /** Newly registered videos whose rating came from a ★-only tag. */
+  ratings_from_star_tags: number;
   thumbnails_linked: number;
   thumbnails_failed: number;
   thumbnails_unmatched: number;

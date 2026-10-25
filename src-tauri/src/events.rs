@@ -131,7 +131,13 @@ pub struct WbImportSummary {
     /// "`tags_assigned == 0` because the source never had tags" apart from
     /// "...because something went wrong" -- `tags_assigned` alone can't
     /// make that distinction.
+    ///
+    /// Star-only tags (`★`, `★★★`, ...) are excluded: they become a rating,
+    /// not a tag, so including them would make `tags_assigned` look short.
     pub source_tag_count: u32,
+    /// Newly registered videos whose rating came from a star-only tag
+    /// instead of `score`. Skipped (already registered) rows are not counted.
+    pub ratings_from_star_tags: u32,
     /// **Offline rows only.** Legacy JPG thumbnails successfully converted
     /// to WebP and linked to their video
     /// (`gb_core::wb_import::match_thumbnail_files`'s `matched` set, minus

@@ -272,6 +272,12 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
 
             {renderTagsAssignedLine(summary)}
 
+            {summary.ratings_from_star_tags > 0 && (
+              <p className="wb-import-result-line wb-import-result-muted">
+                ★タグから評価にした: {summary.ratings_from_star_tags}件
+              </p>
+            )}
+
             <p className="wb-import-result-line wb-import-result-muted">
               スキップ (登録済み): {summary.skipped}件 / score丸め: {summary.clamped_scores}件 /
               旧サムネイル紐付け成功: {summary.thumbnails_linked}件

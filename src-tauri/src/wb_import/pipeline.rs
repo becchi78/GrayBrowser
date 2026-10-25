@@ -227,6 +227,7 @@ fn import_all<S, F, N, C>(
     let mut registered = 0u32;
     let mut skipped = 0u32;
     let mut tags_assigned = 0u32;
+    let mut ratings_from_star_tags = 0u32;
     // (video_id, thumbnail_hash, file_path) for every row that was actually
     // inserted and carries a thumbnail hash -- the input to
     // match_thumbnail_files below. `file_path` is carried alongside so
@@ -306,6 +307,9 @@ fn import_all<S, F, N, C>(
             } => {
                 registered += 1;
                 tags_assigned += row_tags_assigned as u32;
+                if candidate.rating_from_star_tags {
+                    ratings_from_star_tags += 1;
+                }
                 // Legacy-JPG thumbnail migration (link_thumbnails, below) is
                 // only for offline rows: their source video isn't available
                 // to generate a fresh thumbnail from, so the old JPG is the
@@ -391,6 +395,7 @@ fn import_all<S, F, N, C>(
         clamped_scores,
         tags_assigned,
         source_tag_count,
+        ratings_from_star_tags,
         thumbnails_linked,
         thumbnails_failed,
         thumbnails_unmatched,
@@ -399,13 +404,14 @@ fn import_all<S, F, N, C>(
 
     log::info!(
         "wb import complete: registered={} skipped={} clamped_scores={} tags_assigned={} \
-         source_tag_count={} thumbnails_linked={} thumbnails_failed={} thumbnails_unmatched={} \
-         thumbnails_skipped_online={}",
+         source_tag_count={} ratings_from_star_tags={} thumbnails_linked={} \
+         thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={}",
         summary.registered,
         summary.skipped,
         summary.clamped_scores,
         summary.tags_assigned,
         summary.source_tag_count,
+        summary.ratings_from_star_tags,
         summary.thumbnails_linked,
         summary.thumbnails_failed,
         summary.thumbnails_unmatched,
@@ -846,6 +852,103 @@ mod tests {
             second_summary.source_tag_count, 1,
             "source_tag_count reflects the raw .wb data, not what got (re-)written"
         );
+    }
+
+    /// Star-only tags become a rating (and never a tag); mixed/hollow-star
+    /// tags stay tags. A repeat import (all rows Skipped) counts nothing.
+    #[test]
+    fn star_only_tags_become_ratings_and_are_counted_for_inserted_rows_only() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![
+                row(|r| {
+                    r.movie_id = 1;
+                    r.movie_path = "Z:\\star3.mp4".to_string();
+                    r.tag = "★★★\nfoo".to_string();
+                    r.score = 1;
+                }),
+                row(|r| {
+                    r.movie_id = 2;
+                    r.movie_path = "Z:\\mixed.mp4".to_string();
+                    r.tag = "☆\n★お気に入り".to_string();
+                    r.score = 4;
+                }),
+                row(|r| {
+                    r.movie_id = 3;
+                    r.movie_path = "Z:\\star_only.mp4".to_string();
+                    r.tag = "★★★★★★★".to_string();
+                    r.score = 0;
+                }),
+            ]),
+            ..Default::default()
+        };
+        let ffmpeg = no_op_ffmpeg();
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &ffmpeg,
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.registered, 3);
+        assert_eq!(summary.ratings_from_star_tags, 2);
+        // foo + ☆ + ★お気に入り; the star-only tags are not source tags.
+        assert_eq!(summary.source_tag_count, 3);
+        assert_eq!(summary.tags_assigned, 3);
+
+        {
+            let conn = h.db.writer.lock().unwrap();
+            let rating_of = |name: &str| -> i64 {
+                conn.query_row(
+                    "SELECT rating FROM videos WHERE file_path = ?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(rating_of(r"Z:\star3.mp4"), 3, "star tag beats score=1");
+            assert_eq!(
+                rating_of(r"Z:\mixed.mp4"),
+                4,
+                "no star-only tag: score wins"
+            );
+            assert_eq!(rating_of(r"Z:\star_only.mp4"), 5, "7 stars cap at 5");
+
+            let star_tags: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM tags WHERE name LIKE '★%' AND name NOT LIKE '%お%'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(star_tags, 0, "star-only tags are not registered as tags");
+            let tag_names: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM tags WHERE name IN ('foo', '☆', '★お気に入り')",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(tag_names, 3);
+        }
+
+        let notifier_second = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &ffmpeg,
+            &notifier_second,
+            &FakeCatalogNotifier::default(),
+        );
+        let second = notifier_second.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(second.skipped, 3);
+        assert_eq!(second.ratings_from_star_tags, 0);
     }
 
     #[test]
