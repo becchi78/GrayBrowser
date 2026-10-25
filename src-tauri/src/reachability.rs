@@ -30,7 +30,7 @@ use gb_core::ports::folder_probe::FolderProbe;
 
 use crate::events::ReachabilityNotifier;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Slot {
     /// A thread is probing this folder right now; others wait for its answer.
     /// `token` identifies this probe, so a watcher or a finishing probe can
@@ -64,6 +64,10 @@ struct Inner {
     /// Watcher threads still running; lets a test prove they all exit.
     #[cfg(test)]
     watchers_alive: std::sync::atomic::AtomicUsize,
+    /// Threads currently blocked waiting for someone else's probe; lets a test
+    /// know a waiter is really waiting before it acts.
+    #[cfg(test)]
+    waiters: std::sync::atomic::AtomicUsize,
     /// Serializes snapshot-then-emit so an older set cannot overtake a newer
     /// one on its way to the frontend.
     emit_gate: Mutex<()>,
@@ -224,6 +228,8 @@ impl ReachabilityRegistry {
                 provisional_after,
                 #[cfg(test)]
                 watchers_alive: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(test)]
+                waiters: std::sync::atomic::AtomicUsize::new(0),
                 emit_gate: Mutex::new(()),
                 on_recovered: Mutex::new(None),
             }),
@@ -354,7 +360,11 @@ impl ReachabilityRegistry {
         let previous = loop {
             match slots.get(folder).copied() {
                 Some(Slot::Probing { .. }) => {
+                    #[cfg(test)]
+                    inner.waiters.fetch_add(1, Ordering::SeqCst);
                     slots = inner.settled.wait(slots).unwrap_or_else(|e| e.into_inner());
+                    #[cfg(test)]
+                    inner.waiters.fetch_sub(1, Ordering::SeqCst);
                     waited = true;
                 }
                 // A forced refresh that waited for someone else's probe takes
@@ -1041,6 +1051,13 @@ mod tests {
         // A second caller waits for the real answer and never sees the flag.
         let r = registry.clone();
         let waiter = thread::spawn(move || r.is_reachable(NAS));
+        // The counter is raised under the slot lock that showed it a probe in
+        // flight, so seeing it means the waiter is committed to waiting.
+        assert!(wait_until(
+            || registry.inner.waiters.load(Ordering::SeqCst) == 1
+        ));
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert!(!waiter.is_finished(), "must not take the flag as an answer");
 
         probe.release();
 
@@ -1262,5 +1279,186 @@ mod tests {
             events(&notifier),
             vec![vec![NAS.to_string()], Vec::<String>::new()]
         );
+    }
+
+    /// What a `SequencedProbe` call does once released.
+    #[derive(Clone, Copy)]
+    enum Outcome {
+        Answer(bool),
+        Panic,
+    }
+
+    /// Every call blocks until released individually, and calls are numbered
+    /// in the order they start, so a test can finish an old probe while a
+    /// newer probe of the same folder is still in flight.
+    struct SequencedProbe {
+        state: Mutex<(usize, HashMap<usize, Outcome>)>,
+        cond: Condvar,
+    }
+
+    impl SequencedProbe {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                state: Mutex::new((0, HashMap::new())),
+                cond: Condvar::new(),
+            })
+        }
+
+        fn started(&self) -> usize {
+            self.state.lock().unwrap().0
+        }
+
+        fn release(&self, call: usize, outcome: Outcome) {
+            self.state.lock().unwrap().1.insert(call, outcome);
+            self.cond.notify_all();
+        }
+    }
+
+    impl FolderProbe for SequencedProbe {
+        fn is_reachable(&self, _folder: &str) -> bool {
+            let mut state = self.state.lock().unwrap();
+            let call = state.0;
+            state.0 += 1;
+            let state = self
+                .cond
+                .wait_while(state, |s| !s.1.contains_key(&call))
+                .unwrap();
+            let outcome = state.1[&call];
+            drop(state);
+            match outcome {
+                Outcome::Answer(reachable) => reachable,
+                Outcome::Panic => panic!("probe failure injected by the test"),
+            }
+        }
+    }
+
+    /// An old probe of `NAS`, then the folder forgotten, then a new probe of
+    /// it: leaves the new probe in flight and returns both callers.
+    fn old_probe_superseded_by_new(
+        registry: &ReachabilityRegistry,
+        probe: &SequencedProbe,
+    ) -> (thread::JoinHandle<bool>, thread::JoinHandle<bool>) {
+        let r = registry.clone();
+        let old = thread::spawn(move || r.is_reachable(NAS));
+        assert!(wait_until(|| probe.started() == 1));
+        registry.retain_folders(&[]);
+        let r = registry.clone();
+        let new = thread::spawn(move || r.is_reachable(NAS));
+        assert!(wait_until(|| probe.started() == 2));
+        (old, new)
+    }
+
+    fn slot_of(registry: &ReachabilityRegistry, folder: &str) -> Option<Slot> {
+        lock(&registry.inner.slots).get(folder).copied()
+    }
+
+    fn sequenced_registry() -> (
+        ReachabilityRegistry,
+        Arc<SequencedProbe>,
+        Arc<FakeReachabilityNotifier>,
+    ) {
+        let probe = SequencedProbe::new();
+        let notifier = Arc::new(FakeReachabilityNotifier::default());
+        // Long enough that no watcher flags anything during these tests.
+        let registry = ReachabilityRegistry::with_provisional_after(
+            probe.clone(),
+            notifier.clone(),
+            Duration::from_secs(60),
+        );
+        (registry, probe, notifier)
+    }
+
+    // The three tests below fail if a probe or watcher matched any `Probing`
+    // marker instead of its own token: the old answer would be stored over
+    // (or the old panic would remove) the new probe's marker, which the slot
+    // assertions catch, and an old unreachable answer would also announce.
+
+    #[test]
+    fn an_old_probes_unreachable_answer_does_not_overwrite_a_newer_probe() {
+        let (registry, probe, notifier) = sequenced_registry();
+        let (old, new) = old_probe_superseded_by_new(&registry, &probe);
+
+        probe.release(0, Outcome::Answer(false));
+        assert!(!old.join().unwrap());
+
+        assert!(matches!(
+            slot_of(&registry, NAS),
+            Some(Slot::Probing { shown: false, .. })
+        ));
+        assert!(registry.unreachable_folders().is_empty());
+        assert!(events(&notifier).is_empty());
+
+        // The newer probe alone decides the final state.
+        probe.release(1, Outcome::Answer(true));
+        assert!(new.join().unwrap());
+        assert_eq!(slot_of(&registry, NAS), Some(Slot::Reachable));
+        assert!(registry.unreachable_folders().is_empty());
+        assert!(events(&notifier).is_empty());
+    }
+
+    #[test]
+    fn an_old_probes_reachable_answer_does_not_overwrite_a_newer_probe() {
+        let (registry, probe, notifier) = sequenced_registry();
+        let (old, new) = old_probe_superseded_by_new(&registry, &probe);
+
+        probe.release(0, Outcome::Answer(true));
+        assert!(old.join().unwrap());
+
+        assert!(matches!(
+            slot_of(&registry, NAS),
+            Some(Slot::Probing { .. })
+        ));
+        assert!(events(&notifier).is_empty());
+
+        probe.release(1, Outcome::Answer(false));
+        assert!(!new.join().unwrap());
+        assert_eq!(slot_of(&registry, NAS), Some(Slot::Unreachable));
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+    }
+
+    #[test]
+    fn an_old_probes_panic_does_not_remove_a_newer_probes_marker() {
+        let (registry, probe, notifier) = sequenced_registry();
+        let (old, new) = old_probe_superseded_by_new(&registry, &probe);
+
+        probe.release(0, Outcome::Panic);
+        assert!(old.join().is_err());
+
+        assert!(matches!(
+            slot_of(&registry, NAS),
+            Some(Slot::Probing { .. })
+        ));
+        assert!(events(&notifier).is_empty());
+
+        probe.release(1, Outcome::Answer(true));
+        assert!(new.join().unwrap());
+        assert_eq!(slot_of(&registry, NAS), Some(Slot::Reachable));
+    }
+
+    #[test]
+    fn an_old_watcher_does_not_flag_a_newer_probe() {
+        let (registry, _, notifier) = gated_registry(true);
+        // A newer probe (token 7) holds the marker; the watcher belongs to
+        // token 3 and runs out its delay while that marker is in place.
+        lock(&registry.inner.slots).insert(
+            NAS.to_string(),
+            Slot::Probing {
+                token: 7,
+                shown: false,
+            },
+        );
+
+        registry.watch(NAS, 3);
+
+        assert_eq!(
+            slot_of(&registry, NAS),
+            Some(Slot::Probing {
+                token: 7,
+                shown: false
+            })
+        );
+        assert!(events(&notifier).is_empty());
+        assert!(registry.unreachable_folders().is_empty());
     }
 }
