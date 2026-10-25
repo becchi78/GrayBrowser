@@ -150,13 +150,15 @@ pub struct WbImportSummary {
     /// matched an *offline* video by hash but failed to convert or rename
     /// into place.
     pub thumbnails_failed: u32,
-    /// Legacy JPG filenames that matched no offline video's hash (unknown
-    /// naming pattern, or a hash with no corresponding `.wb` row) --
-    /// **including** filenames whose hash happens to belong to an *online*
-    /// row, since online rows are deliberately excluded from legacy-JPG
-    /// matching (see `thumbnails_linked`) and so read as "unmatched" here
-    /// even though their hash technically exists in the `.wb` data.
+    /// Legacy JPG files that need manual attention: unknown naming pattern
+    /// or non-JPG files, or a hash belonging to no `.wb` row. Files whose
+    /// hash belongs to an *online* row are NOT counted here; see
+    /// `thumbnails_skipped_online`.
     pub thumbnails_unmatched: u32,
+    /// Legacy JPG files whose hash belongs to an *online* row. Not migrated
+    /// on purpose (the thumbnail is generated from the video itself), so
+    /// they are excluded from `thumbnails_unmatched`.
+    pub thumbnails_skipped_online: u32,
 }
 
 pub struct TauriWbImportNotifier<R: tauri::Runtime> {

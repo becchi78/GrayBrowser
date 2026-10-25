@@ -236,6 +236,10 @@ fn import_all<S, F, N, C>(
     // thumbnail, if any, was already linked (or not) by whatever earlier
     // import/scan first registered them.
     let mut registered_movies: Vec<(String, String, String)> = Vec::new();
+    // Thumbnail hashes of inserted online rows. Their legacy JPGs are not
+    // migrated (a fresh thumbnail is generated from the video), but the
+    // hashes are needed so those JPGs are not reported as unmatched.
+    let mut online_hashes: Vec<String> = Vec::new();
 
     for (idx, row) in rows.iter().enumerate() {
         let candidate = match wb_row_to_import_candidate(row) {
@@ -311,9 +315,11 @@ fn import_all<S, F, N, C>(
                 // same as a normal scan) once this loop finishes --
                 // preferred over the old low-res JPG whenever the real
                 // video can produce a fresh one.
-                if file_state.status == "offline" {
-                    if let Some(hash) = candidate.thumbnail_hash {
+                if let Some(hash) = candidate.thumbnail_hash {
+                    if file_state.status == "offline" {
                         registered_movies.push((id, hash, candidate.movie_path.clone()));
+                    } else {
+                        online_hashes.push(hash);
                     }
                 }
             }
@@ -340,13 +346,15 @@ fn import_all<S, F, N, C>(
             Vec::new()
         }
     };
-    let (thumbnails_linked, thumbnails_failed, thumbnails_unmatched) = link_thumbnails(
-        &paths.thumbnail_folder,
-        &paths.thumbnails_dir,
-        &watch_folders,
-        &registered_movies,
-        ffmpeg,
-    );
+    let (thumbnails_linked, thumbnails_failed, thumbnails_unmatched, thumbnails_skipped_online) =
+        link_thumbnails(
+            &paths.thumbnail_folder,
+            &paths.thumbnails_dir,
+            &watch_folders,
+            &registered_movies,
+            &online_hashes,
+            ffmpeg,
+        );
 
     let summary = WbImportSummary {
         registered,
@@ -357,11 +365,12 @@ fn import_all<S, F, N, C>(
         thumbnails_linked,
         thumbnails_failed,
         thumbnails_unmatched,
+        thumbnails_skipped_online,
     };
 
     log::info!(
         "wb import complete: registered={} skipped={} clamped_scores={} tags_assigned={} \
-         source_tag_count={} thumbnails_linked={} thumbnails_failed={} thumbnails_unmatched={}",
+         source_tag_count={} thumbnails_linked={} thumbnails_failed={} thumbnails_unmatched={} \n         thumbnails_skipped_online={}",
         summary.registered,
         summary.skipped,
         summary.clamped_scores,
@@ -369,7 +378,8 @@ fn import_all<S, F, N, C>(
         summary.source_tag_count,
         summary.thumbnails_linked,
         summary.thumbnails_failed,
-        summary.thumbnails_unmatched
+        summary.thumbnails_unmatched,
+        summary.thumbnails_skipped_online
     );
 
     notifier.notify_complete(&summary);
@@ -396,8 +406,11 @@ fn import_all<S, F, N, C>(
 /// `list_videos_missing_thumbnails` require all
 /// `THUMBNAILS_PER_VIDEO` slots to exist).
 ///
-/// Returns `(linked, failed, unmatched)`, where `linked`/`failed` count
-/// videos, not individual slot files.
+/// Returns `(linked, failed, unmatched, skipped_online)`, where
+/// `linked`/`failed` count videos, not individual slot files, and
+/// `unmatched`/`skipped_online` count legacy JPG files. `online_hashes`
+/// separates JPGs of online videos (intentionally not migrated) from truly
+/// unmatched ones.
 ///
 /// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
 /// `watch_folders` (fetched once by the caller, `import_all`) is used
@@ -410,8 +423,9 @@ fn link_thumbnails<F: FfmpegAdapter>(
     thumbnails_root: &Path,
     watch_folders: &[String],
     registered_movies: &[(String, String, String)],
+    online_hashes: &[String],
     ffmpeg: &F,
-) -> (u32, u32, u32) {
+) -> (u32, u32, u32, u32) {
     let filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
         Err(e) => {
@@ -420,7 +434,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                  skipping thumbnail linking entirely",
                 thumbnail_folder.display()
             );
-            return (0, 0, 0);
+            return (0, 0, 0, 0);
         }
     };
 
@@ -436,8 +450,9 @@ fn link_thumbnails<F: FfmpegAdapter>(
         .map(|(id, _, file_path)| (id.as_str(), file_path.as_str()))
         .collect();
 
-    let plan = match_thumbnail_files(&movies_for_matching, &filenames);
+    let plan = match_thumbnail_files(&movies_for_matching, online_hashes, &filenames);
     let thumbnails_unmatched = plan.unmatched_filenames.len() as u32;
+    let thumbnails_skipped_online = plan.skipped_online_filenames.len() as u32;
     if !plan.unmatched_filenames.is_empty() {
         log::warn!(
             "wb import: {} legacy thumbnail file(s) matched no imported video: {:?}",
@@ -522,7 +537,12 @@ fn link_thumbnails<F: FfmpegAdapter>(
         }
     }
 
-    (thumbnails_linked, thumbnails_failed, thumbnails_unmatched)
+    (
+        thumbnails_linked,
+        thumbnails_failed,
+        thumbnails_unmatched,
+        thumbnails_skipped_online,
+    )
 }
 
 #[cfg(test)]
@@ -1009,7 +1029,7 @@ mod tests {
 
         let ffmpeg = no_op_ffmpeg();
 
-        let (linked, failed, unmatched) = link_thumbnails(
+        let (linked, failed, unmatched, skipped_online) = link_thumbnails(
             &h.paths.thumbnail_folder,
             &h.paths.thumbnails_dir,
             &[],
@@ -1018,9 +1038,11 @@ mod tests {
                 "deadbeef".to_string(),
                 video_file_path.to_string(),
             )],
+            &[],
             &ffmpeg,
         );
 
+        assert_eq!(skipped_online, 0);
         assert_eq!(linked, 0, "a copy failure must not count as linked");
         assert_eq!(
             failed, 1,
@@ -1081,8 +1103,9 @@ mod tests {
     /// test, which calls `import_all` directly), never from the legacy
     /// JPG, even when a hash-matching legacy JPG exists. It must therefore
     /// never reach `ffmpeg.convert_image_to_webp` at all, and its legacy
-    /// JPG must be reported as `thumbnails_unmatched`, not
-    /// `thumbnails_linked`.
+    /// JPG must be counted as `thumbnails_skipped_online` -- not as
+    /// `thumbnails_unmatched` (which means "needs manual attention") and not
+    /// as `thumbnails_linked`.
     #[test]
     fn online_rows_are_excluded_from_legacy_thumbnail_matching() {
         let h = harness();
@@ -1121,21 +1144,76 @@ mod tests {
 
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
         assert_eq!(summary.registered, 1);
-        assert_eq!(
-            summary.thumbnails_linked, 0,
-            "an online row's legacy JPG must not be converted -- it gets a fresh \
-             thumbnail from the real video instead"
-        );
-        assert_eq!(
-            summary.thumbnails_unmatched, 1,
-            "the legacy JPG must show up as unmatched, since online rows are \
-             excluded from matching entirely"
-        );
+        assert_eq!(summary.thumbnails_linked, 0);
         assert_eq!(summary.thumbnails_failed, 0);
+        assert_eq!(
+            summary.thumbnails_unmatched, 0,
+            "an online row's legacy JPG is intentionally skipped, not unmatched"
+        );
+        assert_eq!(summary.thumbnails_skipped_online, 1);
 
         assert!(
             ffmpeg.calls.lock().unwrap().is_empty(),
             "ffmpeg must never be invoked for an online row's legacy thumbnail"
+        );
+    }
+
+    /// Online, offline and unrelated legacy JPGs in one folder must land in
+    /// three separate buckets.
+    #[test]
+    fn mixed_online_offline_and_unrelated_thumbnails_are_counted_separately() {
+        let h = harness();
+
+        let online_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(online_file.path(), b"hello mixed thumbnails").unwrap();
+        let online_row = row(|r| {
+            r.movie_id = 1;
+            r.movie_path = online_file.path().to_string_lossy().to_string();
+            r.hash = "1e5e0fbf".to_string();
+        });
+        let offline_row = row(|r| {
+            r.movie_id = 2;
+            r.movie_name = "offline.mp4".to_string();
+            r.movie_path = "Z:\\no\\such\\offline.mp4".to_string();
+            r.hash = "2f6f1cc0".to_string();
+        });
+
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![online_row, offline_row]),
+            ..Default::default()
+        };
+
+        for name in [
+            "On.mp4.#1e5e0fbf.jpg",
+            "Off.mp4.#2f6f1cc0.jpg",
+            "Other.mp4.#deadbeef.jpg",
+        ] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+
+        let ffmpeg = no_op_ffmpeg();
+        let notifier = FakeWbImportNotifier::default();
+        let catalog_notifier = FakeCatalogNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &ffmpeg,
+            &notifier,
+            &catalog_notifier,
+        );
+
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.registered, 2);
+        assert_eq!(summary.thumbnails_linked, 1);
+        assert_eq!(summary.thumbnails_failed, 0);
+        assert_eq!(summary.thumbnails_skipped_online, 1);
+        assert_eq!(summary.thumbnails_unmatched, 1);
+        assert_eq!(
+            ffmpeg.calls.lock().unwrap().len(),
+            1,
+            "only the offline row's JPG is converted"
         );
     }
 
