@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { getLogDir, readLog } from "../api";
-import { LOG_LEVELS, entryMatches, mergeEntries, singleLine } from "../lib/logFilter";
+import {
+  LOG_LEVELS,
+  entryMatches,
+  mergeEntries,
+  shouldStopFollowing,
+  singleLine,
+} from "../lib/logFilter";
 import type { LogEntryDto } from "../types";
 
 interface Props {
@@ -35,6 +41,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
   const [follow, setFollow] = useState(true);
   const closeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastScrollTopRef = useRef(0);
 
   // 1 秒ごとの増分読み取り。前の読み取りが終わってから次を予約するので、
   // 遅い読み取りが重なることはない。閉じたら(アンマウント)必ず止める。
@@ -121,10 +128,15 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
 
   function handleScroll() {
     const el = scrollRef.current;
-    if (!follow || !el) return;
-    // 追従による末尾への移動は下端との距離が 0 になるので、ここに来るのは
-    // 利用者が上へ動かしたときだけ。
-    if (el.scrollHeight - el.scrollTop - el.clientHeight > FOLLOW_THRESHOLD_PX) {
+    if (!el) return;
+    // 前回値は追従のオン/オフにかかわらず毎回更新する。
+    const prevTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    if (!follow) return;
+    // 追従による末尾への移動は下端との距離が 0 になる。縦位置が動いていない
+    // (横スクロールだけの)イベントは判定から除く。
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (shouldStopFollowing(prevTop, el.scrollTop, distance, FOLLOW_THRESHOLD_PX)) {
       setFollow(false);
     }
   }

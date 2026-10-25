@@ -2,7 +2,13 @@
 // (package.json の test:unit 参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LOG_LEVELS, entryMatches, mergeEntries, singleLine } from "./logFilter.ts";
+import {
+  LOG_LEVELS,
+  entryMatches,
+  mergeEntries,
+  shouldStopFollowing,
+  singleLine,
+} from "./logFilter.ts";
 
 const ALL = new Set<string>(LOG_LEVELS);
 const warn = { level: "WARN", target: "Graybrowser::Scan", message: "Found 3 Files" };
@@ -55,4 +61,18 @@ test("mergeEntries は reset で保持分を捨てて入れ替える", () => {
 test("singleLine は改行を記号に置き換える", () => {
   assert.equal(singleLine("a\nb\r\nc"), "a ⏎ b ⏎ c");
   assert.equal(singleLine("abc"), "abc");
+});
+
+test("shouldStopFollowing: 縦に上へ動いて下端から閾値を超えたら追従をやめる", () => {
+  assert.equal(shouldStopFollowing(100, 60, 40, 24), true);
+});
+
+test("shouldStopFollowing: 縦位置が同じ(横スクロールだけ)なら距離が離れていても追従を保つ", () => {
+  assert.equal(shouldStopFollowing(83, 83, 17 + 100, 24), false);
+});
+
+test("shouldStopFollowing: 縦に動いても下端から閾値以内なら追従を保つ(境界を含む)", () => {
+  assert.equal(shouldStopFollowing(100, 90, 24, 24), false);
+  assert.equal(shouldStopFollowing(100, 90, 25, 24), true);
+  assert.equal(shouldStopFollowing(0, 500, 0, 24), false);
 });

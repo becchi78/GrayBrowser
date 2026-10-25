@@ -43,3 +43,15 @@ export function mergeEntries<T>(
 export function singleLine(message: string): string {
   return message.replace(/\r?\n/g, " ⏎ ");
 }
+
+// 追従をやめるかの判定。スクロールイベントは横スクロールでも発火するので、
+// 縦位置(scrollTop)が動いていないときは判定しない。ウィンドウの縮小などで
+// 縦位置が末尾から離れた状態で横にだけ動かしても、追従を落とさないため。
+export function shouldStopFollowing(
+  prevScrollTop: number,
+  scrollTop: number,
+  distanceFromBottom: number,
+  thresholdPx: number,
+): boolean {
+  return scrollTop !== prevScrollTop && distanceFromBottom > thresholdPx;
+}
