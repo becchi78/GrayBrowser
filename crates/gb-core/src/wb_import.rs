@@ -86,6 +86,12 @@ pub struct ThumbnailLinkPlan {
     /// or its hash isn't among `movies`. Reported to the user in the import
     /// log rather than silently dropped.
     pub unmatched_filenames: Vec<String>,
+    /// Filenames whose hash belongs to an online video (and to no offline
+    /// one). Online videos get a fresh thumbnail from the video itself, so
+    /// their legacy JPG is intentionally not migrated; keeping these apart
+    /// from `unmatched_filenames` stops "deliberately skipped" from being
+    /// reported as "needs manual attention".
+    pub skipped_online_filenames: Vec<String>,
 }
 
 /// Matches legacy thumbnail filenames (`[video filename].#<hash>.jpg`)
@@ -101,8 +107,14 @@ pub struct ThumbnailLinkPlan {
 /// hash, or whose hash matches no `movies` entry, lands in
 /// `unmatched_filenames` instead. Duplicate hashes within `movies` do not
 /// panic -- the filename is simply matched to every video sharing that hash.
+///
+/// `online_hashes` are the thumbnail hashes of online videos. A filename that
+/// matches no `movies` entry but whose hash is in `online_hashes` goes to
+/// `skipped_online_filenames` rather than `unmatched_filenames`. A match in
+/// `movies` takes precedence if a hash is (unexpectedly) in both.
 pub fn match_thumbnail_files(
     movies: &[(String, String)],
+    online_hashes: &[String],
     filenames: &[String],
 ) -> ThumbnailLinkPlan {
     let mut plan = ThumbnailLinkPlan::default();
@@ -118,7 +130,12 @@ pub fn match_thumbnail_files(
                 matched_any = true;
             }
         }
-        if !matched_any {
+        if matched_any {
+            continue;
+        }
+        if online_hashes.contains(&hash) {
+            plan.skipped_online_filenames.push(filename.clone());
+        } else {
             plan.unmatched_filenames.push(filename.clone());
         }
     }
@@ -405,7 +422,7 @@ mod tests {
     fn match_thumbnail_files_matches_by_hash() {
         let movies = vec![("id1".to_string(), "1e5e0fbf".to_string())];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
-        let plan = match_thumbnail_files(&movies, &filenames);
+        let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert_eq!(
             plan.matched,
             vec![("id1".to_string(), "MyVideo.mp4.#1e5e0fbf.jpg".to_string())]
@@ -417,7 +434,7 @@ mod tests {
     fn match_thumbnail_files_leaves_hash_mismatch_unmatched() {
         let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
-        let plan = match_thumbnail_files(&movies, &filenames);
+        let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert!(plan.matched.is_empty());
         assert_eq!(
             plan.unmatched_filenames,
@@ -429,7 +446,7 @@ mod tests {
     fn match_thumbnail_files_leaves_malformed_filenames_unmatched() {
         let movies = vec![("id1".to_string(), "1e5e0fbf".to_string())];
         let filenames = vec!["not_a_thumbnail.jpg".to_string()];
-        let plan = match_thumbnail_files(&movies, &filenames);
+        let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert!(plan.matched.is_empty());
         assert_eq!(
             plan.unmatched_filenames,
@@ -444,7 +461,7 @@ mod tests {
             ("id2".to_string(), "1e5e0fbf".to_string()),
         ];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
-        let plan = match_thumbnail_files(&movies, &filenames);
+        let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert_eq!(
             plan.matched,
             vec![
@@ -452,6 +469,45 @@ mod tests {
                 ("id2".to_string(), "MyVideo.mp4.#1e5e0fbf.jpg".to_string()),
             ]
         );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn match_thumbnail_files_separates_online_hash_from_unmatched() {
+        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
+        let online = vec!["bbbbbbbb".to_string()];
+        let filenames = vec![
+            "Off.mp4.#aaaaaaaa.jpg".to_string(),
+            "On.mp4.#bbbbbbbb.jpg".to_string(),
+            "Other.mp4.#cccccccc.jpg".to_string(),
+            "Thumbs.db".to_string(),
+        ];
+        let plan = match_thumbnail_files(&movies, &online, &filenames);
+        assert_eq!(
+            plan.matched,
+            vec![("id1".to_string(), "Off.mp4.#aaaaaaaa.jpg".to_string())]
+        );
+        assert_eq!(
+            plan.skipped_online_filenames,
+            vec!["On.mp4.#bbbbbbbb.jpg".to_string()]
+        );
+        assert_eq!(
+            plan.unmatched_filenames,
+            vec![
+                "Other.mp4.#cccccccc.jpg".to_string(),
+                "Thumbs.db".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn match_thumbnail_files_prefers_offline_match_over_online_skip() {
+        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
+        let online = vec!["aaaaaaaa".to_string()];
+        let filenames = vec!["V.mp4.#aaaaaaaa.jpg".to_string()];
+        let plan = match_thumbnail_files(&movies, &online, &filenames);
+        assert_eq!(plan.matched.len(), 1);
+        assert!(plan.skipped_online_filenames.is_empty());
         assert!(plan.unmatched_filenames.is_empty());
     }
 }

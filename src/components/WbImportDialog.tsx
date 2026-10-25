@@ -223,6 +223,16 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
               正常インポート: {summary.registered}件
             </p>
 
+            {summary.thumbnails_skipped_online > 0 && (
+              <p
+                className="wb-import-result-line wb-import-result-muted"
+                data-testid="import-result-skipped-online"
+              >
+                オンライン動画の旧サムネイル: {summary.thumbnails_skipped_online}件 —
+                動画本体から自動生成します（移行対象外）。
+              </p>
+            )}
+
             {summary.thumbnails_unmatched > 0 ? (
               <div
                 className="wb-import-result-needs-review"

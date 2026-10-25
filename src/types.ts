@@ -82,6 +82,7 @@ export interface WbImportSummary {
   thumbnails_linked: number;
   thumbnails_failed: number;
   thumbnails_unmatched: number;
+  thumbnails_skipped_online: number;
 }
 
 // Mirrors src-tauri/src/events.rs's TauriWbImportNotifier::notify_progress
