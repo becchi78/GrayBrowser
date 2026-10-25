@@ -2080,6 +2080,10 @@ button.link-button:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* 横スクロールバーを常時表示して縦方向の表示領域の高さを固定する。
+     長い行の出入りでバーが現れたり消えたりすると下端との距離が変わり、
+     「最新に追従」の自動オフ判定に影響しうるため。 */
+  overflow-x: scroll;
   border: 1px solid #c8c8c8;
   border-radius: 4px;
   font-family: Consolas, "Cascadia Mono", monospace;
@@ -2092,12 +2096,9 @@ button.link-button:focus-visible {
   gap: 0.6em;
   min-width: 100%;
   width: max-content;
-  max-width: 100%;
   padding: 0 0.5em;
   line-height: 22px;
   white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .log-viewer-row-level {
@@ -2113,8 +2114,6 @@ button.link-button:focus-visible {
 
 .log-viewer-row-message {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ライトテーマの文字色。チェックボックスのラベルと行のレベル表示で共有する。 */
