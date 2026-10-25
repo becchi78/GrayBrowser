@@ -1255,6 +1255,18 @@ pub fn count_videos_under_folder(
     Ok(count as u32)
 }
 
+/// `(id, file_path)` of every video regardless of `status`. Offline videos are
+/// included on purpose: a legacy-imported offline video keeps its linked
+/// thumbnail under the folder its path resolves to, so it has to follow when
+/// that resolution changes.
+pub fn list_video_ids_and_paths(conn: &Connection) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare("SELECT id, file_path FROM videos")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Deletes every `videos` row under `folder_path` (same folder-boundary-safe
 /// `LIKE` matching as `count_videos_under_folder`/`list_videos_filtered`),
 /// plus every `video_tags`/`path_collisions` row referencing one of them, in

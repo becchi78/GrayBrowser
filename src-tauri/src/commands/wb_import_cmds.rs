@@ -10,7 +10,7 @@ use tauri::State;
 
 use crate::adapters;
 use crate::db::Db;
-use crate::events::{TauriCatalogNotifier, TauriWbImportNotifier};
+use crate::events::{TauriCatalogNotifier, TauriWatchReconfigurer, TauriWbImportNotifier};
 use crate::reachability::ReachabilityRegistry;
 use crate::thumbnail::ThumbnailQueueHandle;
 use crate::wb_import::pipeline::{self, WbImportPaths};
@@ -80,6 +80,7 @@ pub async fn start_wb_import(
     reachability: State<'_, ReachabilityRegistry>,
     wb_path: String,
     thumbnail_folder_path: String,
+    register_watch_folders: bool,
 ) -> Result<(), String> {
     let wb_source = adapters::wb_source::RealWbSourceAdapter::open(&PathBuf::from(&wb_path))
         .map_err(|e| e.to_string())?;
@@ -93,6 +94,12 @@ pub async fn start_wb_import(
     let _ = std::fs::create_dir_all(&thumbnails_dir);
 
     let notifier = Arc::new(TauriWbImportNotifier::new(app.clone()));
+    let watch_reconfigurer = Arc::new(TauriWatchReconfigurer::new(
+        app.clone(),
+        crate::thumbnail::paths::thumbnails_root(
+            &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
+        ),
+    ));
     let catalog_notifier = Arc::new(TauriCatalogNotifier::new(app));
 
     pipeline::run_wb_import(
@@ -108,6 +115,8 @@ pub async fn start_wb_import(
         catalog_notifier,
         queue.inner().clone(),
         reachability.inner().clone(),
+        register_watch_folders,
+        watch_reconfigurer,
     );
 
     Ok(())

@@ -51,13 +51,13 @@ pub fn pick_watch_folders(
         return queries::get_watch_folders(&conn).map_err(|e| e.to_string());
     }
 
-    let (merged, nas_poll_interval_secs) = {
+    let (existing, merged, nas_poll_interval_secs) = {
         let conn = db.writer.lock().unwrap();
         let existing = queries::get_watch_folders(&conn).map_err(|e| e.to_string())?;
-        let merged = merge_picked(existing, picked);
+        let merged = merge_picked(existing.clone(), picked);
         queries::set_watch_folders(&conn, &merged).map_err(|e| e.to_string())?;
         let interval = queries::get_nas_poll_interval_secs(&conn).map_err(|e| e.to_string())?;
-        (merged, interval)
+        (existing, merged, interval)
         // `conn` (and its writer-lock guard) drops here, before reconfigure
         // does its own DB reads/watcher-startup work.
     };
@@ -65,6 +65,23 @@ pub fn pick_watch_folders(
     let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
         &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
     );
+    // Thumbnails of videos already registered sit where the old folder list
+    // resolved them (typically `_unassigned/`); move them before anything
+    // reads them through the new list.
+    match db.read_pool.get() {
+        Ok(conn) => {
+            let moved = crate::thumbnail::reassign::reassign_thumbnails_after_folders_added(
+                &conn,
+                &thumbnails_root,
+                &existing,
+                &merged,
+            );
+            if moved > 0 {
+                TauriCatalogNotifier::new(app.clone()).notify_changed();
+            }
+        }
+        Err(e) => log::warn!("failed to move thumbnails into the new watch folders: {e}"),
+    }
     crate::watch::reconfigure_real_watch_manager(
         &app,
         db.inner(),

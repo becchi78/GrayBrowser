@@ -54,7 +54,7 @@ pub fn slot_path(video_dir: &Path, video_id: &str, slot: usize) -> PathBuf {
 /// Each individual file's move failure is logged via `log::warn!` and does
 /// not stop the remaining slots from being attempted -- the return value is
 /// simply whether *every* existing slot was moved successfully.
-fn move_thumbnail_files(video_id: &str, old_dir: &Path, new_dir: &Path) -> bool {
+pub(crate) fn move_thumbnail_files(video_id: &str, old_dir: &Path, new_dir: &Path) -> bool {
     if old_dir == new_dir {
         return true;
     }
