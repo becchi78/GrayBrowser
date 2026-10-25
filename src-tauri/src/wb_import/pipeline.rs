@@ -358,15 +358,32 @@ fn import_all<S, F, N, C>(
             Vec::new()
         }
     };
-    let (thumbnails_linked, thumbnails_failed, thumbnails_unmatched, thumbnails_skipped_online) =
-        link_thumbnails(
-            &paths.thumbnail_folder,
-            &paths.thumbnails_dir,
-            &watch_folders,
-            &registered_movies,
-            &online_hashes,
-            ffmpeg,
-        );
+    let link_outcome = link_thumbnails(
+        &paths.thumbnail_folder,
+        &paths.thumbnails_dir,
+        &watch_folders,
+        &registered_movies,
+        &online_hashes,
+        ffmpeg,
+    );
+
+    // The list view only fetches thumbnail images for rows whose
+    // `thumbnail_ready` is set, so slot files on disk alone leave the row
+    // stuck on "generating". One lock for the whole batch keeps the writer
+    // free for other callers; a single failure is logged and does not
+    // change the linked count, since the files really are in place.
+    if !link_outcome.linked_video_ids.is_empty() {
+        let conn = db.writer.lock().unwrap();
+        for video_id in &link_outcome.linked_video_ids {
+            if let Err(e) = queries::mark_thumbnail_ready(&conn, video_id) {
+                log::warn!("wb import: failed to mark thumbnail ready for video {video_id}: {e}");
+            }
+        }
+    }
+    let thumbnails_linked = link_outcome.linked;
+    let thumbnails_failed = link_outcome.failed;
+    let thumbnails_unmatched = link_outcome.unmatched;
+    let thumbnails_skipped_online = link_outcome.skipped_online;
 
     let summary = WbImportSummary {
         registered,
@@ -402,6 +419,18 @@ fn import_all<S, F, N, C>(
     catalog_notifier.notify_changed();
 }
 
+/// Result of [`link_thumbnails`]. `linked == linked_video_ids.len()`.
+#[derive(Debug, Default)]
+struct LinkOutcome {
+    linked: u32,
+    failed: u32,
+    unmatched: u32,
+    skipped_online: u32,
+    /// Videos whose slot files were all written; the caller must flag these
+    /// ready in the DB.
+    linked_video_ids: Vec<String>,
+}
+
 /// Legacy-thumbnail linking pass (`match_thumbnail_files` +
 /// `generate_thumbnail_for_video`'s atomic-rename pattern applied to
 /// `FfmpegAdapter::convert_image_to_webp` instead of `extract_thumbnail`).
@@ -419,11 +448,13 @@ fn import_all<S, F, N, C>(
 /// `list_videos_missing_thumbnails` require all
 /// `THUMBNAILS_PER_VIDEO` slots to exist).
 ///
-/// Returns `(linked, failed, unmatched, skipped_online)`, where
-/// `linked`/`failed` count videos, not individual slot files, and
-/// `unmatched`/`skipped_online` count legacy JPG files. `online_hashes`
-/// separates JPGs of online videos (intentionally not migrated) from truly
-/// unmatched ones.
+/// Returns a [`LinkOutcome`], where `linked`/`failed` count videos, not
+/// individual slot files, and `unmatched`/`skipped_online` count legacy JPG
+/// files. `online_hashes` separates JPGs of online videos (intentionally not
+/// migrated) from truly unmatched ones.
+///
+/// This function only writes files and never touches the DB; the caller
+/// marks `LinkOutcome::linked_video_ids` ready afterwards.
 ///
 /// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
 /// `watch_folders` (fetched once by the caller, `import_all`) is used
@@ -438,7 +469,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     registered_movies: &[(String, String, String)],
     online_hashes: &[String],
     ffmpeg: &F,
-) -> (u32, u32, u32, u32) {
+) -> LinkOutcome {
     let filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
         Err(e) => {
@@ -447,7 +478,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                  skipping thumbnail linking entirely",
                 thumbnail_folder.display()
             );
-            return (0, 0, 0, 0);
+            return LinkOutcome::default();
         }
     };
 
@@ -474,7 +505,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
         );
     }
 
-    let mut thumbnails_linked = 0u32;
+    let mut linked_video_ids: Vec<String> = Vec::new();
     let mut thumbnails_failed = 0u32;
     for (video_id, filename) in plan.matched {
         // Defensive only: every `video_id` here came from `movies_for_matching`,
@@ -535,7 +566,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
         let _ = fs::remove_file(&shared_tmp_path);
 
         match copy_err {
-            None => thumbnails_linked += 1,
+            None => linked_video_ids.push(video_id),
             Some(e) => {
                 log::warn!(
                     "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
@@ -550,12 +581,13 @@ fn link_thumbnails<F: FfmpegAdapter>(
         }
     }
 
-    (
-        thumbnails_linked,
-        thumbnails_failed,
-        thumbnails_unmatched,
-        thumbnails_skipped_online,
-    )
+    LinkOutcome {
+        linked: linked_video_ids.len() as u32,
+        failed: thumbnails_failed,
+        unmatched: thumbnails_unmatched,
+        skipped_online: thumbnails_skipped_online,
+        linked_video_ids,
+    }
 }
 
 #[cfg(test)]
@@ -983,6 +1015,88 @@ mod tests {
         assert!(!video_dir
             .join(format!("{failing_id}.wb_legacy.webp.tmp"))
             .exists());
+
+        let ready = |id: &str| -> i64 {
+            conn.query_row(
+                "SELECT thumbnail_ready FROM videos WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            ready(&matched_id),
+            1,
+            "a linked video must be flagged ready"
+        );
+        assert_eq!(
+            ready(&failing_id),
+            0,
+            "a conversion failure must leave thumbnail_ready unset"
+        );
+    }
+
+    /// Only an offline row whose legacy JPG was linked gets `thumbnail_ready`;
+    /// online rows (thumbnail comes from the real video) and offline rows with
+    /// no JPG stay 0. A re-import must not disturb the already-set flag.
+    #[test]
+    fn only_linked_offline_rows_become_thumbnail_ready_and_reimport_keeps_it() {
+        let h = harness();
+
+        let online_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(online_file.path(), b"hello ready flag").unwrap();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![
+                row(|r| {
+                    r.movie_id = 1;
+                    r.movie_path = online_file.path().to_string_lossy().to_string();
+                    r.hash = "1e5e0fbf".to_string();
+                }),
+                row(|r| {
+                    r.movie_id = 2;
+                    r.movie_path = "Z:\\linked.mp4".to_string();
+                    r.hash = "2f6f1cc0".to_string();
+                }),
+                row(|r| {
+                    r.movie_id = 3;
+                    r.movie_path = "Z:\\no_jpg.mp4".to_string();
+                    r.hash = "3a7a2dd1".to_string();
+                }),
+            ]),
+            ..Default::default()
+        };
+        for name in ["On.mp4.#1e5e0fbf.jpg", "Off.mp4.#2f6f1cc0.jpg"] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+        let ffmpeg = no_op_ffmpeg();
+
+        let ready_of = |path_like: &str| -> i64 {
+            let conn = h.db.writer.lock().unwrap();
+            conn.query_row(
+                "SELECT thumbnail_ready FROM videos WHERE file_path LIKE ?1",
+                [path_like],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        for pass in 0..2 {
+            import_all(
+                &h.db,
+                &h.paths,
+                &wb_source,
+                &ffmpeg,
+                &FakeWbImportNotifier::default(),
+                &FakeCatalogNotifier::default(),
+            );
+            assert_eq!(ready_of("Z:\\linked.mp4"), 1, "pass {pass}");
+            assert_eq!(ready_of("Z:\\no_jpg.mp4"), 0, "pass {pass}");
+            assert_eq!(
+                ready_of(&online_file.path().to_string_lossy()),
+                0,
+                "pass {pass}: online rows are left to the thumbnail worker"
+            );
+        }
     }
 
     /// Follow-up to the test above: that test only exercises
@@ -1042,7 +1156,7 @@ mod tests {
 
         let ffmpeg = no_op_ffmpeg();
 
-        let (linked, failed, unmatched, skipped_online) = link_thumbnails(
+        let outcome = link_thumbnails(
             &h.paths.thumbnail_folder,
             &h.paths.thumbnails_dir,
             &[],
@@ -1055,13 +1169,17 @@ mod tests {
             &ffmpeg,
         );
 
-        assert_eq!(skipped_online, 0);
-        assert_eq!(linked, 0, "a copy failure must not count as linked");
+        assert_eq!(outcome.skipped_online, 0);
+        assert_eq!(outcome.linked, 0, "a copy failure must not count as linked");
+        assert!(
+            outcome.linked_video_ids.is_empty(),
+            "a copy failure must not be reported as linked, or its thumbnail_ready would be set"
+        );
         assert_eq!(
-            failed, 1,
+            outcome.failed, 1,
             "a copy failure partway through the slot loop must still count as failed"
         );
-        assert_eq!(unmatched, 0);
+        assert_eq!(outcome.unmatched, 0);
 
         // Slots 0 and 1 were written successfully, then must have been
         // cleaned back up by the best-effort cleanup pass.
