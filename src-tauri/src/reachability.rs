@@ -56,6 +56,8 @@ pub const DEFAULT_RECHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// process, and `stop` exists for tests and orderly shutdown.
 pub struct RecheckHandle {
     stop: Arc<(Mutex<bool>, Condvar)>,
+    #[cfg(test)]
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl RecheckHandle {
@@ -64,6 +66,16 @@ impl RecheckHandle {
     pub fn stop(&self) {
         *lock(&self.stop.0) = true;
         self.stop.1.notify_all();
+    }
+
+    /// Stops the thread and waits until it has actually exited, so a test can
+    /// assert "nothing happens afterwards" without guessing at timing.
+    #[cfg(test)]
+    fn stop_and_join(mut self) {
+        self.stop();
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
     }
 }
 
@@ -123,14 +135,14 @@ impl ReachabilityRegistry {
     /// share, so never call it from the UI thread. Concurrent first calls for
     /// the same folder share a single probe.
     pub fn is_reachable(&self, folder: &str) -> bool {
-        self.resolve(folder, false)
+        self.resolve(folder, false, false)
     }
 
     /// Probes `folder` again regardless of what is cached and returns the
     /// fresh answer. A refresh that overlaps another probe of the same folder
     /// joins it instead of probing a second time.
     pub fn refresh(&self, folder: &str) -> bool {
-        self.resolve(folder, true)
+        self.resolve(folder, true, false)
     }
 
     /// Whether `path` belongs to a watch folder that is currently unreachable.
@@ -164,11 +176,19 @@ impl ReachabilityRegistry {
     /// the NAS case too. A probe against a cold share may block for ~20s, which
     /// only delays this thread. The probes go through `refresh`, so they join
     /// any probe already in flight and fire the same event and recovery hook.
+    ///
+    /// The folders are probed one after another, and the next wait starts only
+    /// after the whole pass is done, so a cold share stretches the interval by
+    /// the time it blocks. That is accepted: recovery within about a minute
+    /// does not need precision, and probing in parallel would multiply the
+    /// threads stuck in the OS on a dead share for no gain. A panic while
+    /// probing one folder is logged and the pass carries on, so one bad probe
+    /// cannot silently end the rechecking for the rest of the session.
     pub fn start_recheck(&self, interval: Duration) -> RecheckHandle {
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let registry = self.clone();
         let flag = Arc::clone(&stop);
-        thread::spawn(move || loop {
+        let thread = thread::spawn(move || loop {
             {
                 let (stopped, cond) = &*flag;
                 let guard = lock(stopped);
@@ -183,10 +203,21 @@ impl ReachabilityRegistry {
                 if *lock(&flag.0) {
                     return;
                 }
-                registry.refresh(&folder);
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    registry.resolve(&folder, true, true)
+                }));
+                if outcome.is_err() {
+                    log::error!("rechecking folder {folder} panicked; continuing");
+                }
             }
         });
-        RecheckHandle { stop }
+        #[cfg(not(test))]
+        drop(thread);
+        RecheckHandle {
+            stop,
+            #[cfg(test)]
+            thread: Some(thread),
+        }
     }
 
     /// Forgets every folder not in `keep` (a folder removed, renamed, or no
@@ -212,7 +243,10 @@ impl ReachabilityRegistry {
         }
     }
 
-    fn resolve(&self, folder: &str, force: bool) -> bool {
+    /// `only_if_known` makes a folder with no entry answer "unreachable"
+    /// without probing: the rechecker works from a snapshot, and a folder
+    /// forgotten since then must not be probed and registered again.
+    fn resolve(&self, folder: &str, force: bool, only_if_known: bool) -> bool {
         let inner = &*self.inner;
         let mut slots = lock(&inner.slots);
         let mut waited = false;
@@ -226,6 +260,7 @@ impl ReachabilityRegistry {
                 // that answer: it is as fresh as one it would have made.
                 Some(Slot::Reachable) if !force || waited => return true,
                 Some(Slot::Unreachable) if !force || waited => return false,
+                None if only_if_known => return false,
                 other => break other,
             }
         };
@@ -288,7 +323,7 @@ impl ReachabilityRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::FakeReachabilityNotifier;
+    use crate::events::{FakeReachabilityNotifier, ReachabilityNotifier};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
@@ -541,9 +576,12 @@ mod tests {
 
         probe.set_reachable(LOCAL, true);
 
-        assert!(wait_until(|| registry.unreachable_folders().is_empty()));
-        handle.stop();
+        // The hook is the last step of a recovery (after the state change and
+        // the event), so waiting for it covers all three.
+        assert!(wait_until(|| fired.load(Ordering::SeqCst) == 1));
+        handle.stop_and_join();
         assert_eq!(fired.load(Ordering::SeqCst), 1);
+        assert!(registry.unreachable_folders().is_empty());
         assert_eq!(
             events(&notifier),
             vec![vec![LOCAL.to_string()], Vec::<String>::new()]
@@ -561,7 +599,7 @@ mod tests {
         let handle = registry.start_recheck(TICK);
 
         assert!(wait_until(|| probe.call_count_for(NAS) >= 3));
-        handle.stop();
+        handle.stop_and_join();
 
         assert_eq!(probe.call_count_for(LOCAL), 1, "reachable: never rechecked");
         assert_eq!(
@@ -578,12 +616,126 @@ mod tests {
         let handle = registry.start_recheck(TICK);
         assert!(wait_until(|| probe.call_count_for(NAS) >= 2));
 
-        handle.stop();
-        // Allow a probe that was already under way to finish.
-        thread::sleep(TICK * 3);
-        let settled = probe.call_count_for(NAS);
+        handle.stop_and_join();
+        let after_exit = probe.call_count_for(NAS);
         thread::sleep(TICK * 6);
 
-        assert_eq!(probe.call_count_for(NAS), settled);
+        assert_eq!(probe.call_count_for(NAS), after_exit);
+    }
+
+    /// Runs `on_probe` with the folder and its probe count every time a
+    /// folder is probed, so a test can interleave another action at an exact
+    /// point of a recheck pass. Always answers "unreachable".
+    type ProbeHook = Box<dyn Fn(&str, usize) + Send + Sync>;
+
+    struct HookedProbe {
+        counts: Mutex<HashMap<String, usize>>,
+        on_probe: ProbeHook,
+    }
+
+    impl HookedProbe {
+        fn count(&self, folder: &str) -> usize {
+            self.counts
+                .lock()
+                .unwrap()
+                .get(folder)
+                .copied()
+                .unwrap_or(0)
+        }
+    }
+
+    impl FolderProbe for HookedProbe {
+        fn is_reachable(&self, folder: &str) -> bool {
+            let n = {
+                let mut counts = self.counts.lock().unwrap();
+                let n = counts.entry(folder.to_string()).or_insert(0);
+                *n += 1;
+                *n
+            };
+            (self.on_probe)(folder, n);
+            false
+        }
+    }
+
+    #[test]
+    fn recheck_does_not_resurrect_a_folder_forgotten_during_the_pass() {
+        const A: &str = "C:/a";
+        const B: &str = "C:/b";
+        const C: &str = "C:/c";
+        // While A is being rechecked (its second probe), A and B are removed
+        // and C stays. The pass already holds B in its snapshot.
+        let registry_slot: Arc<Mutex<Option<ReachabilityRegistry>>> = Arc::new(Mutex::new(None));
+        let hook_slot = registry_slot.clone();
+        let probe = Arc::new(HookedProbe {
+            counts: Mutex::new(HashMap::new()),
+            on_probe: Box::new(move |folder, n| {
+                if folder == A && n == 2 {
+                    let registry = hook_slot.lock().unwrap().clone().unwrap();
+                    registry.retain_folders(&[C.to_string()]);
+                }
+            }),
+        });
+        let registry =
+            ReachabilityRegistry::new(probe.clone(), Arc::new(FakeReachabilityNotifier::default()));
+        *registry_slot.lock().unwrap() = Some(registry.clone());
+        for folder in [A, B, C] {
+            registry.is_reachable(folder);
+        }
+
+        let handle = registry.start_recheck(TICK);
+        // C follows B in the pass, so C's second probe proves the pass went
+        // past B.
+        assert!(wait_until(|| probe.count(C) >= 2));
+        handle.stop_and_join();
+
+        assert_eq!(probe.count(B), 1, "B was forgotten and must not be probed");
+        assert_eq!(registry.unreachable_folders(), vec![C.to_string()]);
+    }
+
+    struct PanicOnceNotifier {
+        armed: std::sync::atomic::AtomicBool,
+    }
+
+    impl ReachabilityNotifier for PanicOnceNotifier {
+        fn notify_changed(&self, _unreachable: &[String]) {
+            if self.armed.swap(false, Ordering::SeqCst) {
+                panic!("notifier failure injected by the test");
+            }
+        }
+    }
+
+    #[test]
+    fn recheck_survives_a_panic_and_keeps_rechecking() {
+        const THIRD: &str = "X:/x";
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[LOCAL, NAS, THIRD]));
+        let notifier = Arc::new(PanicOnceNotifier {
+            armed: std::sync::atomic::AtomicBool::new(false),
+        });
+        let registry = ReachabilityRegistry::new(probe.clone(), notifier.clone());
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            registry.set_on_recovered(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        for folder in [LOCAL, NAS, THIRD] {
+            registry.is_reachable(folder);
+        }
+        // Armed only now, so the setup above does not trip it.
+        notifier.armed.store(true, Ordering::SeqCst);
+        let handle = registry.start_recheck(TICK);
+
+        // LOCAL sorts first, so its recovery hits the panic; NAS, next in the
+        // same pass, must still be rechecked.
+        probe.set_reachable(LOCAL, true);
+        probe.set_reachable(NAS, true);
+        assert!(wait_until(|| fired.load(Ordering::SeqCst) == 1));
+
+        // And a later pass still runs.
+        probe.set_reachable(THIRD, true);
+        assert!(wait_until(|| fired.load(Ordering::SeqCst) == 2));
+        handle.stop_and_join();
+        assert!(registry.unreachable_folders().is_empty());
     }
 }
