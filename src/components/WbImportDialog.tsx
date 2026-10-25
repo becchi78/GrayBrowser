@@ -21,6 +21,9 @@ const STEPS: { key: StepKey; label: string }[] = [
 export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
   const [wbPath, setWbPath] = useState<string | null>(null);
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
+  // On by default: the imported videos' folders are otherwise missing from
+  // the sidebar until the user adds them by hand.
+  const [registerWatchFolders, setRegisterWatchFolders] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<WbImportProgress | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
@@ -101,7 +104,7 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
     setError(null);
     setShowUnmatchedDetail(false);
     try {
-      await startWbImport(wbPath, thumbnailFolderPath);
+      await startWbImport(wbPath, thumbnailFolderPath, registerWatchFolders);
     } catch (e) {
       console.error(e);
       setError(String(e));
@@ -178,6 +181,18 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
                 旧サムネイルフォルダを選択
               </button>
               {thumbnailFolderPath && <span className="wb-import-path">{thumbnailFolderPath}</span>}
+            </div>
+            <div className="wb-import-dialog-row">
+              <label className="folder-row-check">
+                <input
+                  type="checkbox"
+                  data-testid="import-register-watch-folders"
+                  checked={registerWatchFolders}
+                  onChange={(e) => setRegisterWatchFolders(e.target.checked)}
+                  disabled={importing}
+                />
+                インポートした動画のフォルダを監視フォルダに追加する
+              </label>
             </div>
             <div className="wb-import-dialog-row">
               <button
@@ -275,6 +290,15 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
             {summary.ratings_from_star_tags > 0 && (
               <p className="wb-import-result-line wb-import-result-muted">
                 ★タグから評価にした: {summary.ratings_from_star_tags}件
+              </p>
+            )}
+
+            {summary.watch_folders_added.length > 0 && (
+              <p
+                className="wb-import-result-line wb-import-result-muted"
+                data-testid="import-result-watch-folders"
+              >
+                監視フォルダに追加: {summary.watch_folders_added.join(", ")}
               </p>
             )}
 

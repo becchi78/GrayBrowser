@@ -130,8 +130,11 @@ export const getThumbnailProgress = () => invoke<ThumbnailProgress>("get_thumbna
 export const playVideo = (filePath: string) => invoke<void>("play_video", { filePath });
 export const pickWbFile = () => invoke<string | null>("pick_wb_file");
 export const pickWbThumbnailFolder = () => invoke<string | null>("pick_wb_thumbnail_folder");
-export const startWbImport = (wbPath: string, thumbnailFolderPath: string) =>
-  invoke<void>("start_wb_import", { wbPath, thumbnailFolderPath });
+export const startWbImport = (
+  wbPath: string,
+  thumbnailFolderPath: string,
+  registerWatchFolders: boolean,
+) => invoke<void>("start_wb_import", { wbPath, thumbnailFolderPath, registerWatchFolders });
 export const listDuplicateGroups = () => invoke<DuplicateGroup[]>("list_duplicate_groups");
 export const refreshDuplicateGroups = () => invoke<void>("refresh_duplicate_groups");
 export const deleteDuplicateVideo = (videoId: string) =>
