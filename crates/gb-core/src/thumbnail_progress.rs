@@ -24,6 +24,11 @@ pub enum FinishOutcome {
     /// forever; the skipper drops it instead. It is not counted as done
     /// because this queue did not produce it.
     SkippedBusy,
+    /// The video's folder cannot be reached right now, so it was not
+    /// attempted. Dropped from the pending set like `SkippedBusy` -- waiting
+    /// on it would hold the batch open for as long as the outage lasts -- and
+    /// not counted as done. A later run re-lists it once the folder is back.
+    SkippedUnreachable,
 }
 
 impl FinishOutcome {
@@ -212,6 +217,17 @@ mod tests {
         p.add(["a"]);
         p.finish("ghost", SkippedBusy);
         assert_eq!(snap(&p), (0, 1));
+    }
+
+    #[test]
+    fn skipped_unreachable_lets_the_batch_complete_without_counting_as_done() {
+        let mut p = ThumbnailProgress::new();
+        p.add(["a", "b", "c"]);
+        p.finish("a", Generated);
+        p.finish("b", SkippedUnreachable);
+        assert_eq!(snap(&p), (1, 3));
+        p.finish("c", SkippedUnreachable);
+        assert_eq!(snap(&p), (0, 0));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::adapters::long_path;
 use crate::db::Db;
 use crate::dedup::{self, DuplicateGroup, DuplicateGroupKind, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
+use crate::reachability::ReachabilityRegistry;
 
 /// Returns the most recently detected duplicate groups
 /// (`dedup::refresh_duplicate_groups`'s last completed run's snapshot), with
@@ -39,11 +40,13 @@ pub async fn refresh_duplicate_groups(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     state: State<'_, DuplicateGroupsState>,
+    reachability: State<'_, ReachabilityRegistry>,
 ) -> Result<(), String> {
     dedup::refresh_duplicate_groups(
         db.inner().clone(),
         state.inner().clone(),
         Arc::new(TauriDedupNotifier::new(app)),
+        reachability.inner().clone(),
     );
     Ok(())
 }

@@ -4,6 +4,7 @@ import { formatDuration, formatFileSize, formatResolution } from "../lib/format"
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import type { ClickModifiers } from "../lib/multiSelect";
 import { needsPropertiesRefresh } from "../lib/videoProperties";
+import { useIsPathUnreachable } from "../reachabilityContext";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { StarRating } from "./StarRating";
 import { TagEditor } from "./TagEditor";
@@ -116,7 +117,10 @@ export function VideoRow({
       cancelled = true;
     };
   }, [video.id, catalogVersion, stillProbing]);
-  const isOffline = video.status === "offline";
+  // 保存先のフォルダに今届かない場合も、DBの状態は変えずに通常のオフラインと
+  // 同じ見た目・同じ操作制限にする（フォルダが戻れば自動で元に戻る）。
+  const folderUnreachable = useIsPathUnreachable(video.file_path);
+  const isOffline = video.status === "offline" || folderUnreachable;
 
   // サムネイルは元動画のアスペクト比を保ったまま表示する（バックエンドの
   // `extract_thumbnail`は`-vf

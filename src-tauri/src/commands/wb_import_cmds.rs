@@ -11,6 +11,7 @@ use tauri::State;
 use crate::adapters;
 use crate::db::Db;
 use crate::events::{TauriCatalogNotifier, TauriWbImportNotifier};
+use crate::reachability::ReachabilityRegistry;
 use crate::thumbnail::ThumbnailQueueHandle;
 use crate::wb_import::pipeline::{self, WbImportPaths};
 
@@ -76,6 +77,7 @@ pub async fn start_wb_import(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     queue: State<'_, ThumbnailQueueHandle>,
+    reachability: State<'_, ReachabilityRegistry>,
     wb_path: String,
     thumbnail_folder_path: String,
 ) -> Result<(), String> {
@@ -105,6 +107,7 @@ pub async fn start_wb_import(
         notifier,
         catalog_notifier,
         queue.inner().clone(),
+        reachability.inner().clone(),
     );
 
     Ok(())

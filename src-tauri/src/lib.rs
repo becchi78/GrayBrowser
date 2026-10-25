@@ -6,6 +6,7 @@ pub mod events;
 pub mod logging;
 pub mod metadata;
 pub mod paths;
+pub mod reachability;
 pub mod scan;
 pub mod thumbnail;
 pub mod watch;
@@ -105,6 +106,16 @@ pub fn run() {
             let dedup_state = dedup::DuplicateGroupsState::default();
             app.manage(dedup_state.clone());
 
+            // Which watch folders cannot be reached right now. Nothing is
+            // probed here: the first probe of a folder happens on whichever
+            // background thread needs the answer first, because a dead
+            // network share blocks for ~20s and `setup` must not.
+            let reachability = reachability::ReachabilityRegistry::new(
+                std::sync::Arc::new(adapters::folder_probe::RealFolderProbe),
+                std::sync::Arc::new(events::TauriReachabilityNotifier::new(app.handle().clone())),
+            );
+            app.manage(reachability.clone());
+
             println!(
                 "graybrowser starting (linked against {}); app dir: {}",
                 gb_core::crate_name(),
@@ -151,6 +162,7 @@ pub fn run() {
                 queue.clone(),
                 std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                 std::sync::Arc::clone(&notifier),
+                reachability.clone(),
             );
 
             // Startup resume: same stateless philosophy as the
@@ -160,6 +172,7 @@ pub fn run() {
                 db.clone(),
                 std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                 std::sync::Arc::clone(&notifier),
+                reachability.clone(),
             );
 
             // Startup resume: same
@@ -171,6 +184,7 @@ pub fn run() {
                 db.clone(),
                 dedup_state,
                 std::sync::Arc::new(events::TauriDedupNotifier::new(app.handle().clone())),
+                reachability.clone(),
             );
 
             // Local folders get realtime
@@ -188,6 +202,7 @@ pub fn run() {
                 let thumbnails_root = thumbnails_root.clone();
                 let queue = queue.clone();
                 let notifier = std::sync::Arc::clone(&notifier);
+                let reachability = reachability.clone();
                 std::sync::Arc::new(watch::follow_up::FollowUp::new(move || {
                     thumbnail::enqueue_missing_thumbnails(
                         db.clone(),
@@ -195,15 +210,26 @@ pub fn run() {
                         queue.clone(),
                         std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                         std::sync::Arc::clone(&notifier),
+                        reachability.clone(),
                     );
                     metadata::enqueue_missing_metadata_probes(
                         db.clone(),
                         std::sync::Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
                         std::sync::Arc::clone(&notifier),
+                        reachability.clone(),
                     );
                 }))
             };
-            let watch_manager = watch::RealtimeWatchManager::with_follow_up(follow_up);
+            // A folder coming back resumes the work that was skipped while
+            // it was down. The registry and the follow-up reference each
+            // other, which is fine: both live for the whole process.
+            {
+                let follow_up = std::sync::Arc::clone(&follow_up);
+                reachability.set_on_recovered(move || follow_up.trigger());
+            }
+            // Detached on purpose: it runs for the life of the process.
+            let _ = reachability.start_recheck(reachability::DEFAULT_RECHECK_INTERVAL);
+            let watch_manager = watch::RealtimeWatchManager::new(follow_up, reachability.clone());
             let (watch_folders, nas_poll_interval_secs) = {
                 let conn = db.read_pool.get()?;
                 (
@@ -338,6 +364,7 @@ pub fn run() {
             commands::ffmpeg_cmds::get_ffmpeg_status,
             commands::log_cmds::read_log,
             commands::log_cmds::get_log_dir,
+            commands::reachability_cmds::get_unreachable_folders,
             commands::update_cmds::get_update_check_on_startup,
             commands::update_cmds::set_update_check_on_startup,
             commands::update_cmds::check_for_update,

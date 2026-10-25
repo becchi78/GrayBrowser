@@ -13,6 +13,7 @@ import { fileDeleteDisabledReason } from "../lib/duplicateDelete";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
+import { useIsPathUnreachable } from "../reachabilityContext";
 
 const KIND_LABELS: Record<DuplicateGroupKind, string> = {
   quick_hash_confirmed: "内容一致（確定）",
@@ -268,7 +269,9 @@ function DuplicateGroupMemberRow({
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
-  const isOffline = member.status === "offline";
+  // 保存先のフォルダに今届かない場合も、通常のオフラインと同じ扱いにする。
+  const folderUnreachable = useIsPathUnreachable(member.file_path);
+  const isOffline = member.status === "offline" || folderUnreachable;
 
   async function handlePlay() {
     if (isOffline || busy) return;

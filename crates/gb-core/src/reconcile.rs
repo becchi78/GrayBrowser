@@ -238,9 +238,12 @@ pub fn decide_missing_video_ids(
     }
 }
 
-/// Case-insensitive prefix match (NTFS/Windows paths are case-insensitive).
+/// Shares `paths::is_under_folder` with the unreachable-folder check so the
+/// two cannot drift apart on case or separator handling. `dir` here always
+/// ends in a separator already (see `nas_poll`'s inaccessible-dir
+/// collection), which that function accepts as-is.
 fn is_under(file_path: &str, dir: &str) -> bool {
-    file_path.to_lowercase().starts_with(&dir.to_lowercase())
+    crate::paths::is_under_folder(file_path, dir)
 }
 
 /// The local realtime watcher's per-event removal decision. Unlike

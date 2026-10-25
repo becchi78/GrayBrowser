@@ -103,6 +103,7 @@ export const renameSkippedFile = (id: number, newName: string) =>
   invoke<RenameSkippedFileResult>("rename_skipped_file", { id, newName });
 export const getFfmpegStatus = () => invoke<FfmpegStatusDto>("get_ffmpeg_status");
 export const listWatchFolders = () => invoke<string[]>("list_watch_folders");
+export const getUnreachableFolders = () => invoke<string[]>("get_unreachable_folders");
 export const pickWatchFolders = () => invoke<string[]>("pick_watch_folders");
 export const countVideosUnderFolder = (folderPath: string) =>
   invoke<number>("count_videos_under_folder", { folderPath });

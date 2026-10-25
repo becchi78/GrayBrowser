@@ -24,10 +24,21 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use graybrowser_lib::adapters::folder_probe::RealFolderProbe;
 use graybrowser_lib::db;
-use graybrowser_lib::events::FakeCatalogNotifier;
+use graybrowser_lib::events::{FakeCatalogNotifier, NoopReachabilityNotifier};
+use graybrowser_lib::reachability::ReachabilityRegistry;
 use graybrowser_lib::watch::follow_up::FollowUp;
 use graybrowser_lib::watch::nas_poll::{run_nas_diff_scan, start_nas_polling};
+
+/// Probes the real filesystem, standing in for the share, like the rest of
+/// this suite.
+fn real_registry() -> ReachabilityRegistry {
+    ReachabilityRegistry::new(
+        Arc::new(RealFolderProbe),
+        Arc::new(NoopReachabilityNotifier),
+    )
+}
 
 fn init_temp_db() -> (tempfile::TempDir, db::Db) {
     let dir = tempfile::tempdir().expect("failed to create tempdir");
@@ -56,6 +67,7 @@ fn registers_new_files_found_on_the_simulated_nas() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -84,6 +96,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     let quick_hash_before: String = {
@@ -99,6 +112,7 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     let (quick_hash_after, count): (String, i64) = {
@@ -136,6 +150,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     fs::remove_file(&video_path).unwrap();
@@ -146,6 +161,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -186,6 +202,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     fs::remove_file(&paths[0]).unwrap();
@@ -196,6 +213,7 @@ fn a_single_file_missing_from_a_larger_library_is_flipped_offline() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -236,6 +254,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -250,6 +269,7 @@ fn an_unreachable_root_does_not_touch_any_existing_online_row() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -283,6 +303,7 @@ fn stop_returns_almost_immediately_regardless_of_the_poller_thread() {
         Duration::from_secs(600),
         Arc::new(FakeCatalogNotifier::default()),
         Arc::new(FollowUp::noop()),
+        real_registry(),
     );
     // Let the background thread actually get going before measuring --
     // this test is about stop()'s own latency, not thread-startup latency.
@@ -315,6 +336,7 @@ fn a_pre_set_stop_flag_prevents_any_processing_this_cycle() {
         &AtomicBool::new(true),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -347,6 +369,7 @@ fn run_nas_diff_scan_notifies_when_a_new_file_is_registered() {
         &AtomicBool::new(false),
         &notifier,
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -368,6 +391,7 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -379,6 +403,7 @@ fn run_nas_diff_scan_does_not_notify_on_an_unchanged_rescan() {
         &AtomicBool::new(false),
         &notifier,
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -409,6 +434,7 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     fs::remove_file(&paths[0]).unwrap();
@@ -421,6 +447,7 @@ fn run_nas_diff_scan_notifies_when_a_file_goes_offline() {
         &AtomicBool::new(false),
         &notifier,
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 
@@ -446,6 +473,7 @@ fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
         &AtomicBool::new(false),
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
     drop(nas_dir);
@@ -458,6 +486,7 @@ fn run_nas_diff_scan_does_not_notify_when_the_root_is_unreachable() {
         &AtomicBool::new(false),
         &notifier,
         &FollowUp::noop(),
+        &real_registry(),
     )
     .unwrap();
 

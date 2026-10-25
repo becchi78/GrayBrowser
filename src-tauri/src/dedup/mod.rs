@@ -28,6 +28,7 @@ use std::thread;
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::DedupNotifier;
+use crate::reachability::ReachabilityRegistry;
 
 /// `scan::hash_file`'s full_hash counterpart: same long-path + `File::open`
 /// shape, but `gb_core::hash::full_hash` only needs `Read` (not `Read +
@@ -103,12 +104,20 @@ pub struct DuplicateGroup {
 /// -- logging a WARN rather than propagating an `Err` -- whenever anything
 /// along the way can't produce an answer: the row no longer exists (deleted
 /// since the caller's id list was built), the file can't be opened (moved/
-/// locked/permission/vanished), or the write-back itself fails. This mirrors
+/// locked/permission/vanished), its watch folder is unreachable right now
+/// (opening it would block for ~20s and tell us nothing), or the write-back
+/// itself fails. A hash that is already stored is returned even then, since
+/// it needs no access to the file. This mirrors
 /// this codebase's established "skip and continue" policy for per-file I/O
 /// trouble during background batch work (see
 /// `scan::register_new_path`'s `hash_file` failure handling) -- one member's
 /// I/O trouble must never abort the whole duplicate-detection pass.
-fn ensure_full_hash(db: &Db, video_id: &str) -> Option<String> {
+fn ensure_full_hash(
+    db: &Db,
+    video_id: &str,
+    watch_folders: &[String],
+    reachability: &ReachabilityRegistry,
+) -> Option<String> {
     let row = match queries::find_video_by_id(&db.read_pool, video_id) {
         Ok(Some(row)) => row,
         Ok(None) => {
@@ -122,6 +131,10 @@ fn ensure_full_hash(db: &Db, video_id: &str) -> Option<String> {
     };
     if let Some(existing) = row.full_hash {
         return Some(existing);
+    }
+    if reachability.is_path_unreachable(&row.file_path, watch_folders) {
+        log::info!("dedup: skipping full_hash for {video_id}, its folder is unreachable right now");
+        return None;
     }
     match full_hash_file(&row.file_path) {
         Ok(hash) => {
@@ -201,8 +214,12 @@ pub fn refresh_group_members(db: &Db, groups: Vec<DuplicateGroup>) -> Vec<Duplic
 /// `path_collisions` pass (populated by both 経路X and 経路Y, see
 /// `queries::record_path_collision`'s doc comment), synchronously. Callers
 /// that don't want to block should use `refresh_duplicate_groups` instead.
-pub fn detect_duplicate_groups(db: &Db) -> anyhow::Result<Vec<DuplicateGroup>> {
+pub fn detect_duplicate_groups(
+    db: &Db,
+    reachability: &ReachabilityRegistry,
+) -> anyhow::Result<Vec<DuplicateGroup>> {
     let mut groups = Vec::new();
+    let watch_folders = queries::get_watch_folders(&*db.read_pool.get()?)?;
 
     // Stage 1 (cheap quick_hash+file_size grouping) + stage 2 (full_hash
     // confirmation, computed/backfilled lazily only for candidate-group
@@ -212,7 +229,7 @@ pub fn detect_duplicate_groups(db: &Db) -> anyhow::Result<Vec<DuplicateGroup>> {
         let mut owned_group: Vec<gb_core::dedup::VideoHashInfo> =
             Vec::with_capacity(candidate_group.len());
         for video in candidate_group {
-            let full_hash = ensure_full_hash(db, &video.id);
+            let full_hash = ensure_full_hash(db, &video.id, &watch_folders, reachability);
             owned_group.push(gb_core::dedup::VideoHashInfo {
                 id: video.id.clone(),
                 quick_hash: video.quick_hash.clone(),
@@ -235,8 +252,8 @@ pub fn detect_duplicate_groups(db: &Db) -> anyhow::Result<Vec<DuplicateGroup>> {
     // duplicate candidate on its own.
     for collision in queries::list_path_collisions(&db.read_pool)? {
         let ids = [collision.video_id, collision.colliding_video_id];
-        let hash_a = ensure_full_hash(db, &ids[0]);
-        let hash_b = ensure_full_hash(db, &ids[1]);
+        let hash_a = ensure_full_hash(db, &ids[0], &watch_folders, reachability);
+        let hash_b = ensure_full_hash(db, &ids[1], &watch_folders, reachability);
         let kind = if matches!((&hash_a, &hash_b), (Some(a), Some(b)) if a == b) {
             DuplicateGroupKind::PathCollisionConfirmed
         } else {
@@ -280,11 +297,15 @@ impl DuplicateGroupsState {
 /// result into `state`, and notifies the frontend. Errors are logged only,
 /// not propagated -- consistent with every other fire-and-forget background
 /// pass in this codebase.
-pub fn refresh_duplicate_groups<N>(db: Db, state: DuplicateGroupsState, notifier: Arc<N>)
-where
+pub fn refresh_duplicate_groups<N>(
+    db: Db,
+    state: DuplicateGroupsState,
+    notifier: Arc<N>,
+    reachability: ReachabilityRegistry,
+) where
     N: DedupNotifier + 'static,
 {
-    thread::spawn(move || match detect_duplicate_groups(&db) {
+    thread::spawn(move || match detect_duplicate_groups(&db, &reachability) {
         Ok(groups) => {
             state.set(groups.clone());
             notifier.notify_updated(&groups);
@@ -299,7 +320,17 @@ where
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
+    use crate::events::NoopReachabilityNotifier;
+    use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::fs;
+
+    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
+        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
+    }
+
+    fn all_reachable() -> ReachabilityRegistry {
+        registry_over(Arc::new(FakeFolderProbe::default()))
+    }
 
     fn insert_online_video(db: &Db, id: &str, file_path: &Path, quick_hash: &str, file_size: i64) {
         let conn = db.writer.lock().unwrap();
@@ -361,7 +392,7 @@ mod tests {
         insert_online_video(&db, "video-a", &path_a, "qh-shared", content.len() as i64);
         insert_online_video(&db, "video-b", &path_b, "qh-shared", content.len() as i64);
 
-        let groups = detect_duplicate_groups(&db).unwrap();
+        let groups = detect_duplicate_groups(&db, &all_reachable()).unwrap();
         assert_eq!(groups.len(), 1);
         assert!(matches!(
             groups[0].kind,
@@ -424,7 +455,7 @@ mod tests {
             content.len() as i64,
         );
 
-        let groups = detect_duplicate_groups(&db).unwrap();
+        let groups = detect_duplicate_groups(&db, &all_reachable()).unwrap();
         assert_eq!(groups.len(), 1);
         let mut ids: Vec<&str> = groups[0]
             .members
@@ -491,7 +522,7 @@ mod tests {
             .unwrap();
         }
 
-        let groups = detect_duplicate_groups(&db).unwrap();
+        let groups = detect_duplicate_groups(&db, &all_reachable()).unwrap();
 
         let confirmed_group = groups
             .iter()
@@ -629,5 +660,60 @@ mod tests {
             members: vec![],
         }]);
         assert_eq!(state.get().len(), 1);
+    }
+
+    #[test]
+    fn members_in_an_unreachable_watch_folder_are_not_hashed() {
+        let (_db_dir, db) = init_temp_db();
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.mp4"), dir.path().join("b.mp4"));
+        fs::write(&a, b"same bytes").unwrap();
+        fs::write(&b, b"same bytes").unwrap();
+        insert_online_video(&db, "a", &a, "qh", 10);
+        insert_online_video(&db, "b", &b, "qh", 10);
+        let folder = dir.path().to_string_lossy().to_string();
+        queries::set_watch_folders(&db.writer.lock().unwrap(), std::slice::from_ref(&folder))
+            .unwrap();
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
+        let registry = registry_over(Arc::clone(&probe));
+
+        let groups = detect_duplicate_groups(&db, &registry).unwrap();
+
+        assert!(groups.is_empty(), "unverifiable members form no group");
+        let stored: Vec<Option<String>> = ["a", "b"]
+            .iter()
+            .map(|id| {
+                queries::find_video_by_id(&db.read_pool, id)
+                    .unwrap()
+                    .unwrap()
+                    .full_hash
+            })
+            .collect();
+        assert_eq!(stored, vec![None, None], "nothing was read or written");
+        assert_eq!(probe.call_count_for(&folder), 1, "probed once, then cached");
+
+        // Once the folder is back the same videos are hashed and grouped.
+        probe.set_reachable(&folder, true);
+        registry.refresh(&folder);
+        let groups = detect_duplicate_groups(&db, &registry).unwrap();
+        assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn an_already_stored_full_hash_is_used_even_when_the_folder_is_unreachable() {
+        let (_db_dir, db) = init_temp_db();
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.mp4");
+        fs::write(&a, b"bytes").unwrap();
+        insert_online_video(&db, "a", &a, "qh", 5);
+        queries::update_full_hash(&db.writer.lock().unwrap(), "a", "cached-hash").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
+            folder.as_str()
+        ])));
+
+        let hash = ensure_full_hash(&db, "a", std::slice::from_ref(&folder), &registry);
+
+        assert_eq!(hash.as_deref(), Some("cached-hash"));
     }
 }

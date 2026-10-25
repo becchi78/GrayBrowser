@@ -119,6 +119,49 @@ pub fn folder_paths_conflict(a: &str, b: &str) -> bool {
     a == b || a.starts_with(&b) || b.starts_with(&a)
 }
 
+/// Lowercased with `/` folded into `\`, the form in which two path strings
+/// are compared. NTFS ignores case and accepts either separator, while the
+/// strings in the DB and in the watch-folder list may have been written with
+/// either.
+fn comparable_path(s: &str) -> String {
+    s.to_lowercase().replace('/', "\\")
+}
+
+/// Whether `path` lies strictly inside `folder`: a case-insensitive prefix
+/// match that requires the prefix to end on a separator boundary, so
+/// `W:\video2\a.mp4` is *not* under `W:\video` even though the strings share
+/// a prefix. `folder` may or may not carry a trailing separator (a drive
+/// root such as `W:\` and a plain folder such as `W:\video` both occur).
+/// Works on the plain (non-`\\?\`) form that `videos.file_path` and the
+/// watch-folder list are stored in. An empty `folder` contains nothing.
+pub fn is_under_folder(path: &str, folder: &str) -> bool {
+    let folder = comparable_path(folder);
+    let folder = folder.trim_end_matches('\\');
+    if folder.trim().is_empty() {
+        return false;
+    }
+    let mut prefix = String::with_capacity(folder.len() + 1);
+    prefix.push_str(folder);
+    prefix.push('\\');
+    comparable_path(path).starts_with(&prefix)
+}
+
+/// The entry of `folders` that `path` lies under, or `None`. When registered
+/// folders nest (they are not supposed to, see `folder_paths_conflict`) the
+/// longest, i.e. most specific, one wins.
+pub fn owning_folder<'a>(path: &str, folders: &'a [String]) -> Option<&'a str> {
+    folders
+        .iter()
+        .filter(|folder| is_under_folder(path, folder))
+        .max_by_key(|folder| folder.trim_end_matches(['\\', '/']).len())
+        .map(String::as_str)
+}
+
+/// Whether `path` lies under any of `folders`.
+pub fn is_under_any_folder(path: &str, folders: &[String]) -> bool {
+    folders.iter().any(|folder| is_under_folder(path, folder))
+}
+
 /// Rewrites `path`'s leading `old_folder` component to `new_folder`,
 /// preserving everything under it unchanged -- the core computation behind
 /// the folder-management dialog's path-edit feature: renaming a watched
@@ -607,5 +650,71 @@ mod tests {
             resolve_thumbnail_subdir(&folders, r"C:\Videos\Sub\a.mp4"),
             thumbnail_folder_subdir(r"C:\Videos\Sub")
         );
+    }
+
+    #[test]
+    fn is_under_folder_matches_inside_and_ignores_case() {
+        assert!(is_under_folder(r"W:\video\a.mp4", r"W:\video"));
+        assert!(is_under_folder(r"w:\VIDEO\Sub\a.mp4", r"W:\video"));
+        assert!(is_under_folder(r"W:\video\a.mp4", r"W:\video\"));
+    }
+
+    #[test]
+    fn is_under_folder_requires_a_separator_boundary() {
+        assert!(!is_under_folder(r"W:\video2\a.mp4", r"W:\video"));
+        assert!(!is_under_folder(r"W:\videos\a.mp4", r"W:\video\"));
+        // The folder itself is not "under" itself.
+        assert!(!is_under_folder(r"W:\video", r"W:\video"));
+    }
+
+    #[test]
+    fn is_under_folder_handles_drive_roots_and_unc() {
+        assert!(is_under_folder(r"W:\a.mp4", r"W:\"));
+        assert!(is_under_folder(r"W:\x\a.mp4", "W:"));
+        assert!(!is_under_folder(r"V:\a.mp4", r"W:\"));
+        assert!(is_under_folder(r"\\nas\share\v\a.mp4", r"\\NAS\share"));
+        assert!(!is_under_folder(r"\\nas\share2\a.mp4", r"\\nas\share"));
+    }
+
+    #[test]
+    fn is_under_folder_treats_forward_slashes_as_separators() {
+        assert!(is_under_folder("C:/videos/a.mp4", r"C:\videos"));
+        assert!(is_under_folder(r"C:\videos\a.mp4", "C:/videos/"));
+        assert!(!is_under_folder("C:/videos2/a.mp4", "C:/videos"));
+    }
+
+    #[test]
+    fn is_under_folder_rejects_an_empty_folder() {
+        assert!(!is_under_folder(r"\a.mp4", ""));
+        assert!(!is_under_folder(r"C:\a.mp4", "  "));
+        assert!(!is_under_folder(r"C:\a.mp4", r"\"));
+    }
+
+    #[test]
+    fn owning_folder_picks_the_matching_and_most_specific_folder() {
+        let folders = vec![
+            r"W:\video".to_string(),
+            r"V:\".to_string(),
+            r"W:\video\sub".to_string(),
+        ];
+        assert_eq!(
+            owning_folder(r"W:\video\a.mp4", &folders),
+            Some(r"W:\video")
+        );
+        assert_eq!(
+            owning_folder(r"W:\video\sub\a.mp4", &folders),
+            Some(r"W:\video\sub")
+        );
+        assert_eq!(owning_folder(r"V:\x.mp4", &folders), Some(r"V:\"));
+        assert_eq!(owning_folder(r"W:\video2\a.mp4", &folders), None);
+        assert_eq!(owning_folder(r"C:\a.mp4", &[]), None);
+    }
+
+    #[test]
+    fn is_under_any_folder_checks_every_entry() {
+        let folders = vec![r"W:\video".to_string(), r"V:\".to_string()];
+        assert!(is_under_any_folder(r"V:\a.mp4", &folders));
+        assert!(!is_under_any_folder(r"W:\video2\a.mp4", &folders));
+        assert!(!is_under_any_folder(r"W:\video\a.mp4", &[]));
     }
 }
