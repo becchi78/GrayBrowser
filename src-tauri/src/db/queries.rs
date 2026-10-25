@@ -509,6 +509,26 @@ pub fn increment_thumbnail_attempts(conn: &Connection, video_id: &str) -> rusqli
     Ok(())
 }
 
+/// Gives back one `thumbnail_attempts` count (never below 0). For a failure
+/// that turned out to be the folder being unreachable rather than the video
+/// being bad, so it must not count against the video's retry budget.
+pub fn refund_thumbnail_attempt(conn: &Connection, video_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE videos SET thumbnail_attempts = MAX(thumbnail_attempts - 1, 0) WHERE id = ?1",
+        params![video_id],
+    )?;
+    Ok(())
+}
+
+/// `refund_thumbnail_attempt`'s counterpart for `metadata_attempts`.
+pub fn refund_metadata_attempt(conn: &Connection, video_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE videos SET metadata_attempts = MAX(metadata_attempts - 1, 0) WHERE id = ?1",
+        params![video_id],
+    )?;
+    Ok(())
+}
+
 /// Increments `metadata_attempts` by 1 for `video_id`. Called by
 /// `metadata::worker` immediately after a probe attempt is
 /// determined to have failed.

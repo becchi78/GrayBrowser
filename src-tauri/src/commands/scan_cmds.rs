@@ -7,6 +7,7 @@ use crate::adapters;
 use crate::db::{queries, Db};
 use crate::dedup::{self, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
+use crate::reachability::ReachabilityRegistry;
 use crate::scan;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
 
@@ -140,6 +141,7 @@ pub async fn start_scan(
     db: State<'_, Db>,
     queue: State<'_, ThumbnailQueueHandle>,
     dedup_state: State<'_, DuplicateGroupsState>,
+    reachability: State<'_, ReachabilityRegistry>,
 ) -> Result<scan::ScanSummary, String> {
     let folders = {
         let conn = db.writer.lock().unwrap();
@@ -170,6 +172,7 @@ pub async fn start_scan(
         queue.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
         Arc::clone(&notifier),
+        reachability.inner().clone(),
     );
 
     // Fire-and-forget, same "resume after scan" reasoning as above.
@@ -177,6 +180,7 @@ pub async fn start_scan(
         db.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
         notifier,
+        reachability.inner().clone(),
     );
 
     // Fire-and-forget, same "resume after scan" reasoning: a scan can
@@ -186,6 +190,7 @@ pub async fn start_scan(
         db.inner().clone(),
         dedup_state.inner().clone(),
         Arc::new(TauriDedupNotifier::new(dedup_app_handle)),
+        reachability.inner().clone(),
     );
 
     Ok(summary)

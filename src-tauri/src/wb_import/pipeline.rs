@@ -20,6 +20,7 @@ use gb_core::wb_import::{
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, WbImportNotifier, WbImportSummary};
+use crate::reachability::ReachabilityRegistry;
 use crate::thumbnail::worker::THUMBNAILS_PER_VIDEO;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
 use crate::wb_import::thumbnail_scan;
@@ -70,6 +71,9 @@ pub struct WbImportPaths {
 /// which would conflict with `import_all`'s own `&F`/`&N`/`&C` borrowed-
 /// reference signature (kept borrowed there specifically so tests can pass
 /// plain fakes by reference without wrapping them in `Arc`).
+// One argument over clippy's limit: each is an independent handle the spawned
+// thread needs, and grouping them would only rename the problem.
+#[allow(clippy::too_many_arguments)]
 pub fn run_wb_import<S, F, N, C>(
     db: Db,
     paths: WbImportPaths,
@@ -78,6 +82,7 @@ pub fn run_wb_import<S, F, N, C>(
     notifier: Arc<N>,
     catalog_notifier: Arc<C>,
     thumbnails_queue: ThumbnailQueueHandle,
+    reachability: ReachabilityRegistry,
 ) where
     S: WbSourceAdapter + 'static,
     F: FfmpegAdapter + 'static,
@@ -105,6 +110,7 @@ pub fn run_wb_import<S, F, N, C>(
             thumbnails_queue,
             ffmpeg,
             catalog_notifier,
+            reachability,
         );
     });
 }

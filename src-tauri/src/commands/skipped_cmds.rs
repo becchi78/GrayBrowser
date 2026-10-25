@@ -12,6 +12,7 @@ use crate::adapters;
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
+use crate::reachability::ReachabilityRegistry;
 use crate::scan;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
 
@@ -101,6 +102,7 @@ pub fn rename_skipped_file(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     queue: State<'_, ThumbnailQueueHandle>,
+    reachability: State<'_, ReachabilityRegistry>,
     id: i64,
     new_name: String,
 ) -> Result<RenameOutcome, String> {
@@ -148,11 +150,13 @@ pub fn rename_skipped_file(
             queue.inner().clone(),
             Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
             Arc::clone(&notifier),
+            reachability.inner().clone(),
         );
         crate::metadata::enqueue_missing_metadata_probes(
             db.inner().clone(),
             Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
             notifier,
+            reachability.inner().clone(),
         );
     }
     Ok(outcome)

@@ -39,6 +39,14 @@ export function onCatalogChanged(cb: () => void): () => void {
 }
 
 /**
+ * Subscribes to reachability:changed. The payload is the complete current
+ * list of watch folders that cannot be reached, not a diff.
+ */
+export function onReachabilityChanged(cb: (unreachableFolders: string[]) => void): () => void {
+  return subscribe<string[]>("reachability:changed", cb);
+}
+
+/**
  * Subscribes to thumbnail:progress (background thumbnail generation).
  */
 export function onThumbnailProgress(cb: (progress: ThumbnailProgress) => void): () => void {

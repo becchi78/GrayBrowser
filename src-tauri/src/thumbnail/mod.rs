@@ -19,6 +19,7 @@ use gb_core::thumbnail_progress::{FinishOutcome, ProgressSnapshot, ThumbnailProg
 
 use crate::db::Db;
 use crate::events::CatalogNotifier;
+use crate::reachability::ReachabilityRegistry;
 
 const WORKER_THREAD_COUNT: usize = 4;
 const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -184,17 +185,25 @@ fn remove_tmp_files_in(dir: &Path, descend: bool) -> usize {
 /// completed thumbnail, not one at the very end, so the grid fills in
 /// incrementally (matching the "list first, thumbnails backfill"
 /// experience) rather than freezing until the whole batch is done.
+///
+/// Videos under a watch folder that is unreachable right now are skipped
+/// without spending a retry (opening them would block for ~20s each and
+/// permanently fail the video after a few restarts). The skipped videos are
+/// picked up again by the follow-up run that fires when the folder returns.
 pub fn enqueue_missing_thumbnails<F, N>(
     db: Db,
     thumbnails_dir: PathBuf,
     queue: ThumbnailQueueHandle,
     ffmpeg: Arc<F>,
     notifier: Arc<N>,
+    reachability: ReachabilityRegistry,
 ) where
     F: FfmpegAdapter + 'static,
     N: CatalogNotifier + 'static,
 {
-    thread::spawn(move || run_thumbnail_queue(db, thumbnails_dir, queue, ffmpeg, notifier));
+    thread::spawn(move || {
+        run_thumbnail_queue(db, thumbnails_dir, queue, ffmpeg, notifier, reachability)
+    });
 }
 
 /// The body of `enqueue_missing_thumbnails`, split out so tests can run it
@@ -205,6 +214,7 @@ fn run_thumbnail_queue<F, N>(
     queue: ThumbnailQueueHandle,
     ffmpeg: Arc<F>,
     notifier: Arc<N>,
+    reachability: ReachabilityRegistry,
 ) where
     F: FfmpegAdapter + 'static,
     N: CatalogNotifier + 'static,
@@ -254,6 +264,7 @@ fn run_thumbnail_queue<F, N>(
             ffmpeg,
             notifier,
             pending,
+            reachability,
         );
     }
 }
@@ -261,6 +272,9 @@ fn run_thumbnail_queue<F, N>(
 /// Generates the given videos on a small worker pool. `pending` is a
 /// snapshot that may already be stale (another queue can finish a video
 /// after it was listed), so each worker re-checks the files after claiming.
+// Each argument is an independent handle moved into the worker threads;
+// bundling them would only rename the problem.
+#[allow(clippy::too_many_arguments)]
 fn process_pending<F, N>(
     db: Db,
     thumbnails_dir: PathBuf,
@@ -269,6 +283,7 @@ fn process_pending<F, N>(
     ffmpeg: Arc<F>,
     notifier: Arc<N>,
     pending: Vec<(String, PathBuf)>,
+    reachability: ReachabilityRegistry,
 ) where
     F: FfmpegAdapter + 'static,
     N: CatalogNotifier + 'static,
@@ -292,6 +307,7 @@ fn process_pending<F, N>(
                 let queue = queue.clone();
                 let ffmpeg = Arc::clone(&ffmpeg);
                 let notifier = Arc::clone(&notifier);
+                let reachability = reachability.clone();
                 thread::spawn(move || loop {
                     while queue.is_paused() {
                         thread::sleep(PAUSE_POLL_INTERVAL);
@@ -330,6 +346,20 @@ fn process_pending<F, N>(
                         queue.publish_progress(notifier.as_ref());
                         continue;
                     }
+                    // After the already-complete check, which needs no access
+                    // to the video. The first question about a folder may
+                    // block for as long as the share takes to time out; that
+                    // happens here on the worker, and every later video of
+                    // the same folder gets the cached answer.
+                    let path_str = path.to_string_lossy();
+                    if reachability.is_path_unreachable(&path_str, &watch_folders) {
+                        log::info!(
+                            "thumbnail worker: skipping {id}, its folder is unreachable right now"
+                        );
+                        queue.finish_tracked(&id, FinishOutcome::SkippedUnreachable);
+                        queue.publish_progress(notifier.as_ref());
+                        continue;
+                    }
                     let outcome = match worker::generate_thumbnail_for_video(
                         ffmpeg.as_ref(),
                         &db,
@@ -340,6 +370,23 @@ fn process_pending<F, N>(
                         Ok(()) => {
                             notifier.notify_changed();
                             FinishOutcome::Generated
+                        }
+                        Err(e) if reachability.confirm_path_unreachable(&path_str, &watch_folders) => {
+                            // The share went away during the attempt, so the
+                            // failure says nothing about the video: give the
+                            // retry back (the worker already counted it).
+                            log::warn!(
+                                "thumbnail worker: {id} failed because its folder became unreachable: {e}"
+                            );
+                            if let Err(refund_err) = crate::db::queries::refund_thumbnail_attempt(
+                                &db.writer.lock().unwrap(),
+                                &id,
+                            ) {
+                                log::warn!(
+                                    "failed to refund the thumbnail attempt for {id}: {refund_err}"
+                                );
+                            }
+                            FinishOutcome::SkippedUnreachable
                         }
                         Err(e) => {
                             log::warn!("thumbnail worker: giving up on video {id}: {e}");
@@ -369,6 +416,17 @@ mod tests {
     use gb_core::ports::ffmpeg::FfmpegAvailability;
     use gb_core::testing::fake_ffmpeg::{FakeCall, FakeFfmpegAdapter};
     use std::sync::atomic::AtomicUsize;
+
+    use crate::events::NoopReachabilityNotifier;
+    use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+
+    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
+        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
+    }
+
+    fn all_reachable() -> ReachabilityRegistry {
+        registry_over(Arc::new(FakeFolderProbe::default()))
+    }
 
     struct CountingNotifier(AtomicUsize);
 
@@ -480,7 +538,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
                     barrier.wait();
-                    run_thumbnail_queue(db, root, queue, ffmpeg, notifier);
+                    run_thumbnail_queue(db, root, queue, ffmpeg, notifier, all_reachable());
                 })
             })
             .collect();
@@ -519,6 +577,7 @@ mod tests {
             Arc::clone(&ffmpeg),
             Arc::clone(&notifier),
             vec![("vid-done".to_string(), PathBuf::from("C:/videos/done.mp4"))],
+            all_reachable(),
         );
 
         assert_eq!(extract_count_for(&ffmpeg, "vid-done"), 0);
@@ -545,6 +604,7 @@ mod tests {
             failing_ffmpeg(),
             Arc::clone(&notifier),
             vec![pending_entry("vid-fail")],
+            all_reachable(),
         );
 
         assert_eq!(thumbnail_ready_flag(&db, "vid-fail"), 0);
@@ -659,6 +719,7 @@ mod tests {
             ThumbnailQueueHandle::default(),
             Arc::clone(&ffmpeg),
             Arc::new(CountingNotifier(AtomicUsize::new(0))),
+            all_reachable(),
         );
 
         assert!(six_finals_exist(&dir, "vid-stuck"));
@@ -685,6 +746,7 @@ mod tests {
             queue.clone(),
             available_ffmpeg(Duration::ZERO),
             Arc::clone(&notifier),
+            all_reachable(),
         );
 
         let calls = notifier.0.lock().unwrap().clone();
@@ -717,6 +779,7 @@ mod tests {
             available_ffmpeg(Duration::ZERO),
             Arc::clone(&notifier),
             vec![pending_entry("b"), pending_entry("c")],
+            all_reachable(),
         );
 
         let calls = notifier.0.lock().unwrap().clone();
@@ -741,6 +804,7 @@ mod tests {
             ThumbnailQueueHandle::default(),
             failing_ffmpeg(),
             Arc::clone(&notifier),
+            all_reachable(),
         );
 
         let calls = notifier.0.lock().unwrap().clone();
@@ -767,6 +831,7 @@ mod tests {
             available_ffmpeg(Duration::ZERO),
             Arc::clone(&notifier),
             vec![pending_entry("a")],
+            all_reachable(),
         );
 
         let calls = notifier.0.lock().unwrap().clone();
@@ -795,6 +860,7 @@ mod tests {
             available_ffmpeg(Duration::ZERO),
             Arc::clone(&notifier),
             vec![pending_entry("x")],
+            all_reachable(),
         );
         drop(held);
 
@@ -825,6 +891,7 @@ mod tests {
             available_ffmpeg(Duration::ZERO),
             Arc::clone(&notifier),
             vec![pending_entry("a"), pending_entry("b")],
+            all_reachable(),
         );
 
         let calls = notifier.0.lock().unwrap().clone();
@@ -887,5 +954,142 @@ mod tests {
         second.join().unwrap();
 
         assert_eq!(*notifier.calls.lock().unwrap(), vec![(0, 2), (1, 2)]);
+    }
+
+    const NAS: &str = "W:/video";
+
+    fn nas_entry(id: &str) -> (String, PathBuf) {
+        (id.to_string(), PathBuf::from(format!("{NAS}/{id}.mp4")))
+    }
+
+    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
+        db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn watch_folders() -> Vec<String> {
+        vec![NAS.to_string(), "C:/videos".to_string()]
+    }
+
+    #[test]
+    fn videos_in_an_unreachable_folder_are_skipped_without_spending_attempts() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");
+        insert_test_video(&db, "nas-2", "W:/video/nas-2.mp4");
+        insert_test_video(&db, "local-1", "C:/videos/local-1.mp4");
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[NAS]));
+        let ffmpeg = failing_ffmpeg();
+        let recorder = Arc::new(ProgressRecorder::default());
+        let queue = ThumbnailQueueHandle::default();
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            watch_folders(),
+            queue.clone(),
+            Arc::clone(&ffmpeg),
+            Arc::clone(&recorder),
+            vec![
+                nas_entry("nas-1"),
+                nas_entry("nas-2"),
+                pending_entry("local-1"),
+            ],
+            registry_over(Arc::clone(&probe)),
+        );
+
+        assert_eq!(thumbnail_attempts_of(&db, "nas-1"), 0);
+        assert_eq!(thumbnail_attempts_of(&db, "nas-2"), 0);
+        assert_eq!(thumbnail_attempts_of(&db, "local-1"), 1);
+        assert_eq!(extract_count_for(&ffmpeg, "nas-1"), 0);
+        assert_eq!(extract_count_for(&ffmpeg, "nas-2"), 0);
+        assert_eq!(probe.call_count_for(NAS), 1, "probed once, then cached");
+        // Skipped videos retire from the batch, so the progress finishes
+        // (resets to 0/0) instead of waiting on them forever.
+        let reported = recorder.0.lock().unwrap().clone();
+        assert_eq!(reported.last(), Some(&(0, 0)));
+        assert_eq!(queue.progress_snapshot().total, 0);
+    }
+
+    #[test]
+    fn a_failure_while_the_folder_just_went_down_does_not_spend_an_attempt() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");
+        let probe = Arc::new(FakeFolderProbe::default());
+        let registry = registry_over(Arc::clone(&probe));
+        // Known reachable, so the worker goes ahead; the share then drops.
+        assert!(registry.is_reachable(NAS));
+        probe.set_reachable(NAS, false);
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            watch_folders(),
+            ThumbnailQueueHandle::default(),
+            failing_ffmpeg(),
+            Arc::new(CountingNotifier(AtomicUsize::new(0))),
+            vec![nas_entry("nas-1")],
+            registry.clone(),
+        );
+
+        assert_eq!(thumbnail_attempts_of(&db, "nas-1"), 0);
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+    }
+
+    #[test]
+    fn a_failure_in_a_reachable_folder_still_spends_an_attempt() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            watch_folders(),
+            ThumbnailQueueHandle::default(),
+            failing_ffmpeg(),
+            Arc::new(CountingNotifier(AtomicUsize::new(0))),
+            vec![nas_entry("nas-1")],
+            all_reachable(),
+        );
+
+        assert_eq!(thumbnail_attempts_of(&db, "nas-1"), 1);
+    }
+
+    #[test]
+    fn workers_racing_on_one_unprobed_folder_probe_it_once() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        let ids: Vec<String> = (0..8).map(|i| format!("nas-{i}")).collect();
+        for id in &ids {
+            insert_test_video(&db, id, &format!("W:/video/{id}.mp4"));
+        }
+        let probe = Arc::new(
+            FakeFolderProbe::with_unreachable(&[NAS]).with_delay(Duration::from_millis(100)),
+        );
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            watch_folders(),
+            ThumbnailQueueHandle::default(),
+            failing_ffmpeg(),
+            Arc::new(CountingNotifier(AtomicUsize::new(0))),
+            ids.iter().map(|id| nas_entry(id)).collect(),
+            registry_over(Arc::clone(&probe)),
+        );
+
+        assert_eq!(probe.call_count_for(NAS), 1);
+        for id in &ids {
+            assert_eq!(thumbnail_attempts_of(&db, id), 0);
+        }
     }
 }

@@ -20,6 +20,7 @@ use tauri::State;
 use crate::adapters;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
+use crate::reachability::ReachabilityRegistry;
 use crate::thumbnail::ThumbnailQueueHandle;
 use crate::{metadata, thumbnail};
 
@@ -316,6 +317,7 @@ pub fn regenerate_missing_thumbnails(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     queue: State<'_, ThumbnailQueueHandle>,
+    reachability: State<'_, ReachabilityRegistry>,
 ) -> Result<u32, String> {
     let (thumbnails_root, watch_folders) = resolve_thumbnail_context(&db)?;
     let ids =
@@ -327,6 +329,7 @@ pub fn regenerate_missing_thumbnails(
         queue.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
         Arc::new(TauriCatalogNotifier::new(app.clone())),
+        reachability.inner().clone(),
     );
     // The reset above already changed what the failures panel lists, and
     // generation may finish (or fail) without any further notification.
@@ -378,12 +381,17 @@ fn prepare_metadata_reprobe(db: &Db) -> anyhow::Result<Vec<String>> {
 /// `async` so the query and reset do not run on the main thread, where a
 /// sync command executes on Windows.
 #[tauri::command(async)]
-pub fn reprobe_missing_metadata(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u32, String> {
+pub fn reprobe_missing_metadata(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    reachability: State<'_, ReachabilityRegistry>,
+) -> Result<u32, String> {
     let ids = prepare_metadata_reprobe(&db).map_err(|e| e.to_string())?;
     metadata::enqueue_missing_metadata_probes(
         db.inner().clone(),
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
         Arc::new(TauriCatalogNotifier::new(app.clone())),
+        reachability.inner().clone(),
     );
     // Same reason as in `regenerate_missing_thumbnails`.
     TauriCatalogNotifier::new(app).notify_changed();

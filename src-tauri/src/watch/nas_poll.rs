@@ -21,6 +21,7 @@ use walkdir::WalkDir;
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
+use crate::reachability::ReachabilityRegistry;
 use crate::scan::{self, mtime_from_metadata};
 use crate::watch::follow_up::FollowUp;
 
@@ -76,8 +77,13 @@ pub fn run_nas_diff_scan(
     stop_flag: &AtomicBool,
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
+    reachability: &ReachabilityRegistry,
 ) -> anyhow::Result<()> {
-    if std::fs::read_dir(long_path::to_long_path(Path::new(folder))).is_err() {
+    // Always a fresh probe (not the cached answer): this is how an outage
+    // ending, or starting, is noticed. Recovery also resumes the thumbnail and
+    // metadata work that was skipped meanwhile (see
+    // `ReachabilityRegistry::set_on_recovered`).
+    if !reachability.refresh(folder) {
         log::warn!("NAS root unreachable this cycle, skipping: {folder}");
         return Ok(());
     }
@@ -289,6 +295,7 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     interval: Duration,
     notifier: Arc<N>,
     follow_up: Arc<FollowUp>,
+    reachability: ReachabilityRegistry,
 ) -> NasPollHandle {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop_flag);
@@ -301,6 +308,7 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
             &flag,
             notifier.as_ref(),
             &follow_up,
+            &reachability,
         ) {
             log::error!("NAS diff scan failed for {folder}: {err}");
         }
@@ -321,6 +329,7 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
                     &flag,
                     notifier.as_ref(),
                     &follow_up,
+                    &reachability,
                 ) {
                     log::error!("NAS diff scan failed for {folder}: {err}");
                 }
@@ -343,6 +352,7 @@ pub fn start_one_shot_diff_scan<N: CatalogNotifier + 'static>(
     folder: String,
     notifier: Arc<N>,
     follow_up: Arc<FollowUp>,
+    reachability: ReachabilityRegistry,
 ) -> NasPollHandle {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop_flag);
@@ -355,6 +365,7 @@ pub fn start_one_shot_diff_scan<N: CatalogNotifier + 'static>(
             &flag,
             notifier.as_ref(),
             &follow_up,
+            &reachability,
         ) {
             log::error!("startup diff scan failed for {folder}: {err}");
         }
@@ -367,7 +378,16 @@ pub fn start_one_shot_diff_scan<N: CatalogNotifier + 'static>(
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::FakeCatalogNotifier;
+    use crate::events::{FakeCatalogNotifier, NoopReachabilityNotifier};
+    use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+
+    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
+        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
+    }
+
+    fn all_reachable() -> ReachabilityRegistry {
+        registry_over(Arc::new(FakeFolderProbe::default()))
+    }
 
     #[test]
     fn diff_scan_triggers_follow_up_for_a_new_file() {
@@ -387,6 +407,7 @@ mod tests {
             &AtomicBool::new(false),
             &FakeCatalogNotifier::default(),
             &follow_up,
+            &all_reachable(),
         )
         .unwrap();
 
@@ -407,6 +428,7 @@ mod tests {
             &AtomicBool::new(false),
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
+            &all_reachable(),
         )
         .unwrap();
 
@@ -419,9 +441,87 @@ mod tests {
             &AtomicBool::new(false),
             &FakeCatalogNotifier::default(),
             &follow_up,
+            &all_reachable(),
         )
         .unwrap();
 
         assert!(!follow_up.has_pending());
+    }
+
+    #[test]
+    fn an_unreachable_folder_is_skipped_without_touching_the_catalog() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        // The directory really exists and holds a video: only the probe says
+        // it is down, so the early return is what keeps it from being walked.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("movie.mp4"), b"bytes").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
+        let notifier = FakeCatalogNotifier::default();
+
+        run_nas_diff_scan(
+            &db,
+            thumbs_root.path(),
+            &folder,
+            &AtomicBool::new(false),
+            &notifier,
+            &FollowUp::noop(),
+            &registry_over(probe),
+        )
+        .unwrap();
+
+        assert_eq!(notifier.calls(), 0);
+        assert!(queries::list_online_videos_under(&db.read_pool, &folder)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_poll_that_finds_the_folder_back_fires_the_recovery_hook_and_scans() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("movie.mp4"), b"bytes").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
+        let registry = registry_over(Arc::clone(&probe));
+        let follow_up = Arc::new(FollowUp::with_timing(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            || {},
+        ));
+        {
+            let follow_up = Arc::clone(&follow_up);
+            registry.set_on_recovered(move || follow_up.trigger());
+        }
+        let scan = |follow_up: &FollowUp| {
+            run_nas_diff_scan(
+                &db,
+                thumbs_root.path(),
+                &folder,
+                &AtomicBool::new(false),
+                &FakeCatalogNotifier::default(),
+                follow_up,
+                &registry,
+            )
+            .unwrap();
+        };
+
+        scan(&FollowUp::noop());
+        assert!(!follow_up.has_pending(), "still down: nothing to resume");
+
+        probe.set_reachable(&folder, true);
+        // The scan itself registers the file with a noop follow-up, so the
+        // pending flag below can only come from the recovery hook.
+        scan(&FollowUp::noop());
+
+        assert!(follow_up.has_pending());
+        assert_eq!(
+            queries::list_online_videos_under(&db.read_pool, &folder)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

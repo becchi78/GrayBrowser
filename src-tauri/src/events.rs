@@ -231,12 +231,52 @@ impl<R: tauri::Runtime> DedupNotifier for TauriDedupNotifier<R> {
     }
 }
 
+/// Tells the frontend which watch folders are currently unreachable. Kept in
+/// this file for the same reason as the other notifiers (the real
+/// implementation is `tauri::AppHandle<R>`-shaped).
+pub trait ReachabilityNotifier: Send + Sync {
+    /// Emitted whenever the set of unreachable folders changes, carrying the
+    /// complete current set (not a diff) so a missed event cannot leave the
+    /// frontend out of step.
+    fn notify_changed(&self, unreachable: &[String]);
+}
+
+/// For callers that have no frontend to tell (integration tests, a manager
+/// built without an app).
+pub struct NoopReachabilityNotifier;
+
+impl ReachabilityNotifier for NoopReachabilityNotifier {
+    fn notify_changed(&self, _unreachable: &[String]) {}
+}
+
+pub struct TauriReachabilityNotifier<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
+}
+
+impl<R: tauri::Runtime> TauriReachabilityNotifier<R> {
+    pub fn new(app: tauri::AppHandle<R>) -> Self {
+        Self { app }
+    }
+}
+
+impl<R: tauri::Runtime> ReachabilityNotifier for TauriReachabilityNotifier<R> {
+    fn notify_changed(&self, unreachable: &[String]) {
+        if let Err(e) = self.app.emit("reachability:changed", unreachable) {
+            log::error!("failed to emit reachability:changed: {e}");
+        }
+    }
+}
+
 #[cfg(feature = "testing")]
-pub use fake::{FakeCatalogNotifier, FakeDedupNotifier, FakeWbImportNotifier};
+pub use fake::{
+    FakeCatalogNotifier, FakeDedupNotifier, FakeReachabilityNotifier, FakeWbImportNotifier,
+};
 
 #[cfg(feature = "testing")]
 mod fake {
-    use super::{CatalogNotifier, DedupNotifier, WbImportNotifier, WbImportSummary};
+    use super::{
+        CatalogNotifier, DedupNotifier, ReachabilityNotifier, WbImportNotifier, WbImportSummary,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
@@ -309,6 +349,18 @@ mod fake {
     #[derive(Default)]
     pub struct FakeDedupNotifier {
         pub updated_calls: Mutex<Vec<usize>>,
+    }
+
+    /// Records every unreachable-folder set that would have been emitted.
+    #[derive(Default)]
+    pub struct FakeReachabilityNotifier {
+        pub calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl ReachabilityNotifier for FakeReachabilityNotifier {
+        fn notify_changed(&self, unreachable: &[String]) {
+            self.calls.lock().unwrap().push(unreachable.to_vec());
+        }
     }
 
     impl DedupNotifier for FakeDedupNotifier {

@@ -26,6 +26,7 @@ use gb_core::scan_pipeline;
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
+use crate::reachability::ReachabilityRegistry;
 use crate::scan::{self, mtime_from_metadata};
 use follow_up::FollowUp;
 use nas_poll::NasPollHandle;
@@ -61,6 +62,9 @@ pub struct RealtimeWatchManager {
     /// `reconfigure`) stops its thread.
     unreadable_retry: Mutex<Option<Arc<UnreadableRetry>>>,
     follow_up: Arc<FollowUp>,
+    /// Shared with the workers that skip unreachable folders; `reconfigure`
+    /// keeps its per-folder state in step with the folder list.
+    reachability: ReachabilityRegistry,
     /// Held for the whole of `reconfigure`. Commands that change the folder
     /// list or the per-folder check setting run concurrently, and the per-field
     /// locks above only protect each field: two interleaved reconfigures could
@@ -70,18 +74,25 @@ pub struct RealtimeWatchManager {
 
 impl Default for RealtimeWatchManager {
     fn default() -> Self {
-        Self::with_follow_up(Arc::new(FollowUp::noop()))
+        Self::new(
+            Arc::new(FollowUp::noop()),
+            ReachabilityRegistry::new(
+                Arc::new(crate::adapters::folder_probe::RealFolderProbe),
+                Arc::new(crate::events::NoopReachabilityNotifier),
+            ),
+        )
     }
 }
 
 impl RealtimeWatchManager {
-    pub fn with_follow_up(follow_up: Arc<FollowUp>) -> Self {
+    pub fn new(follow_up: Arc<FollowUp>, reachability: ReachabilityRegistry) -> Self {
         Self {
             handles: Mutex::default(),
             nas_pollers: Mutex::default(),
             startup_scans: Mutex::default(),
             unreadable_retry: Mutex::default(),
             follow_up,
+            reachability,
             reconfigure_lock: Mutex::new(()),
         }
     }
@@ -128,6 +139,12 @@ impl RealtimeWatchManager {
         }
         self.unreadable_retry.lock().unwrap().take();
 
+        // Only the folders that get polled/scanned below can have their state
+        // refreshed, so any other entry (a removed, renamed, or check-disabled
+        // folder) is dropped rather than left to go stale. Dropping a folder
+        // that is still unreachable clears it from the screens.
+        self.reachability.retain_folders(folders);
+
         let mut local_folders = Vec::new();
         let mut nas_folders = Vec::new();
         for folder in folders {
@@ -164,6 +181,7 @@ impl RealtimeWatchManager {
                     folder,
                     Arc::clone(&notifier),
                     Arc::clone(&self.follow_up),
+                    self.reachability.clone(),
                 )
             })
             .collect();
@@ -177,6 +195,7 @@ impl RealtimeWatchManager {
                     nas_poll_interval,
                     Arc::clone(&notifier),
                     Arc::clone(&self.follow_up),
+                    self.reachability.clone(),
                 )
             })
             .collect();
@@ -1407,5 +1426,45 @@ mod tests {
         );
         assert!(stop_flag.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(manager.startup_scans.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn reconfigure_forgets_the_state_of_folders_no_longer_in_the_list() {
+        use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let kept = tempfile::tempdir().unwrap();
+        let kept_folder = kept.path().to_string_lossy().to_string();
+        let removed_folder = "W:/video".to_string();
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(
+            &[removed_folder.as_str()],
+        ));
+        let registry =
+            ReachabilityRegistry::new(probe, Arc::new(crate::events::NoopReachabilityNotifier));
+        registry.is_reachable(&removed_folder);
+        assert_eq!(registry.unreachable_folders(), vec![removed_folder.clone()]);
+        let manager = RealtimeWatchManager::new(Arc::new(FollowUp::noop()), registry.clone());
+        let mut drive_type = FakeDriveTypeDetector::default();
+        drive_type
+            .results
+            .insert(kept.path().to_path_buf(), Ok(DriveKind::Local));
+
+        manager.reconfigure(
+            WatchContext {
+                db,
+                thumbnails_root: thumbs_root.path().to_path_buf(),
+            },
+            &[kept_folder],
+            &FakeFileWatcher {
+                watch_result: Ok(()),
+                ..Default::default()
+            },
+            &drive_type,
+            Duration::from_secs(600),
+            Arc::new(FakeCatalogNotifier::default()),
+        );
+
+        assert!(registry.unreachable_folders().is_empty());
     }
 }
