@@ -57,6 +57,12 @@ struct Inner {
     notifier: Arc<dyn ReachabilityNotifier>,
     /// A folder with no entry has never been probed.
     slots: Mutex<HashMap<String, Slot>>,
+    /// When each folder's last probe finished and was recorded. Written only
+    /// while `slots` is held (lock order: `slots`, then `checked`), in the same
+    /// critical section that stores the answer, so a reader holding `slots`
+    /// sees the answer and its time together. Forgetting a folder drops its
+    /// entry too: an answer that was never recorded must not look fresh.
+    checked: Mutex<HashMap<String, Instant>>,
     settled: Condvar,
     next_token: AtomicU64,
     /// How long a probe may run before its folder is published as unreachable.
@@ -110,6 +116,12 @@ pub const DEFAULT_PROVISIONAL_AFTER: Duration = Duration::from_secs(5);
 /// that a drive plugged back in or a NAS that woke up is noticed within about
 /// a minute rather than at the next (much slower) poll or a restart.
 pub const DEFAULT_RECHECK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How recent a finished probe must be for `refresh_if_stale` to trust it.
+/// Folder clicks can come in bursts, and each probe of a cold share costs the
+/// share a wake-up and a thread stuck in the OS for ~20s; this keeps a burst
+/// down to one probe while still noticing a change by the next visit.
+pub const DEFAULT_OPEN_RECHECK_MIN_AGE: Duration = Duration::from_secs(30);
 
 /// Stops the thread started by `ReachabilityRegistry::start_recheck`. Dropping
 /// it does not stop the thread: the thread is meant to live as long as the
@@ -223,6 +235,7 @@ impl ReachabilityRegistry {
                 probe,
                 notifier,
                 slots: Mutex::new(HashMap::new()),
+                checked: Mutex::new(HashMap::new()),
                 settled: Condvar::new(),
                 next_token: AtomicU64::new(0),
                 provisional_after,
@@ -255,6 +268,29 @@ impl ReachabilityRegistry {
     /// joins it instead of probing a second time.
     pub fn refresh(&self, folder: &str) -> bool {
         self.resolve(folder, true, false)
+    }
+
+    /// Probes `folder` again unless a probe of it is in flight (its answer
+    /// reaches the screens as an event anyway) or one finished less than
+    /// `min_age` ago. Returns whether this call ran a probe. Blocks for the
+    /// probe like `refresh`, so run it off the UI thread.
+    ///
+    /// The check and the probe are not one atomic step: two callers can both
+    /// find the folder stale, but the second `refresh` then joins the first's
+    /// probe, so the share is still probed once.
+    pub fn refresh_if_stale(&self, folder: &str, min_age: Duration) -> bool {
+        {
+            let slots = lock(&self.inner.slots);
+            if matches!(slots.get(folder), Some(Slot::Probing { .. })) {
+                return false;
+            }
+            let checked = lock(&self.inner.checked);
+            if checked.get(folder).is_some_and(|at| at.elapsed() < min_age) {
+                return false;
+            }
+        }
+        self.refresh(folder);
+        true
     }
 
     /// Whether `path` belongs to a watch folder that is currently unreachable.
@@ -342,6 +378,7 @@ impl ReachabilityRegistry {
                 }
                 kept
             });
+            lock(&self.inner.checked).retain(|folder, _| keep.contains(folder));
             self.inner.settled.notify_all();
             dropped_unreachable
         };
@@ -415,6 +452,7 @@ impl ReachabilityRegistry {
                 _ => None,
             };
             if shown.is_some() {
+                lock(&inner.checked).insert(folder.to_string(), Instant::now());
                 slots.insert(
                     folder.to_string(),
                     if reachable {
@@ -1460,5 +1498,146 @@ mod tests {
         );
         assert!(events(&notifier).is_empty());
         assert!(registry.unreachable_folders().is_empty());
+    }
+
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    #[test]
+    fn refresh_if_stale_probes_a_folder_never_checked() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::default());
+
+        assert!(registry.refresh_if_stale(NAS, HOUR));
+
+        assert_eq!(probe.call_count_for(NAS), 1);
+    }
+
+    #[test]
+    fn refresh_if_stale_leaves_a_recent_check_alone() {
+        let (registry, probe, notifier) = registry_with(FakeFolderProbe::default());
+        // Any completed probe counts, including the first one a worker made.
+        assert!(registry.is_reachable(NAS));
+
+        assert!(!registry.refresh_if_stale(NAS, HOUR));
+        assert!(!registry.refresh_if_stale(NAS, HOUR));
+
+        assert_eq!(probe.call_count_for(NAS), 1);
+        assert!(events(&notifier).is_empty());
+    }
+
+    #[test]
+    fn refresh_if_stale_probes_again_once_the_interval_has_passed() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::default());
+        assert!(registry.refresh_if_stale(NAS, HOUR));
+        assert!(!registry.refresh_if_stale(NAS, HOUR));
+
+        // A zero interval makes every recorded check old enough.
+        assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
+
+        assert_eq!(probe.call_count_for(NAS), 2);
+    }
+
+    #[test]
+    fn refresh_if_stale_does_not_start_a_probe_while_one_is_running() {
+        let (registry, probe, _) = gated_registry(true);
+        let r = registry.clone();
+        let running = thread::spawn(move || r.is_reachable(NAS));
+        assert!(wait_until(|| probe.entered.load(Ordering::SeqCst) == 1));
+
+        assert!(!registry.refresh_if_stale(NAS, Duration::ZERO));
+
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 1);
+        probe.release();
+        assert!(running.join().unwrap());
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refresh_if_stale_announces_a_folder_that_went_down() {
+        let (registry, probe, notifier) = registry_with(FakeFolderProbe::default());
+        assert!(registry.is_reachable(NAS));
+        probe.set_reachable(NAS, false);
+
+        assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
+
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+    }
+
+    #[test]
+    fn refresh_if_stale_publishes_a_slow_probe_provisionally() {
+        let (registry, probe, notifier) = gated_registry(false);
+        probe.release();
+        probe.reachable.store(true, Ordering::SeqCst);
+        assert!(registry.is_reachable(NAS));
+        probe.reset_gate();
+        probe.reachable.store(false, Ordering::SeqCst);
+
+        let r = registry.clone();
+        let t = thread::spawn(move || r.refresh_if_stale(NAS, Duration::ZERO));
+        assert!(wait_until(|| events(&notifier).len() == 1));
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+
+        probe.release();
+        assert!(t.join().unwrap());
+        assert_eq!(events(&notifier).len(), 1, "the answer confirms the flag");
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+    }
+
+    #[test]
+    fn refresh_if_stale_announces_a_recovery_and_runs_the_hook() {
+        let (registry, probe, notifier) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            registry.set_on_recovered(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        assert!(!registry.is_reachable(NAS));
+        probe.set_reachable(NAS, true);
+
+        assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
+
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            events(&notifier),
+            vec![vec![NAS.to_string()], Vec::<String>::new()]
+        );
+    }
+
+    #[test]
+    fn a_forgotten_folder_has_no_recorded_check() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::default());
+        assert!(registry.refresh_if_stale(NAS, HOUR));
+        assert!(registry.refresh_if_stale(LOCAL, HOUR));
+
+        registry.retain_folders(&[LOCAL.to_string()]);
+
+        assert!(
+            registry.refresh_if_stale(NAS, HOUR),
+            "forgotten: checked afresh"
+        );
+        assert!(
+            !registry.refresh_if_stale(LOCAL, HOUR),
+            "kept: still recent"
+        );
+        assert_eq!(probe.call_count_for(NAS), 2);
+        assert_eq!(probe.call_count_for(LOCAL), 1);
+    }
+
+    #[test]
+    fn an_answer_that_arrives_after_the_folder_was_forgotten_is_not_recorded() {
+        let (registry, probe, _) = gated_registry(true);
+        let r = registry.clone();
+        let t = thread::spawn(move || r.is_reachable(NAS));
+        assert!(wait_until(|| probe.entered.load(Ordering::SeqCst) == 1));
+
+        registry.retain_folders(&[]);
+        probe.release();
+        assert!(t.join().unwrap());
+
+        assert!(registry.refresh_if_stale(NAS, HOUR));
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 2);
     }
 }

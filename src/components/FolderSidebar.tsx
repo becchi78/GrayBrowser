@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listWatchFolders } from "../api";
+import { checkFolderReachability, listWatchFolders } from "../api";
 
 interface Props {
   /** `null` = "すべて" (no folder filter). */
@@ -57,7 +57,13 @@ export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
           }
           data-testid="folder-sidebar-item"
           title={folder}
-          onClick={() => onSelect(folder)}
+          onClick={() => {
+            onSelect(folder);
+            // Not awaited: the answer arrives as a reachability event, and a
+            // stalled share must not delay the folder switch. Clicking the
+            // already selected folder checks again on purpose.
+            checkFolderReachability(folder).catch(console.error);
+          }}
         >
           {folder}
         </button>
