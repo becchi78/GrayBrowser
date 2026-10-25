@@ -11,11 +11,19 @@
 //! Probing a dead share blocks inside the OS, so every probe happens on the
 //! caller's thread and the registry makes sure a folder is never probed by two
 //! threads at once: the second caller waits for the first one's answer.
+//!
+//! A dead share can keep a probe blocked for a minute, during which the
+//! screens would show the folder as available. So a probe that has not
+//! answered after `DEFAULT_PROVISIONAL_AFTER` is published as unreachable while
+//! it keeps running, and its answer then confirms or retracts that. Threads
+//! waiting for the answer never see the provisional state; they get the real
+//! result, so the workers' skip and retry decisions are unaffected.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gb_core::paths;
 use gb_core::ports::folder_probe::FolderProbe;
@@ -25,9 +33,23 @@ use crate::events::ReachabilityNotifier;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Slot {
     /// A thread is probing this folder right now; others wait for its answer.
-    Probing,
+    /// `token` identifies this probe, so a watcher or a finishing probe can
+    /// tell its own marker from a newer probe's after the folder was forgotten
+    /// and asked about again. `shown` is set once the probe has run long
+    /// enough that the folder is published as unreachable ahead of the answer.
+    Probing {
+        token: u64,
+        shown: bool,
+    },
     Reachable,
     Unreachable,
+}
+
+impl Slot {
+    /// Whether the screens are told this folder is unreachable.
+    fn is_published_unreachable(self) -> bool {
+        matches!(self, Slot::Unreachable | Slot::Probing { shown: true, .. })
+    }
 }
 
 struct Inner {
@@ -36,6 +58,12 @@ struct Inner {
     /// A folder with no entry has never been probed.
     slots: Mutex<HashMap<String, Slot>>,
     settled: Condvar,
+    next_token: AtomicU64,
+    /// How long a probe may run before its folder is published as unreachable.
+    provisional_after: Duration,
+    /// Watcher threads still running; lets a test prove they all exit.
+    #[cfg(test)]
+    watchers_alive: std::sync::atomic::AtomicUsize,
     /// Serializes snapshot-then-emit so an older set cannot overtake a newer
     /// one on its way to the frontend.
     emit_gate: Mutex<()>,
@@ -44,6 +72,34 @@ struct Inner {
     /// it enqueues, so the two cannot be built in either order otherwise.
     on_recovered: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
+
+impl Inner {
+    fn unreachable_folders(&self) -> Vec<String> {
+        let slots = lock(&self.slots);
+        let mut folders: Vec<String> = slots
+            .iter()
+            .filter(|(_, slot)| slot.is_published_unreachable())
+            .map(|(folder, _)| folder.clone())
+            .collect();
+        folders.sort();
+        folders
+    }
+
+    /// Takes the snapshot inside the gate, after any earlier emit has finished,
+    /// so the last event always carries the latest set. Never call with
+    /// `slots` held: the gate is taken before `slots`, never after.
+    fn emit_current(&self) {
+        let _gate = lock(&self.emit_gate);
+        let folders = self.unreachable_folders();
+        self.notifier.notify_changed(&folders);
+    }
+}
+
+/// How long a probe may run before its folder is published as unreachable
+/// while the probe carries on. Short enough that a stalled share is flagged
+/// well before the OS gives up on it (20s to a minute), long enough that a
+/// slow but alive share does not flicker offline.
+pub const DEFAULT_PROVISIONAL_AFTER: Duration = Duration::from_secs(5);
 
 /// How often folders that are currently unreachable are probed again. Long
 /// enough that a share which keeps failing costs next to nothing, short enough
@@ -90,10 +146,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Clears a `Probing` marker if the probe panics, so waiting threads are not
-/// stuck forever behind a probe that will never answer.
+/// stuck forever behind a probe that will never answer. A provisional
+/// "unreachable" already published goes with it, and the screens are told, so
+/// it cannot outlive the probe that justified it.
 struct ProbeGuard<'a> {
     inner: &'a Inner,
     folder: &'a str,
+    token: u64,
     armed: bool,
 }
 
@@ -102,22 +161,58 @@ impl Drop for ProbeGuard<'_> {
         if !self.armed {
             return;
         }
-        let mut slots = lock(&self.inner.slots);
-        if slots.get(self.folder) == Some(&Slot::Probing) {
-            slots.remove(self.folder);
+        let was_shown = {
+            let mut slots = lock(&self.inner.slots);
+            let shown = match slots.get(self.folder).copied() {
+                Some(Slot::Probing { token, shown }) if token == self.token => {
+                    slots.remove(self.folder);
+                    shown
+                }
+                _ => false,
+            };
+            self.inner.settled.notify_all();
+            shown
+        };
+        if was_shown {
+            // Runs while unwinding, where a second panic (a failing notifier)
+            // would abort the process.
+            let inner = self.inner;
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.emit_current()));
         }
-        self.inner.settled.notify_all();
+    }
+}
+
+/// Decrements the live-watcher count however the watcher thread ends.
+#[cfg(test)]
+struct WatcherCount<'a>(&'a Inner);
+
+#[cfg(test)]
+impl Drop for WatcherCount<'_> {
+    fn drop(&mut self) {
+        self.0.watchers_alive.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 impl ReachabilityRegistry {
     pub fn new(probe: Arc<dyn FolderProbe>, notifier: Arc<dyn ReachabilityNotifier>) -> Self {
+        Self::with_provisional_after(probe, notifier, DEFAULT_PROVISIONAL_AFTER)
+    }
+
+    fn with_provisional_after(
+        probe: Arc<dyn FolderProbe>,
+        notifier: Arc<dyn ReachabilityNotifier>,
+        provisional_after: Duration,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 probe,
                 notifier,
                 slots: Mutex::new(HashMap::new()),
                 settled: Condvar::new(),
+                next_token: AtomicU64::new(0),
+                provisional_after,
+                #[cfg(test)]
+                watchers_alive: std::sync::atomic::AtomicUsize::new(0),
                 emit_gate: Mutex::new(()),
                 on_recovered: Mutex::new(None),
             }),
@@ -157,16 +252,11 @@ impl ReachabilityRegistry {
         paths::owning_folder(path, watch_folders).is_some_and(|folder| !self.refresh(folder))
     }
 
-    /// The folders currently known to be unreachable, sorted.
+    /// The folders currently published as unreachable, sorted. This includes a
+    /// folder whose probe is still running but has gone on long enough to be
+    /// flagged provisionally.
     pub fn unreachable_folders(&self) -> Vec<String> {
-        let slots = lock(&self.inner.slots);
-        let mut folders: Vec<String> = slots
-            .iter()
-            .filter(|(_, slot)| **slot == Slot::Unreachable)
-            .map(|(folder, _)| folder.clone())
-            .collect();
-        folders.sort();
-        folders
+        self.inner.unreachable_folders()
     }
 
     /// Starts the one thread that probes the currently unreachable folders
@@ -230,7 +320,7 @@ impl ReachabilityRegistry {
             let mut dropped_unreachable = false;
             slots.retain(|folder, slot| {
                 let kept = keep.contains(folder);
-                if !kept && *slot == Slot::Unreachable {
+                if !kept && slot.is_published_unreachable() {
                     dropped_unreachable = true;
                 }
                 kept
@@ -252,7 +342,7 @@ impl ReachabilityRegistry {
         let mut waited = false;
         let previous = loop {
             match slots.get(folder).copied() {
-                Some(Slot::Probing) => {
+                Some(Slot::Probing { .. }) => {
                     slots = inner.settled.wait(slots).unwrap_or_else(|e| e.into_inner());
                     waited = true;
                 }
@@ -264,23 +354,38 @@ impl ReachabilityRegistry {
                 other => break other,
             }
         };
-        slots.insert(folder.to_string(), Slot::Probing);
+        let token = inner.next_token.fetch_add(1, Ordering::Relaxed);
+        slots.insert(
+            folder.to_string(),
+            Slot::Probing {
+                token,
+                shown: false,
+            },
+        );
         drop(slots);
 
         let mut guard = ProbeGuard {
             inner,
             folder,
+            token,
             armed: true,
         };
+        self.spawn_watcher(folder, token);
         let reachable = inner.probe.is_reachable(folder);
         guard.armed = false;
 
-        let stored = {
+        // `shown` is read under the lock that replaces the marker, so it is
+        // exactly what the screens had been told when the answer arrived.
+        let shown = {
             let mut slots = lock(&inner.slots);
-            // The entry is gone if the folder was forgotten mid-probe; the
-            // answer is still returned to the caller but not recorded.
-            let stored = slots.get(folder) == Some(&Slot::Probing);
-            if stored {
+            // The marker is gone (or is a newer probe's) if the folder was
+            // forgotten mid-probe; the answer is still returned to the caller
+            // but not recorded.
+            let shown = match slots.get(folder).copied() {
+                Some(Slot::Probing { token: t, shown }) if t == token => Some(shown),
+                _ => None,
+            };
+            if shown.is_some() {
                 slots.insert(
                     folder.to_string(),
                     if reachable {
@@ -291,13 +396,16 @@ impl ReachabilityRegistry {
                 );
             }
             inner.settled.notify_all();
-            stored
+            shown
         };
 
-        if stored {
+        if let Some(shown) = shown {
             let was_unreachable = previous == Some(Slot::Unreachable);
-            if was_unreachable != !reachable {
-                // The unreachable set changed (the folder went in or out).
+            // Compare what the screens were told before with what they should
+            // be told now: a provisional flag that the answer confirms needs
+            // no second event.
+            let was_published = was_unreachable || shown;
+            if was_published != !reachable {
                 self.emit_current();
             }
             if was_unreachable && reachable {
@@ -313,10 +421,63 @@ impl ReachabilityRegistry {
         reachable
     }
 
+    /// Starts the short-lived thread that flags `folder` as unreachable if the
+    /// probe `token` is still running after `provisional_after`. One per probe
+    /// rather than one shared timer: probes are rare (startup, the rechecks,
+    /// the NAS polls), and nearly all of them answer at once, which ends their
+    /// watcher at once.
+    fn spawn_watcher(&self, folder: &str, token: u64) {
+        let registry = self.clone();
+        let folder = folder.to_string();
+        #[cfg(test)]
+        self.inner.watchers_alive.fetch_add(1, Ordering::SeqCst);
+        let spawned = thread::Builder::new()
+            .name("reachability-watch".into())
+            .spawn(move || {
+                #[cfg(test)]
+                let _count = WatcherCount(&registry.inner);
+                registry.watch(&folder, token);
+            });
+        if spawned.is_err() {
+            // Without a watcher the folder is just not flagged early; the
+            // probe's answer still decides the final state.
+            #[cfg(test)]
+            self.inner.watchers_alive.fetch_sub(1, Ordering::SeqCst);
+            log::warn!("could not start the reachability watcher");
+        }
+    }
+
+    /// Waits until the probe `token` ends (any change of its marker, including
+    /// the folder being forgotten) or `provisional_after` passes. Only the
+    /// second case does anything: flag the folder and tell the screens. The
+    /// token check keeps this from flagging a later probe of the same folder.
+    fn watch(&self, folder: &str, token: u64) {
+        let inner = &*self.inner;
+        let deadline = Instant::now() + inner.provisional_after;
+        let mut slots = lock(&inner.slots);
+        loop {
+            match slots.get(folder).copied() {
+                Some(Slot::Probing { token: t, .. }) if t == token => {}
+                _ => return,
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            // Spurious and unrelated wake-ups just re-check the marker.
+            slots = inner
+                .settled
+                .wait_timeout(slots, deadline - now)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        slots.insert(folder.to_string(), Slot::Probing { token, shown: true });
+        drop(slots);
+        self.emit_current();
+    }
+
     fn emit_current(&self) {
-        let _gate = lock(&self.inner.emit_gate);
-        let folders = self.unreachable_folders();
-        self.inner.notifier.notify_changed(&folders);
+        self.inner.emit_current();
     }
 }
 
@@ -737,5 +898,244 @@ mod tests {
         assert!(wait_until(|| fired.load(Ordering::SeqCst) == 2));
         handle.stop_and_join();
         assert!(registry.unreachable_folders().is_empty());
+    }
+
+    /// Blocks every probe until `release`, so a test decides exactly when the
+    /// answer arrives instead of racing a sleep against the watcher.
+    struct GatedProbe {
+        released: Mutex<bool>,
+        cond: Condvar,
+        entered: AtomicUsize,
+        reachable: std::sync::atomic::AtomicBool,
+        panic_on_release: std::sync::atomic::AtomicBool,
+    }
+
+    impl GatedProbe {
+        fn new(reachable: bool) -> Arc<Self> {
+            Arc::new(Self {
+                released: Mutex::new(false),
+                cond: Condvar::new(),
+                entered: AtomicUsize::new(0),
+                reachable: std::sync::atomic::AtomicBool::new(reachable),
+                panic_on_release: std::sync::atomic::AtomicBool::new(false),
+            })
+        }
+
+        fn release(&self) {
+            *self.released.lock().unwrap() = true;
+            self.cond.notify_all();
+        }
+    }
+
+    impl FolderProbe for GatedProbe {
+        fn is_reachable(&self, _folder: &str) -> bool {
+            self.entered.fetch_add(1, Ordering::SeqCst);
+            // Not held across the panic below, which would poison the lock.
+            drop(
+                self.cond
+                    .wait_while(self.released.lock().unwrap(), |r| !*r)
+                    .unwrap(),
+            );
+            if self.panic_on_release.load(Ordering::SeqCst) {
+                panic!("probe failure injected by the test");
+            }
+            self.reachable.load(Ordering::SeqCst)
+        }
+    }
+
+    const SOON: Duration = Duration::from_millis(30);
+
+    fn gated_registry(
+        reachable: bool,
+    ) -> (
+        ReachabilityRegistry,
+        Arc<GatedProbe>,
+        Arc<FakeReachabilityNotifier>,
+    ) {
+        let probe = GatedProbe::new(reachable);
+        let notifier = Arc::new(FakeReachabilityNotifier::default());
+        let registry =
+            ReachabilityRegistry::with_provisional_after(probe.clone(), notifier.clone(), SOON);
+        (registry, probe, notifier)
+    }
+
+    fn watchers_alive(registry: &ReachabilityRegistry) -> usize {
+        registry.inner.watchers_alive.load(Ordering::SeqCst)
+    }
+
+    /// Starts a probe of `NAS` that stays in flight and waits until the
+    /// folder has been flagged unreachable.
+    fn start_slow_probe_until_flagged(
+        registry: &ReachabilityRegistry,
+        notifier: &FakeReachabilityNotifier,
+    ) -> thread::JoinHandle<bool> {
+        let r = registry.clone();
+        let t = thread::spawn(move || r.is_reachable(NAS));
+        assert!(wait_until(|| events(notifier).len() == 1));
+        t
+    }
+
+    #[test]
+    fn a_slow_probe_that_ends_unreachable_is_flagged_once() {
+        let (registry, probe, notifier) = gated_registry(false);
+
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 1, "still probing");
+
+        probe.release();
+        assert!(!t.join().unwrap());
+
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(events(&notifier).len(), 1, "confirming adds no event");
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+    }
+
+    #[test]
+    fn a_slow_probe_that_ends_reachable_retracts_the_flag_without_a_recovery() {
+        let (registry, probe, notifier) = gated_registry(true);
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            registry.set_on_recovered(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+        // A second caller waits for the real answer and never sees the flag.
+        let r = registry.clone();
+        let waiter = thread::spawn(move || r.is_reachable(NAS));
+
+        probe.release();
+
+        assert!(t.join().unwrap());
+        assert!(waiter.join().unwrap());
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(
+            events(&notifier),
+            vec![vec![NAS.to_string()], Vec::<String>::new()]
+        );
+        assert_eq!(fired.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 1, "one shared probe");
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+    }
+
+    #[test]
+    fn a_fast_probe_flags_nothing_and_its_watcher_exits_early() {
+        // The default delay is seconds; the watcher ending within wait_until's
+        // budget proves it was woken by the answer and did not run it out.
+        let probe = Arc::new(FakeFolderProbe::with_unreachable(&[NAS]));
+        let notifier = Arc::new(FakeReachabilityNotifier::default());
+        let registry = ReachabilityRegistry::new(probe, notifier.clone());
+
+        assert!(registry.is_reachable(LOCAL));
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+        assert!(events(&notifier).is_empty());
+        assert!(registry.unreachable_folders().is_empty());
+
+        // Even a fast unreachable answer is announced exactly once, as before.
+        assert!(!registry.is_reachable(NAS));
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+    }
+
+    #[test]
+    fn forgetting_a_flagged_folder_unflags_it_and_the_late_answer_is_not_recorded() {
+        let (registry, probe, notifier) = gated_registry(false);
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+
+        registry.retain_folders(&[]);
+
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(
+            events(&notifier),
+            vec![vec![NAS.to_string()], Vec::<String>::new()]
+        );
+
+        probe.release();
+        assert!(!t.join().unwrap());
+
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(events(&notifier).len(), 2, "no event from the late answer");
+        // Not recorded, so the next question probes afresh.
+        assert!(!registry.is_reachable(NAS));
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 2);
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+    }
+
+    #[test]
+    fn a_probe_that_panics_after_being_flagged_leaves_no_flag_behind() {
+        let (registry, probe, notifier) = gated_registry(false);
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+
+        probe.panic_on_release.store(true, Ordering::SeqCst);
+        probe.release();
+
+        assert!(t.join().is_err(), "the probe's panic reaches its caller");
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(
+            events(&notifier),
+            vec![vec![NAS.to_string()], Vec::<String>::new()]
+        );
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+
+        // The folder is unknown again, not stuck as "being probed".
+        probe.panic_on_release.store(false, Ordering::SeqCst);
+        assert!(!registry.is_reachable(NAS));
+    }
+
+    #[test]
+    fn a_panicking_probe_that_was_never_flagged_emits_nothing() {
+        let probe = GatedProbe::new(true);
+        probe.panic_on_release.store(true, Ordering::SeqCst);
+        probe.release();
+        let notifier = Arc::new(FakeReachabilityNotifier::default());
+        // Far longer than the test, so the flag cannot appear.
+        let registry = ReachabilityRegistry::with_provisional_after(
+            probe.clone(),
+            notifier.clone(),
+            Duration::from_secs(60),
+        );
+        let r = registry.clone();
+
+        assert!(thread::spawn(move || r.is_reachable(NAS)).join().is_err());
+
+        assert!(events(&notifier).is_empty());
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
+    }
+
+    #[test]
+    fn a_recheck_that_runs_long_is_flagged_again_and_still_recovers_through_the_hook() {
+        let (registry, probe, notifier) = gated_registry(false);
+        probe.release();
+        assert!(!registry.is_reachable(NAS));
+        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            registry.set_on_recovered(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        *probe.released.lock().unwrap() = false;
+        probe.reachable.store(true, Ordering::SeqCst);
+
+        let r = registry.clone();
+        let t = thread::spawn(move || r.refresh(NAS));
+        // While a recheck's marker is not yet flagged the folder is absent
+        // from the set; the flag puts it back.
+        assert!(wait_until(|| events(&notifier).len() == 2));
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+
+        probe.release();
+        assert!(t.join().unwrap());
+
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(fired.load(Ordering::SeqCst), 1, "a real recovery");
+        assert_eq!(events(&notifier).last(), Some(&Vec::<String>::new()));
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
     }
 }
