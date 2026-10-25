@@ -91,6 +91,34 @@ pub enum DuplicateGroupKind {
     /// duplicate candidate, independent of whether content verification
     /// succeeds.
     PathCollisionUnconfirmed,
+    /// Members sharing `quick_hash`+`file_size` whose content could not be
+    /// compared because a watch folder holding some of them is unreachable
+    /// and no `full_hash` was stored beforehand
+    /// (`gb_core::dedup::unverified_candidates`). Replaced by
+    /// `QuickHashConfirmed` (or dropped) once the folder is back and the
+    /// detection is re-run.
+    QuickHashCandidateUnverified,
+}
+
+/// Result of `ensure_full_hash`. Three-way because only an unreachable folder
+/// makes a duplicate candidate worth showing as "unverified"; an I/O failure
+/// on a reachable file says nothing about the content.
+#[derive(Debug, PartialEq, Eq)]
+enum FullHashOutcome {
+    Known(String),
+    /// No stored hash, and the folder is unreachable so the file was not read.
+    Unverifiable,
+    /// Row missing, file unreadable, or other trouble on a reachable file.
+    Failed,
+}
+
+impl FullHashOutcome {
+    fn into_hash(self) -> Option<String> {
+        match self {
+            Self::Known(hash) => Some(hash),
+            Self::Unverifiable | Self::Failed => None,
+        }
+    }
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -100,41 +128,41 @@ pub struct DuplicateGroup {
 }
 
 /// Ensures `video_id`'s `full_hash` is known, computing and writing it back
-/// (`queries::update_full_hash`) if it hasn't been already. Returns `None`
-/// -- logging a WARN rather than propagating an `Err` -- whenever anything
-/// along the way can't produce an answer: the row no longer exists (deleted
-/// since the caller's id list was built), the file can't be opened (moved/
-/// locked/permission/vanished), its watch folder is unreachable right now
-/// (opening it would block for ~20s and tell us nothing), or the write-back
-/// itself fails. A hash that is already stored is returned even then, since
-/// it needs no access to the file. This mirrors
-/// this codebase's established "skip and continue" policy for per-file I/O
-/// trouble during background batch work (see
-/// `scan::register_new_path`'s `hash_file` failure handling) -- one member's
-/// I/O trouble must never abort the whole duplicate-detection pass.
+/// (`queries::update_full_hash`) if it hasn't been already. Returns `Failed`
+/// -- logging a WARN rather than propagating an `Err` -- when the row no
+/// longer exists (deleted since the caller's id list was built) or the file
+/// can't be opened (moved/locked/permission/vanished). If its watch folder is
+/// unreachable right now (opening it would block for ~20s and tell us
+/// nothing) it returns `Unverifiable` instead. A failed write-back still
+/// returns the computed hash. A hash that is already stored is returned even
+/// then, since it needs no access to the file. This mirrors this codebase's
+/// established "skip and continue" policy for per-file I/O trouble during
+/// background batch work (see `scan::register_new_path`'s `hash_file` failure
+/// handling) -- one member's I/O trouble must never abort the whole
+/// duplicate-detection pass.
 fn ensure_full_hash(
     db: &Db,
     video_id: &str,
     watch_folders: &[String],
     reachability: &ReachabilityRegistry,
-) -> Option<String> {
+) -> FullHashOutcome {
     let row = match queries::find_video_by_id(&db.read_pool, video_id) {
         Ok(Some(row)) => row,
         Ok(None) => {
             log::warn!("dedup: video {video_id} no longer exists; skipping full_hash");
-            return None;
+            return FullHashOutcome::Failed;
         }
         Err(e) => {
             log::warn!("dedup: failed to look up video {video_id}: {e}");
-            return None;
+            return FullHashOutcome::Failed;
         }
     };
     if let Some(existing) = row.full_hash {
-        return Some(existing);
+        return FullHashOutcome::Known(existing);
     }
     if reachability.is_path_unreachable(&row.file_path, watch_folders) {
         log::info!("dedup: skipping full_hash for {video_id}, its folder is unreachable right now");
-        return None;
+        return FullHashOutcome::Unverifiable;
     }
     match full_hash_file(&row.file_path) {
         Ok(hash) => {
@@ -142,14 +170,14 @@ fn ensure_full_hash(
             if let Err(e) = queries::update_full_hash(&conn, video_id, &hash) {
                 log::warn!("dedup: failed to write back full_hash for {video_id}: {e}");
             }
-            Some(hash)
+            FullHashOutcome::Known(hash)
         }
         Err(e) => {
             log::warn!(
                 "dedup: failed to compute full_hash for {video_id} ({}): {e}",
                 row.file_path
             );
-            None
+            FullHashOutcome::Failed
         }
     }
 }
@@ -229,18 +257,28 @@ pub fn detect_duplicate_groups(
         let mut owned_group: Vec<gb_core::dedup::VideoHashInfo> =
             Vec::with_capacity(candidate_group.len());
         for video in candidate_group {
-            let full_hash = ensure_full_hash(db, &video.id, &watch_folders, reachability);
+            let outcome = ensure_full_hash(db, &video.id, &watch_folders, reachability);
+            let unverifiable = outcome == FullHashOutcome::Unverifiable;
             owned_group.push(gb_core::dedup::VideoHashInfo {
                 id: video.id.clone(),
                 quick_hash: video.quick_hash.clone(),
                 file_size: video.file_size,
-                full_hash,
+                full_hash: outcome.into_hash(),
+                unverifiable,
             });
         }
-        for confirmed_ids in gb_core::dedup::confirm_duplicates_by_full_hash(&owned_group) {
+        let confirmed = gb_core::dedup::confirm_duplicates_by_full_hash(&owned_group);
+        let unverified = gb_core::dedup::unverified_candidates(&owned_group, &confirmed);
+        for confirmed_ids in confirmed {
             groups.push(DuplicateGroup {
                 kind: DuplicateGroupKind::QuickHashConfirmed,
                 members: hydrate_members(db, &confirmed_ids),
+            });
+        }
+        if let Some(ids) = unverified {
+            groups.push(DuplicateGroup {
+                kind: DuplicateGroupKind::QuickHashCandidateUnverified,
+                members: hydrate_members(db, &ids),
             });
         }
     }
@@ -252,8 +290,8 @@ pub fn detect_duplicate_groups(
     // duplicate candidate on its own.
     for collision in queries::list_path_collisions(&db.read_pool)? {
         let ids = [collision.video_id, collision.colliding_video_id];
-        let hash_a = ensure_full_hash(db, &ids[0], &watch_folders, reachability);
-        let hash_b = ensure_full_hash(db, &ids[1], &watch_folders, reachability);
+        let hash_a = ensure_full_hash(db, &ids[0], &watch_folders, reachability).into_hash();
+        let hash_b = ensure_full_hash(db, &ids[1], &watch_folders, reachability).into_hash();
         let kind = if matches!((&hash_a, &hash_b), (Some(a), Some(b)) if a == b) {
             DuplicateGroupKind::PathCollisionConfirmed
         } else {
@@ -679,7 +717,11 @@ mod tests {
 
         let groups = detect_duplicate_groups(&db, &registry).unwrap();
 
-        assert!(groups.is_empty(), "unverifiable members form no group");
+        assert_eq!(groups.len(), 1);
+        assert!(matches!(
+            groups[0].kind,
+            DuplicateGroupKind::QuickHashCandidateUnverified
+        ));
         let stored: Vec<Option<String>> = ["a", "b"]
             .iter()
             .map(|id| {
@@ -697,6 +739,113 @@ mod tests {
         registry.refresh(&folder);
         let groups = detect_duplicate_groups(&db, &registry).unwrap();
         assert_eq!(groups.len(), 1);
+        assert!(
+            matches!(groups[0].kind, DuplicateGroupKind::QuickHashConfirmed),
+            "the unverified candidate group is replaced by a confirmed one"
+        );
+    }
+
+    struct UnreachablePair {
+        _db_dir: tempfile::TempDir,
+        db: Db,
+        dir: tempfile::TempDir,
+        registry: ReachabilityRegistry,
+        folder: String,
+    }
+
+    /// Two same-content files in one watch folder that the probe reports as
+    /// unreachable.
+    fn unreachable_pair() -> UnreachablePair {
+        let (_db_dir, db) = init_temp_db();
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.mp4"), dir.path().join("b.mp4"));
+        fs::write(&a, b"same bytes").unwrap();
+        fs::write(&b, b"same bytes").unwrap();
+        insert_online_video(&db, "a", &a, "qh", 10);
+        insert_online_video(&db, "b", &b, "qh", 10);
+        let folder = dir.path().to_string_lossy().to_string();
+        queries::set_watch_folders(&db.writer.lock().unwrap(), std::slice::from_ref(&folder))
+            .unwrap();
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
+            folder.as_str()
+        ])));
+        UnreachablePair {
+            _db_dir,
+            db,
+            dir,
+            registry,
+            folder,
+        }
+    }
+
+    fn sorted_ids(group: &DuplicateGroup) -> Vec<&str> {
+        let mut ids: Vec<&str> = group.members.iter().map(|m| m.video_id.as_str()).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn one_member_stored_and_one_unreachable_is_an_unverified_candidate() {
+        let p = unreachable_pair();
+        queries::update_full_hash(&p.db.writer.lock().unwrap(), "a", "stored").unwrap();
+
+        let groups = detect_duplicate_groups(&p.db, &p.registry).unwrap();
+
+        assert_eq!(groups.len(), 1);
+        assert!(matches!(
+            groups[0].kind,
+            DuplicateGroupKind::QuickHashCandidateUnverified
+        ));
+        assert_eq!(sorted_ids(&groups[0]), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn both_members_stored_and_equal_are_confirmed_even_when_unreachable() {
+        let p = unreachable_pair();
+        for id in ["a", "b"] {
+            queries::update_full_hash(&p.db.writer.lock().unwrap(), id, "stored").unwrap();
+        }
+
+        let groups = detect_duplicate_groups(&p.db, &p.registry).unwrap();
+
+        assert_eq!(groups.len(), 1);
+        assert!(matches!(
+            groups[0].kind,
+            DuplicateGroupKind::QuickHashConfirmed
+        ));
+    }
+
+    #[test]
+    fn io_failures_on_a_reachable_folder_produce_no_unverified_candidate() {
+        let (_db_dir, db) = init_temp_db();
+        let dir = tempfile::tempdir().unwrap();
+        // The files do not exist, so hashing fails with an I/O error on a
+        // folder that is reachable.
+        insert_online_video(&db, "a", &dir.path().join("missing-a.mp4"), "qh", 10);
+        insert_online_video(&db, "b", &dir.path().join("missing-b.mp4"), "qh", 10);
+
+        let groups = detect_duplicate_groups(&db, &all_reachable()).unwrap();
+
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn ensure_full_hash_tells_unreachable_apart_from_failure() {
+        let p = unreachable_pair();
+        let folders = std::slice::from_ref(&p.folder);
+        assert_eq!(
+            ensure_full_hash(&p.db, "a", folders, &p.registry),
+            FullHashOutcome::Unverifiable
+        );
+        assert_eq!(
+            ensure_full_hash(&p.db, "no-such-id", folders, &p.registry),
+            FullHashOutcome::Failed
+        );
+        fs::remove_file(p.dir.path().join("a.mp4")).unwrap();
+        assert_eq!(
+            ensure_full_hash(&p.db, "a", folders, &all_reachable()),
+            FullHashOutcome::Failed
+        );
     }
 
     #[test]
@@ -714,6 +863,6 @@ mod tests {
 
         let hash = ensure_full_hash(&db, "a", std::slice::from_ref(&folder), &registry);
 
-        assert_eq!(hash.as_deref(), Some("cached-hash"));
+        assert_eq!(hash, FullHashOutcome::Known("cached-hash".to_string()));
     }
 }

@@ -111,7 +111,8 @@ export interface DuplicateGroupMember {
 export type DuplicateGroupKind =
   | "quick_hash_confirmed"
   | "path_collision_confirmed"
-  | "path_collision_unconfirmed";
+  | "path_collision_unconfirmed"
+  | "quick_hash_candidate_unverified";
 
 export interface DuplicateGroup {
   kind: DuplicateGroupKind;

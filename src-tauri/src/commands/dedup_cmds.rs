@@ -165,7 +165,8 @@ fn group_content_of(kind: &DuplicateGroupKind) -> GroupContent {
         DuplicateGroupKind::QuickHashConfirmed | DuplicateGroupKind::PathCollisionConfirmed => {
             GroupContent::Confirmed
         }
-        DuplicateGroupKind::PathCollisionUnconfirmed => GroupContent::Unconfirmed,
+        DuplicateGroupKind::PathCollisionUnconfirmed
+        | DuplicateGroupKind::QuickHashCandidateUnverified => GroupContent::Unconfirmed,
     }
 }
 
@@ -597,6 +598,24 @@ mod tests {
                 two_online(env);
                 (
                     group_of_kind(DuplicateGroupKind::PathCollisionUnconfirmed, &["a", "b"]),
+                    local(),
+                )
+            },
+            "a",
+            "内容の一致が確認できていない",
+        );
+    }
+
+    #[test]
+    fn refuses_a_quick_hash_candidate_whose_content_could_not_be_verified() {
+        refusal_case(
+            |env| {
+                two_online(env);
+                (
+                    group_of_kind(
+                        DuplicateGroupKind::QuickHashCandidateUnverified,
+                        &["a", "b"],
+                    ),
                     local(),
                 )
             },
