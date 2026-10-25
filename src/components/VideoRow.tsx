@@ -62,6 +62,8 @@ export function VideoRow({
   const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(video.id) ?? null);
   const [rating, setRating] = useState(video.rating);
   const [properties, setProperties] = useState<VideoPropertiesDto | null>(null);
+  const [isStartingPlay, setIsStartingPlay] = useState(false);
+  const [playError, setPlayError] = useState<string | null>(null);
 
   useEffect(() => {
     // The cache-hit case is already covered by useState's lazy initializer
@@ -131,9 +133,21 @@ export function VideoRow({
       ? Math.round((THUMBNAIL_HEIGHT_PX * properties.width) / properties.height)
       : DEFAULT_THUMBNAIL_WIDTH_PX;
 
-  function handleDoubleClick() {
-    if (isOffline) return;
-    playVideo(video.file_path).catch(console.error);
+  // 再生の開始は外部プレーヤーの起動待ち（ネットワーク先では数十秒）になりうる。
+  // 開始中の二重ダブルクリックでバックグラウンドの起動処理を積み上げないよう
+  // 無視し、結果が出るまでの状態と失敗理由を行内に表示する。
+  async function handleDoubleClick() {
+    if (isOffline || isStartingPlay) return;
+    setPlayError(null);
+    setIsStartingPlay(true);
+    try {
+      await playVideo(video.file_path);
+    } catch (e) {
+      console.error(e);
+      setPlayError(`再生に失敗しました: ${String(e)}`);
+    } finally {
+      setIsStartingPlay(false);
+    }
   }
 
   // metaKey is treated as Ctrl so the same gesture works on macOS keyboards.
@@ -220,6 +234,10 @@ export function VideoRow({
       </div>
 
       <div className="video-row-info">
+        {isStartingPlay && (
+          <span className="duplicate-group-member-play-note">再生を開始しています…</span>
+        )}
+        {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
         <dl className="video-row-properties" data-testid="video-row-properties">
           <dt>再生時間</dt>
           <dd>{formatDuration(video.duration)}</dd>
