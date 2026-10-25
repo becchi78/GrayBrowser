@@ -365,6 +365,7 @@ pub fn run() {
             commands::log_cmds::read_log,
             commands::log_cmds::get_log_dir,
             commands::reachability_cmds::get_unreachable_folders,
+            commands::reachability_cmds::check_folder_reachability,
             commands::update_cmds::get_update_check_on_startup,
             commands::update_cmds::set_update_check_on_startup,
             commands::update_cmds::check_for_update,
