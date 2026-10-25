@@ -134,12 +134,12 @@ pub struct DuplicateGroup {
 /// can't be opened (moved/locked/permission/vanished). If its watch folder is
 /// unreachable right now (opening it would block for ~20s and tell us
 /// nothing) it returns `Unverifiable` instead. A failed write-back still
-/// returns the computed hash. A hash that is already stored is returned even then, since
-/// it needs no access to the file. This mirrors
-/// this codebase's established "skip and continue" policy for per-file I/O
-/// trouble during background batch work (see
-/// `scan::register_new_path`'s `hash_file` failure handling) -- one member's
-/// I/O trouble must never abort the whole duplicate-detection pass.
+/// returns the computed hash. A hash that is already stored is returned even
+/// then, since it needs no access to the file. This mirrors this codebase's
+/// established "skip and continue" policy for per-file I/O trouble during
+/// background batch work (see `scan::register_new_path`'s `hash_file` failure
+/// handling) -- one member's I/O trouble must never abort the whole
+/// duplicate-detection pass.
 fn ensure_full_hash(
     db: &Db,
     video_id: &str,

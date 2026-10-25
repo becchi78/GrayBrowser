@@ -231,7 +231,7 @@ function DuplicateGroupItem({
       <div className="duplicate-group-header">
         <span className="duplicate-group-kind">{KIND_LABELS[group.kind]}</span>
         {group.kind === "quick_hash_candidate_unverified" && (
-          <span className="duplicate-group-member-play-note">{UNVERIFIED_CANDIDATE_NOTE}</span>
+          <span className="duplicate-group-kind-note">{UNVERIFIED_CANDIDATE_NOTE}</span>
         )}
       </div>
       <ul className="duplicate-group-members">

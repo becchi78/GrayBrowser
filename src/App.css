@@ -1149,6 +1149,13 @@ button.search-box-clear {
   opacity: 0.8;
 }
 
+/* 見出しの隣の説明文。メンバー行の注記と同じ大きさ・不透明度で、見出しとの間だけ空ける。 */
+.duplicate-group-kind-note {
+  margin-left: 0.75em;
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
 .duplicate-group-member-play-error {
   font-size: 0.85em;
   color: #b00020;
