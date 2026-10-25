@@ -24,6 +24,11 @@ pub struct VideoHashInfo {
     pub quick_hash: String,
     pub file_size: i64,
     pub full_hash: Option<String>,
+    /// `full_hash` is absent because the file's folder cannot be reached
+    /// right now, so whether the content matches is unknowable at the moment.
+    /// Distinct from a plain `None`, which may be an I/O failure on a
+    /// reachable file that says nothing about reachability.
+    pub unverifiable: bool,
 }
 
 /// Groups `videos` by `(quick_hash, file_size)`, returning only groups with
@@ -75,6 +80,35 @@ pub fn confirm_duplicates_by_full_hash(group: &[VideoHashInfo]) -> Vec<Vec<Strin
     groups.into_values().filter(|ids| ids.len() >= 2).collect()
 }
 
+/// Given one candidate group and the sub-groups `confirm_duplicates_by_full_hash`
+/// confirmed for it, returns the ids that should be shown as "candidates whose
+/// content could not be verified", or `None` when there is nothing to show.
+///
+/// Shown only when at least one member is `unverifiable` and at least two
+/// members remain outside every confirmed sub-group. Those remaining members
+/// are the `unverifiable` ones plus members whose hash is known but which have
+/// no matching partner (they may match an unverifiable member once it can be
+/// read). Confirmed members are never returned, so no member appears in two
+/// groups, and a plain `None` hash (I/O failure) is never treated as a
+/// candidate. A single leftover `unverifiable` member is not shown: with no
+/// second member to pair against it is no longer a duplicate candidate by
+/// itself, and it is settled when the folder comes back.
+pub fn unverified_candidates(
+    group: &[VideoHashInfo],
+    confirmed: &[Vec<String>],
+) -> Option<Vec<String>> {
+    if !group.iter().any(|v| v.unverifiable) {
+        return None;
+    }
+    let ids: Vec<String> = group
+        .iter()
+        .filter(|v| v.unverifiable || v.full_hash.is_some())
+        .filter(|v| !confirmed.iter().any(|ids| ids.contains(&v.id)))
+        .map(|v| v.id.clone())
+        .collect();
+    (ids.len() >= 2).then_some(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,7 +119,131 @@ mod tests {
             quick_hash: quick_hash.to_string(),
             file_size,
             full_hash: full_hash.map(|s| s.to_string()),
+            unverifiable: false,
         }
+    }
+
+    fn unverifiable(id: &str) -> VideoHashInfo {
+        VideoHashInfo {
+            unverifiable: true,
+            ..video(id, "hash1", 100, None)
+        }
+    }
+
+    fn candidates(group: &[VideoHashInfo]) -> Option<Vec<String>> {
+        let confirmed = confirm_duplicates_by_full_hash(group);
+        unverified_candidates(group, &confirmed).map(|mut ids| {
+            ids.sort();
+            ids
+        })
+    }
+
+    fn ids(list: &[&str]) -> Option<Vec<String>> {
+        Some(list.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn two_unverifiable_members_are_candidates() {
+        assert_eq!(
+            candidates(&[unverifiable("a"), unverifiable("b")]),
+            ids(&["a", "b"])
+        );
+    }
+
+    #[test]
+    fn known_hash_member_pairs_with_an_unverifiable_one() {
+        let group = [video("a", "hash1", 100, Some("full-x")), unverifiable("b")];
+        assert_eq!(candidates(&group), ids(&["a", "b"]));
+    }
+
+    #[test]
+    fn three_or_more_unverifiable_members_are_all_candidates() {
+        let group = [unverifiable("a"), unverifiable("b"), unverifiable("c")];
+        assert_eq!(candidates(&group), ids(&["a", "b", "c"]));
+    }
+
+    #[test]
+    fn confirmed_members_are_excluded_and_a_lone_unverifiable_third_is_hidden() {
+        let group = [
+            video("a", "hash1", 100, Some("full-x")),
+            video("b", "hash1", 100, Some("full-x")),
+            unverifiable("c"),
+        ];
+        assert_eq!(candidates(&group), None);
+    }
+
+    #[test]
+    fn confirmed_group_plus_two_unverifiable_members_shows_only_the_unverifiable_pair() {
+        let group = [
+            video("a", "hash1", 100, Some("full-x")),
+            video("b", "hash1", 100, Some("full-x")),
+            unverifiable("c"),
+            unverifiable("d"),
+        ];
+        assert_eq!(candidates(&group), ids(&["c", "d"]));
+    }
+
+    #[test]
+    fn confirmed_group_plus_unmatched_known_and_unverifiable_members_are_candidates() {
+        let group = [
+            video("a", "hash1", 100, Some("full-x")),
+            video("b", "hash1", 100, Some("full-x")),
+            video("c", "hash1", 100, Some("full-y")),
+            unverifiable("d"),
+        ];
+        assert_eq!(candidates(&group), ids(&["c", "d"]));
+    }
+
+    #[test]
+    fn a_single_unverifiable_member_alone_is_hidden() {
+        let group = [unverifiable("a")];
+        assert_eq!(candidates(&group), None);
+    }
+
+    #[test]
+    fn io_failure_none_is_never_a_candidate() {
+        // Neither member is unverifiable: both are plain I/O failures.
+        let group = [
+            video("a", "hash1", 100, None),
+            video("b", "hash1", 100, None),
+        ];
+        assert_eq!(candidates(&group), None);
+        // An I/O-failure member does not pair with an unverifiable one.
+        let group = [unverifiable("a"), video("b", "hash1", 100, None)];
+        assert_eq!(candidates(&group), None);
+        // ...and is left out when other members qualify.
+        let group = [
+            unverifiable("a"),
+            unverifiable("b"),
+            video("c", "hash1", 100, None),
+        ];
+        assert_eq!(candidates(&group), ids(&["a", "b"]));
+    }
+
+    #[test]
+    fn fully_known_groups_have_no_unverified_candidates() {
+        let group = [
+            video("a", "hash1", 100, Some("full-x")),
+            video("b", "hash1", 100, Some("full-y")),
+        ];
+        assert_eq!(candidates(&group), None);
+    }
+
+    #[test]
+    fn empty_quick_hash_placeholders_never_become_candidates() {
+        // Candidate groups come from group_candidates_by_quick_hash, which
+        // drops empty-quick_hash rows, so they cannot reach this function.
+        let videos = vec![
+            VideoHashInfo {
+                unverifiable: true,
+                ..video("a", "", 100, None)
+            },
+            VideoHashInfo {
+                unverifiable: true,
+                ..video("b", "", 100, None)
+            },
+        ];
+        assert!(group_candidates_by_quick_hash(&videos).is_empty());
     }
 
     fn group_ids(videos: &[VideoHashInfo]) -> Vec<Vec<String>> {

@@ -1501,6 +1501,7 @@ pub fn list_online_video_hash_info(
                 quick_hash: r.get(1)?,
                 file_size: r.get(2)?,
                 full_hash: r.get(3)?,
+                unverifiable: false,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
