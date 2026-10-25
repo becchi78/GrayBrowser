@@ -5,6 +5,7 @@
 
 pub mod migration;
 pub mod paths;
+pub mod reassign;
 pub mod worker;
 
 use std::collections::HashSet;

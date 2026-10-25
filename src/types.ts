@@ -85,6 +85,8 @@ export interface WbImportSummary {
   thumbnails_failed: number;
   thumbnails_unmatched: number;
   thumbnails_skipped_online: number;
+  /** Folders this import newly added to the watch-folder list. */
+  watch_folders_added: string[];
 }
 
 // Mirrors src-tauri/src/events.rs's TauriWbImportNotifier::notify_progress

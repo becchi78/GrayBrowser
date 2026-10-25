@@ -20,6 +20,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_failed: 0,
     thumbnails_unmatched: 0,
     thumbnails_skipped_online: 0,
+    watch_folders_added: [],
     ...overrides,
   };
 }

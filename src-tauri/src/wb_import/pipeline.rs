@@ -19,8 +19,9 @@ use gb_core::wb_import::{
 
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
-use crate::events::{CatalogNotifier, WbImportNotifier, WbImportSummary};
+use crate::events::{CatalogNotifier, WatchReconfigurer, WbImportNotifier, WbImportSummary};
 use crate::reachability::ReachabilityRegistry;
+use crate::thumbnail::reassign::reassign_thumbnails_after_folders_added;
 use crate::thumbnail::worker::THUMBNAILS_PER_VIDEO;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
 use crate::wb_import::thumbnail_scan;
@@ -74,7 +75,7 @@ pub struct WbImportPaths {
 // One argument over clippy's limit: each is an independent handle the spawned
 // thread needs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-pub fn run_wb_import<S, F, N, C>(
+pub fn run_wb_import<S, F, N, C, W>(
     db: Db,
     paths: WbImportPaths,
     wb_source: S,
@@ -83,11 +84,14 @@ pub fn run_wb_import<S, F, N, C>(
     catalog_notifier: Arc<C>,
     thumbnails_queue: ThumbnailQueueHandle,
     reachability: ReachabilityRegistry,
+    register_watch_folders: bool,
+    watch_reconfigurer: Arc<W>,
 ) where
     S: WbSourceAdapter + 'static,
     F: FfmpegAdapter + 'static,
     N: WbImportNotifier + 'static,
     C: CatalogNotifier + 'static,
+    W: WatchReconfigurer + 'static,
 {
     thread::spawn(move || {
         import_all(
@@ -97,6 +101,7 @@ pub fn run_wb_import<S, F, N, C>(
             ffmpeg.as_ref(),
             notifier.as_ref(),
             catalog_notifier.as_ref(),
+            register_watch_folders.then_some(watch_reconfigurer.as_ref()),
         );
 
         // `db`/`paths.thumbnails_dir`/`ffmpeg`/`catalog_notifier` were only
@@ -185,18 +190,24 @@ fn resolve_file_state(movie_path: &str) -> ResolvedFileState {
 /// production caller (from its background thread); tests call this directly
 /// so counts/idempotency can be asserted without any thread-timing
 /// coordination.
-fn import_all<S, F, N, C>(
+///
+/// `watch` is `Some` only when the user opted in to registering the imported
+/// videos' folders as watch folders; it is then also told to re-apply the
+/// watchers once the list actually grew.
+fn import_all<S, F, N, C, W>(
     db: &Db,
     paths: &WbImportPaths,
     wb_source: &S,
     ffmpeg: &F,
     notifier: &N,
     catalog_notifier: &C,
+    watch: Option<&W>,
 ) where
     S: WbSourceAdapter,
     F: FfmpegAdapter,
     N: WbImportNotifier,
     C: CatalogNotifier,
+    W: WatchReconfigurer,
 {
     log::info!("wb import started: wb_path={}", paths.wb_path.display());
 
@@ -241,6 +252,11 @@ fn import_all<S, F, N, C>(
     // migrated (a fresh thumbnail is generated from the video), but the
     // hashes are needed so those JPGs are not reported as unmatched.
     let mut online_hashes: Vec<String> = Vec::new();
+    // `movie_path` of every newly registered online row: the folders to
+    // register as watch folders. Skipped rows are excluded (not registered by
+    // this run) and so are offline rows, whose folder is typically a detached
+    // drive that would only show up as an unreachable watch folder.
+    let mut online_movie_paths: Vec<String> = Vec::new();
 
     for (idx, row) in rows.iter().enumerate() {
         let candidate = match wb_row_to_import_candidate(row) {
@@ -310,6 +326,9 @@ fn import_all<S, F, N, C>(
                 if candidate.rating_from_star_tags {
                     ratings_from_star_tags += 1;
                 }
+                if file_state.status != "offline" {
+                    online_movie_paths.push(candidate.movie_path.clone());
+                }
                 // Legacy-JPG thumbnail migration (link_thumbnails, below) is
                 // only for offline rows: their source video isn't available
                 // to generate a fresh thumbnail from, so the old JPG is the
@@ -349,6 +368,39 @@ fn import_all<S, F, N, C>(
             notifier.notify_progress(processed, total);
         }
     }
+
+    // Must precede `link_thumbnails` and the thumbnail queue: both decide
+    // where a thumbnail is stored from the watch folders in force at that
+    // moment, so adding the folders first puts new thumbnails straight into
+    // their final directory.
+    let watch_change = if watch.is_some() {
+        register_import_folders(db, &online_movie_paths)
+    } else {
+        None
+    };
+    if let Some(change) = &watch_change {
+        // Videos registered before this import (re-import, earlier scans)
+        // and legacy-linked offline videos already have their files under
+        // the directory resolved by the old list.
+        match db.read_pool.get() {
+            Ok(conn) => {
+                reassign_thumbnails_after_folders_added(
+                    &conn,
+                    &paths.thumbnails_dir,
+                    &change.before,
+                    &change.after,
+                );
+            }
+            Err(e) => log::warn!(
+                "wb import: failed to acquire a DB connection to move thumbnails into the new \
+                 watch folders: {e}"
+            ),
+        }
+    }
+    let watch_folders_added = watch_change
+        .as_ref()
+        .map(|c| c.added.clone())
+        .unwrap_or_default();
 
     // Fetched once, up front, and reused by `link_thumbnails` for every
     // matched video rather than re-querying it per video.
@@ -400,12 +452,14 @@ fn import_all<S, F, N, C>(
         thumbnails_failed,
         thumbnails_unmatched,
         thumbnails_skipped_online,
+        watch_folders_added,
     };
 
     log::info!(
         "wb import complete: registered={} skipped={} clamped_scores={} tags_assigned={} \
          source_tag_count={} ratings_from_star_tags={} thumbnails_linked={} \
-         thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={}",
+         thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={} \
+         watch_folders_added={:?}",
         summary.registered,
         summary.skipped,
         summary.clamped_scores,
@@ -415,7 +469,8 @@ fn import_all<S, F, N, C>(
         summary.thumbnails_linked,
         summary.thumbnails_failed,
         summary.thumbnails_unmatched,
-        summary.thumbnails_skipped_online
+        summary.thumbnails_skipped_online,
+        summary.watch_folders_added
     );
 
     notifier.notify_complete(&summary);
@@ -423,6 +478,50 @@ fn import_all<S, F, N, C>(
     // frontend's list re-fetch, same event `start_scan` fires after a
     // manual scan.
     catalog_notifier.notify_changed();
+
+    if let (Some(watch), Some(change)) = (watch, &watch_change) {
+        watch.reconfigure(&change.after);
+    }
+}
+
+/// Outcome of [`register_import_folders`].
+struct WatchFolderChange {
+    before: Vec<String>,
+    after: Vec<String>,
+    added: Vec<String>,
+}
+
+/// Adds the parent folders of `online_movie_paths` to the stored watch-folder
+/// list. `None` when nothing needed adding or the DB could not be updated --
+/// registering folders is a convenience, so a failure is logged and the
+/// import carries on without it. Read-merge-write happens under one writer
+/// lock so a concurrent change to the list is not overwritten.
+fn register_import_folders(db: &Db, online_movie_paths: &[String]) -> Option<WatchFolderChange> {
+    if online_movie_paths.is_empty() {
+        return None;
+    }
+    let conn = db.writer.lock().unwrap();
+    let before = match queries::get_watch_folders(&conn) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("wb import: failed to read watch_folders; not registering folders: {e}");
+            return None;
+        }
+    };
+    let added = gb_core::watch_folders::suggest_watch_folders(online_movie_paths, &before);
+    if added.is_empty() {
+        return None;
+    }
+    let after = gb_core::watch_folders::merge(before.clone(), added.clone());
+    if let Err(e) = queries::set_watch_folders(&conn, &after) {
+        log::warn!("wb import: failed to save watch_folders; not registering folders: {e}");
+        return None;
+    }
+    Some(WatchFolderChange {
+        before,
+        after,
+        added,
+    })
 }
 
 /// Result of [`link_thumbnails`]. `linked == linked_video_ids.len()`.
@@ -605,7 +704,34 @@ mod tests {
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
     use crate::db::test_support::init_temp_db;
-    use crate::events::{FakeCatalogNotifier, FakeWbImportNotifier};
+    use crate::events::{FakeCatalogNotifier, FakeWatchReconfigurer, FakeWbImportNotifier};
+
+    /// Import without registering watch folders -- the behavior the tests
+    /// below that predate the option exercise. Shadows the production
+    /// `import_all` brought in by `use super::*`.
+    fn import_all<S, F, N, C>(
+        db: &Db,
+        paths: &WbImportPaths,
+        wb_source: &S,
+        ffmpeg: &F,
+        notifier: &N,
+        catalog_notifier: &C,
+    ) where
+        S: WbSourceAdapter,
+        F: FfmpegAdapter,
+        N: WbImportNotifier,
+        C: CatalogNotifier,
+    {
+        super::import_all(
+            db,
+            paths,
+            wb_source,
+            ffmpeg,
+            notifier,
+            catalog_notifier,
+            None::<&FakeWatchReconfigurer>,
+        );
+    }
 
     /// The subdirectory `link_thumbnails`/`video_thumbnail_dir` resolve
     /// every video in these tests to, since none of them register any
@@ -1529,6 +1655,296 @@ mod tests {
             "the failure reason should be a non-empty human-readable message"
         );
         assert_eq!(catalog_notifier.calls(), 0);
+    }
+
+    // --- watch-folder registration ------------------------------------------
+
+    /// A real directory holding one real (online) video file.
+    struct OnlineDir {
+        dir: tempfile::TempDir,
+    }
+
+    impl OnlineDir {
+        fn new(file_name: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join(file_name), b"video bytes").unwrap();
+            Self { dir }
+        }
+
+        fn folder(&self) -> String {
+            self.dir.path().to_string_lossy().to_string()
+        }
+
+        fn file(&self, name: &str) -> String {
+            self.dir.path().join(name).to_string_lossy().to_string()
+        }
+    }
+
+    fn import_registering(
+        h: &Harness,
+        rows: Vec<WbMovieRow>,
+        reconfigurer: &FakeWatchReconfigurer,
+    ) -> crate::events::WbImportSummary {
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(rows),
+            ..Default::default()
+        };
+        let notifier = FakeWbImportNotifier::default();
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            Some(reconfigurer),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        summary
+    }
+
+    fn stored_watch_folders(h: &Harness) -> Vec<String> {
+        let conn = h.db.read_pool.get().unwrap();
+        queries::get_watch_folders(&conn).unwrap()
+    }
+
+    fn online_row(id: i64, path: String) -> WbMovieRow {
+        row(|r| {
+            r.movie_id = id;
+            r.movie_name = "v.mp4".to_string();
+            r.movie_path = path;
+        })
+    }
+
+    fn video_id_of(h: &Harness, path: &str) -> String {
+        h.db.writer
+            .lock()
+            .unwrap()
+            .query_row("SELECT id FROM videos WHERE file_path = ?1", [path], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn only_parent_folders_of_newly_registered_online_rows_are_added() {
+        let h = harness();
+        let fresh = OnlineDir::new("a.mp4");
+        let known = OnlineDir::new("b.mp4");
+        let reconf = FakeWatchReconfigurer::default();
+
+        // The "known" video is registered first (without registering
+        // folders), so the second run sees it as Skipped.
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![online_row(1, known.file("b.mp4"))]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &FakeWbImportNotifier::default(),
+            &FakeCatalogNotifier::default(),
+        );
+
+        let summary = import_registering(
+            &h,
+            vec![
+                online_row(1, known.file("b.mp4")),
+                online_row(2, fresh.file("a.mp4")),
+                online_row(3, r"Z:\gone\offline.mp4".to_string()),
+            ],
+            &reconf,
+        );
+
+        assert_eq!(summary.registered, 2);
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.watch_folders_added, vec![fresh.folder()]);
+        assert_eq!(stored_watch_folders(&h), vec![fresh.folder()]);
+        assert_eq!(*reconf.calls.lock().unwrap(), vec![vec![fresh.folder()]]);
+    }
+
+    #[test]
+    fn folders_already_covered_by_a_watch_folder_are_not_added() {
+        let h = harness();
+        let dir = OnlineDir::new("a.mp4");
+        let parent = dir
+            .dir
+            .path()
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        {
+            let conn = h.db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, std::slice::from_ref(&parent)).unwrap();
+        }
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(&h, vec![online_row(1, dir.file("a.mp4"))], &reconf);
+
+        assert!(summary.watch_folders_added.is_empty());
+        assert_eq!(stored_watch_folders(&h), vec![parent]);
+        assert!(
+            reconf.calls.lock().unwrap().is_empty(),
+            "nothing was added, so the watchers must not be restarted"
+        );
+    }
+
+    #[test]
+    fn opting_out_adds_nothing() {
+        let h = harness();
+        let dir = OnlineDir::new("a.mp4");
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![online_row(1, dir.file("a.mp4"))]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.registered, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
+    }
+
+    #[test]
+    fn reimporting_does_not_add_the_folder_twice_or_reconfigure_again() {
+        let h = harness();
+        let dir = OnlineDir::new("a.mp4");
+        let reconf = FakeWatchReconfigurer::default();
+        let rows = || vec![online_row(1, dir.file("a.mp4"))];
+
+        import_registering(&h, rows(), &reconf);
+        let second = import_registering(&h, rows(), &reconf);
+
+        assert!(second.watch_folders_added.is_empty());
+        assert_eq!(stored_watch_folders(&h), vec![dir.folder()]);
+        assert_eq!(reconf.calls.lock().unwrap().len(), 1);
+    }
+
+    /// Registering folders is a convenience: a failed save must neither abort
+    /// the import nor be reported as added.
+    #[test]
+    fn a_failed_watch_folder_save_does_not_stop_the_import() {
+        let h = harness();
+        let dir = OnlineDir::new("a.mp4");
+        {
+            let conn = h.db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER fail_watch_folders BEFORE INSERT ON settings
+                 WHEN NEW.key = 'watch_folders'
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .unwrap();
+        }
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(&h, vec![online_row(1, dir.file("a.mp4"))], &reconf);
+
+        assert_eq!(summary.registered, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
+        assert!(reconf.calls.lock().unwrap().is_empty());
+    }
+
+    /// The legacy thumbnail of an offline video is linked after the folders
+    /// are registered, so it must land in the new folder's directory rather
+    /// than `_unassigned/` (where it would then be unreadable).
+    #[test]
+    fn legacy_thumbnails_are_linked_into_the_newly_added_folder() {
+        let h = harness();
+        let dir = OnlineDir::new("real.mp4");
+        let offline_path = dir.file("missing.mp4");
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Off.mp4.#2f6f1cc0.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let offline = row(|r| {
+            r.movie_id = 2;
+            r.movie_path = offline_path.clone();
+            r.hash = "2f6f1cc0".to_string();
+        });
+
+        let summary = import_registering(
+            &h,
+            vec![online_row(1, dir.file("real.mp4")), offline],
+            &FakeWatchReconfigurer::default(),
+        );
+        assert_eq!(summary.thumbnails_linked, 1);
+
+        let id = video_id_of(&h, &offline_path);
+        let dest = crate::thumbnail::paths::video_thumbnail_dir(
+            &h.paths.thumbnails_dir,
+            &[dir.folder()],
+            &offline_path,
+        );
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(dest.join(format!("{id}_{i}.webp")).exists(), "slot {i}");
+        }
+        assert!(!unassigned_dir(&h.paths.thumbnails_dir)
+            .join(format!("{id}_0.webp"))
+            .exists());
+    }
+
+    /// A video registered before the folder was added (here an offline one
+    /// whose legacy thumbnail was linked by an earlier import) has its files
+    /// in `_unassigned/`; adding the folder must carry them along.
+    #[test]
+    fn thumbnails_of_previously_registered_videos_follow_the_new_folder() {
+        let h = harness();
+        let dir = OnlineDir::new("real.mp4");
+        let offline_path = dir.file("missing.mp4");
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Off.mp4.#2f6f1cc0.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let offline = || {
+            row(|r| {
+                r.movie_id = 2;
+                r.movie_path = offline_path.clone();
+                r.hash = "2f6f1cc0".to_string();
+            })
+        };
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![offline()]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &FakeWbImportNotifier::default(),
+            &FakeCatalogNotifier::default(),
+        );
+        let id = video_id_of(&h, &offline_path);
+        let unassigned = unassigned_dir(&h.paths.thumbnails_dir);
+        assert!(unassigned.join(format!("{id}_0.webp")).exists());
+
+        let summary = import_registering(
+            &h,
+            vec![online_row(1, dir.file("real.mp4")), offline()],
+            &FakeWatchReconfigurer::default(),
+        );
+        assert_eq!(summary.skipped, 1);
+
+        let dest = crate::thumbnail::paths::video_thumbnail_dir(
+            &h.paths.thumbnails_dir,
+            &[dir.folder()],
+            &offline_path,
+        );
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(dest.join(format!("{id}_{i}.webp")).exists(), "slot {i}");
+            assert!(!unassigned.join(format!("{id}_{i}.webp")).exists());
+        }
     }
 
     /// Integration coverage against the committed, anonymized real-shaped

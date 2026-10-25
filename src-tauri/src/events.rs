@@ -165,6 +165,9 @@ pub struct WbImportSummary {
     /// on purpose (the thumbnail is generated from the video itself), so
     /// they are excluded from `thumbnails_unmatched`.
     pub thumbnails_skipped_online: u32,
+    /// Folders newly added to the watch-folder list by this import (empty when
+    /// the user opted out, or every parent folder was already watched).
+    pub watch_folders_added: Vec<String>,
 }
 
 pub struct TauriWbImportNotifier<R: tauri::Runtime> {
@@ -202,6 +205,61 @@ impl<R: tauri::Runtime> WbImportNotifier for TauriWbImportNotifier<R> {
         if let Err(e) = self.app.emit("wb_import:failed", reason) {
             log::error!("failed to emit wb_import:failed: {e}");
         }
+    }
+}
+
+/// Re-applies the persisted watch-folder list to the live file watchers /
+/// pollers. Kept here (not in `gb_core::ports`) for the same reason as
+/// `CatalogNotifier`: the real implementation needs a `tauri::AppHandle`, and
+/// the import pipeline is unit-tested with a fake instead.
+pub trait WatchReconfigurer: Send + Sync {
+    /// `folders` is the complete watch-folder list after the change.
+    fn reconfigure(&self, folders: &[String]);
+}
+
+/// Real [`WatchReconfigurer`]. Looks the DB and the watch manager up from the
+/// app's managed state at call time, so it can be built before they exist and
+/// moved onto the import's background thread.
+pub struct TauriWatchReconfigurer {
+    app: tauri::AppHandle,
+    thumbnails_root: std::path::PathBuf,
+}
+
+impl TauriWatchReconfigurer {
+    pub fn new(app: tauri::AppHandle, thumbnails_root: std::path::PathBuf) -> Self {
+        Self {
+            app,
+            thumbnails_root,
+        }
+    }
+}
+
+impl WatchReconfigurer for TauriWatchReconfigurer {
+    fn reconfigure(&self, folders: &[String]) {
+        use tauri::Manager;
+
+        let db = self.app.state::<crate::db::Db>();
+        let watch_manager = self.app.state::<crate::watch::RealtimeWatchManager>();
+        let nas_poll_interval_secs = match db
+            .read_pool
+            .get()
+            .map_err(anyhow::Error::from)
+            .and_then(|conn| crate::db::queries::get_nas_poll_interval_secs(&conn))
+        {
+            Ok(secs) => secs,
+            Err(e) => {
+                log::warn!("failed to read the NAS poll interval; not reconfiguring watchers: {e}");
+                return;
+            }
+        };
+        crate::watch::reconfigure_real_watch_manager(
+            &self.app,
+            db.inner(),
+            &watch_manager,
+            &self.thumbnails_root,
+            folders,
+            nas_poll_interval_secs,
+        );
     }
 }
 
@@ -277,13 +335,15 @@ impl<R: tauri::Runtime> ReachabilityNotifier for TauriReachabilityNotifier<R> {
 
 #[cfg(feature = "testing")]
 pub use fake::{
-    FakeCatalogNotifier, FakeDedupNotifier, FakeReachabilityNotifier, FakeWbImportNotifier,
+    FakeCatalogNotifier, FakeDedupNotifier, FakeReachabilityNotifier, FakeWatchReconfigurer,
+    FakeWbImportNotifier,
 };
 
 #[cfg(feature = "testing")]
 mod fake {
     use super::{
-        CatalogNotifier, DedupNotifier, ReachabilityNotifier, WbImportNotifier, WbImportSummary,
+        CatalogNotifier, DedupNotifier, ReachabilityNotifier, WatchReconfigurer, WbImportNotifier,
+        WbImportSummary,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -357,6 +417,18 @@ mod fake {
     #[derive(Default)]
     pub struct FakeDedupNotifier {
         pub updated_calls: Mutex<Vec<usize>>,
+    }
+
+    /// Records the folder list of every `reconfigure` call.
+    #[derive(Default)]
+    pub struct FakeWatchReconfigurer {
+        pub calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl WatchReconfigurer for FakeWatchReconfigurer {
+        fn reconfigure(&self, folders: &[String]) {
+            self.calls.lock().unwrap().push(folders.to_vec());
+        }
     }
 
     /// Records every unreachable-folder set that would have been emitted.
