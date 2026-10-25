@@ -203,6 +203,24 @@ mod tests {
     }
 
     #[test]
+    fn a_new_folder_nested_in_an_existing_one_takes_the_thumbnails_from_the_parent_dir() {
+        let (_d, db) = init_temp_db();
+        let root = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "v1", r"D:\Vids\Sub\a.mp4");
+        let old = folders(&[r"D:\Vids"]);
+        let old_dir = video_thumbnail_dir(root.path(), &old, r"D:\Vids\Sub\a.mp4");
+        write_slots(&old_dir, "v1", &all_slots(), "img");
+
+        let new = folders(&[r"D:\Vids", r"D:\Vids\Sub"]);
+        assert_eq!(run(&db, root.path(), &old, &new), 1);
+
+        let new_dir = video_thumbnail_dir(root.path(), &new, r"D:\Vids\Sub\a.mp4");
+        assert_ne!(old_dir, new_dir);
+        assert!(all_present(&new_dir, "v1"));
+        assert!(!has_any_slot(&old_dir, "v1"));
+    }
+
+    #[test]
     fn no_added_folder_is_a_no_op() {
         let (_d, db) = init_temp_db();
         let root = tempfile::tempdir().unwrap();

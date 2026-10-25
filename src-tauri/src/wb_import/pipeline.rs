@@ -1828,6 +1828,31 @@ mod tests {
         assert_eq!(reconf.calls.lock().unwrap().len(), 1);
     }
 
+    /// Registering folders is a convenience: a failed save must neither abort
+    /// the import nor be reported as added.
+    #[test]
+    fn a_failed_watch_folder_save_does_not_stop_the_import() {
+        let h = harness();
+        let dir = OnlineDir::new("a.mp4");
+        {
+            let conn = h.db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER fail_watch_folders BEFORE INSERT ON settings
+                 WHEN NEW.key = 'watch_folders'
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .unwrap();
+        }
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(&h, vec![online_row(1, dir.file("a.mp4"))], &reconf);
+
+        assert_eq!(summary.registered, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
+        assert!(reconf.calls.lock().unwrap().is_empty());
+    }
+
     /// The legacy thumbnail of an offline video is linked after the folders
     /// are registered, so it must land in the new folder's directory rather
     /// than `_unassigned/` (where it would then be unreadable).

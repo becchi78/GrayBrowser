@@ -39,8 +39,13 @@ fn parent_folder(video_path: &str) -> Option<String> {
 ///
 /// - Duplicates are collapsed case-insensitively and regardless of a trailing
 ///   separator or `/` vs `\`.
-/// - A candidate equal to, or inside, an existing watch folder is dropped:
-///   it is already watched.
+/// - A drive root (`D:\`) or UNC share root (`\\server\share\`) is never a
+///   candidate: one stray file there must not turn a whole drive into a watch
+///   folder. It is dropped before nesting is resolved so that it cannot
+///   swallow the legitimate folders on the same drive.
+/// - A candidate overlapping an existing watch folder in either direction
+///   (equal, inside, or an ancestor of it) is dropped: it is already watched,
+///   or adding it would watch the same files twice.
 /// - Candidates nested inside another candidate collapse into the outer one;
 ///   unrelated siblings are never widened to their common parent, which could
 ///   pull in folders the user never meant to watch.
@@ -55,7 +60,15 @@ pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]
         if candidates.iter().any(|(k, _)| *k == key) {
             continue;
         }
-        if crate::paths::is_under_any_folder(&key, existing_folders) {
+        let is_root = crate::paths::extract_drive_root(&folder)
+            .is_some_and(|root| crate::paths::normalize_folder_path(&root).to_lowercase() == key);
+        if is_root {
+            continue;
+        }
+        if existing_folders
+            .iter()
+            .any(|existing| crate::paths::folder_paths_conflict(existing, &folder))
+        {
             continue;
         }
         candidates.push((key, folder));
@@ -176,9 +189,38 @@ mod tests {
     }
 
     #[test]
-    fn suggest_handles_a_file_directly_under_a_drive_root() {
-        assert_eq!(suggest_watch_folders(&v(&[r"D:\a.mp4"]), &[]), v(&[r"D:\"]));
-        assert_eq!(suggest_watch_folders(&v(&["D:/a.mp4"]), &[]), v(&[r"D:\"]));
+    fn suggest_never_proposes_a_drive_root() {
+        assert!(suggest_watch_folders(&v(&[r"D:\a.mp4"]), &[]).is_empty());
+        assert!(suggest_watch_folders(&v(&["D:/a.mp4"]), &[]).is_empty());
+        assert!(suggest_watch_folders(&v(&[r"d:\a.mp4"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn suggest_root_file_does_not_swallow_other_folders_on_the_drive() {
+        let got = suggest_watch_folders(
+            &v(&[r"D:\stray.mp4", r"D:\Uncensored\a.mp4", r"D:\Other\b.mp4"]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"D:\Other", r"D:\Uncensored"]));
+    }
+
+    #[test]
+    fn suggest_never_proposes_a_unc_share_root() {
+        assert!(suggest_watch_folders(&v(&[r"\\nas\share\a.mp4"]), &[]).is_empty());
+        let got = suggest_watch_folders(&v(&[r"\\nas\share\a.mp4", r"\\nas\share\v\b.mp4"]), &[]);
+        assert_eq!(got, v(&[r"\\nas\share\v"]));
+    }
+
+    #[test]
+    fn suggest_drops_a_candidate_that_is_an_ancestor_of_an_existing_folder() {
+        let got = suggest_watch_folders(&v(&[r"D:\A\x.mp4"]), &v(&[r"D:\A\B"]));
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn suggest_still_adds_a_sibling_of_an_existing_folder() {
+        let got = suggest_watch_folders(&v(&[r"D:\A\C\x.mp4"]), &v(&[r"D:\A\B"]));
+        assert_eq!(got, v(&[r"D:\A\C"]));
     }
 
     #[test]
