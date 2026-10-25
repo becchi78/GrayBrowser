@@ -1543,11 +1543,86 @@ mod tests {
         let running = thread::spawn(move || r.is_reachable(NAS));
         assert!(wait_until(|| probe.entered.load(Ordering::SeqCst) == 1));
 
-        assert!(!registry.refresh_if_stale(NAS, Duration::ZERO));
+        // On its own thread: if the in-flight check were missing, this call
+        // would wait for the gated probe, and the test must report that as a
+        // failure rather than hang with it.
+        let finished = Arc::new(AtomicUsize::new(0));
+        let r = registry.clone();
+        let done = finished.clone();
+        let caller = thread::spawn(move || {
+            let ran = r.refresh_if_stale(NAS, Duration::ZERO);
+            done.fetch_add(1, Ordering::SeqCst);
+            ran
+        });
+        let returned_while_probing = wait_until(|| finished.load(Ordering::SeqCst) == 1);
 
-        assert_eq!(probe.entered.load(Ordering::SeqCst), 1);
+        // Released before asserting so a failure cannot leave threads stuck.
         probe.release();
         assert!(running.join().unwrap());
+        let ran = caller.join().unwrap();
+        assert!(
+            returned_while_probing,
+            "it started or awaited a probe while one was running"
+        );
+        assert!(!ran);
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refresh_if_stale_records_nothing_when_the_probe_panics() {
+        let (registry, probe, _) = gated_registry(true);
+        probe.panic_on_release.store(true, Ordering::SeqCst);
+        probe.release();
+        let r = registry.clone();
+        let t = thread::spawn(move || r.refresh_if_stale(NAS, HOUR));
+        assert!(t.join().is_err(), "the probe's panic reaches the caller");
+        probe.panic_on_release.store(false, Ordering::SeqCst);
+
+        // Had the failed attempt been recorded, this would be skipped.
+        assert!(registry.refresh_if_stale(NAS, HOUR));
+        assert_eq!(probe.entered.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn simultaneous_stale_callers_end_up_with_one_probe() {
+        const CALLERS: usize = 4;
+        let (registry, probe, _) = gated_registry(true);
+        let start = Arc::new(std::sync::Barrier::new(CALLERS));
+        let bowed_out = Arc::new(AtomicUsize::new(0));
+        let threads: Vec<_> = (0..CALLERS)
+            .map(|_| {
+                let registry = registry.clone();
+                let start = start.clone();
+                let bowed_out = bowed_out.clone();
+                thread::spawn(move || {
+                    start.wait();
+                    let ran = registry.refresh_if_stale(NAS, Duration::ZERO);
+                    if !ran {
+                        bowed_out.fetch_add(1, Ordering::SeqCst);
+                    }
+                    ran
+                })
+            })
+            .collect();
+
+        // One caller is inside the gated probe. Each of the others either saw
+        // it running and returned, or judged the folder stale first and is
+        // now waiting to join it; which one happens is up to scheduling, and
+        // both must leave a single probe. Releasing only once all three are
+        // accounted for keeps the test independent of that timing.
+        assert!(wait_until(|| {
+            probe.entered.load(Ordering::SeqCst) == 1
+                && registry.inner.waiters.load(Ordering::SeqCst) + bowed_out.load(Ordering::SeqCst)
+                    == CALLERS - 1
+        }));
+        probe.release();
+
+        let ran = threads
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .filter(|ran| *ran)
+            .count();
+        assert!(ran >= 1);
         assert_eq!(probe.entered.load(Ordering::SeqCst), 1);
     }
 
