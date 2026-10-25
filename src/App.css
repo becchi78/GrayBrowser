@@ -1124,8 +1124,7 @@ button.search-box-clear {
 }
 
 .duplicate-group-member-delete,
-.duplicate-group-member-delete-file,
-.duplicate-group-member-play {
+.duplicate-group-member-delete-file {
   flex-shrink: 0;
 }
 
@@ -1143,12 +1142,6 @@ button.search-box-clear {
   border-color: transparent;
   font-weight: normal;
   opacity: 0.5;
-}
-
-/* サムネイルのクリックで再生できることを示す。オフラインのメンバーには
-   このクラスを付けず、通常の矢印カーソルのままにする。 */
-.duplicate-group-member-thumb--playable {
-  cursor: pointer;
 }
 
 .duplicate-group-member-play-note {
