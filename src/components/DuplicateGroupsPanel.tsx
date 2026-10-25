@@ -272,15 +272,22 @@ function DuplicateGroupMemberRow({
   // 保存先のフォルダに今届かない場合も、通常のオフラインと同じ扱いにする。
   const folderUnreachable = useIsPathUnreachable(member.file_path);
   const isOffline = member.status === "offline" || folderUnreachable;
+  const [isStartingPlay, setIsStartingPlay] = useState(false);
 
+  // 再生の開始は外部プレーヤーの起動待ち（ネットワーク先では数十秒）になりうる。
+  // 再生ボタンの disabled で待機を示せないため、開始中の二重ダブルクリックは
+  // 無視し、結果が出るまでの状態と失敗理由を行内に表示する。
   async function handlePlay() {
-    if (isOffline || busy) return;
+    if (isOffline || busy || isStartingPlay) return;
     setPlayError(null);
+    setIsStartingPlay(true);
     try {
       await playVideo(member.file_path);
     } catch (e) {
       console.error(e);
       setPlayError(`再生に失敗しました: ${String(e)}`);
+    } finally {
+      setIsStartingPlay(false);
     }
   }
 
@@ -308,12 +315,8 @@ function DuplicateGroupMemberRow({
       }
     >
       <div
-        className={
-          isOffline
-            ? "duplicate-group-member-thumb"
-            : "duplicate-group-member-thumb duplicate-group-member-thumb--playable"
-        }
-        onClick={isOffline || busy ? undefined : handlePlay}
+        className="duplicate-group-member-thumb"
+        onDoubleClick={isOffline || busy ? undefined : handlePlay}
       >
         {dataUrl ? (
           <img src={dataUrl} alt={member.file_name} loading="lazy" />
@@ -355,6 +358,9 @@ function DuplicateGroupMemberRow({
         {isOffline && (
           <span className="duplicate-group-member-play-note">オフラインのため再生できません</span>
         )}
+        {isStartingPlay && (
+          <span className="duplicate-group-member-play-note">再生を開始しています…</span>
+        )}
         {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
         {fileDeleteDisabledReason && (
           <span className="duplicate-group-member-play-note">{fileDeleteDisabledReason}</span>
@@ -363,14 +369,6 @@ function DuplicateGroupMemberRow({
           <span className="duplicate-group-member-play-error">{deleteFileError}</span>
         )}
       </div>
-      <button
-        type="button"
-        className="duplicate-group-member-play"
-        onClick={handlePlay}
-        disabled={isOffline || busy}
-      >
-        再生
-      </button>
       <button
         type="button"
         className="duplicate-group-member-delete"
