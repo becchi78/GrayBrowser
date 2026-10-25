@@ -325,6 +325,18 @@ fn import_all<S, F, N, C>(
             }
             queries::WbImportOutcome::Skipped => {
                 skipped += 1;
+                // An already-registered online row still owns its legacy
+                // JPG. Without collecting the hash here, a re-import would
+                // report that JPG as unmatched (needs manual attention).
+                // Offline rows stay out of `registered_movies`: their
+                // thumbnail was settled by whichever import first
+                // registered them. Duplicate hashes are harmless because
+                // matching only tests membership.
+                if let Some(hash) = candidate.thumbnail_hash {
+                    if file_state.status != "offline" {
+                        online_hashes.push(hash);
+                    }
+                }
             }
         }
 
@@ -370,7 +382,8 @@ fn import_all<S, F, N, C>(
 
     log::info!(
         "wb import complete: registered={} skipped={} clamped_scores={} tags_assigned={} \
-         source_tag_count={} thumbnails_linked={} thumbnails_failed={} thumbnails_unmatched={} \n         thumbnails_skipped_online={}",
+         source_tag_count={} thumbnails_linked={} thumbnails_failed={} thumbnails_unmatched={} \
+         thumbnails_skipped_online={}",
         summary.registered,
         summary.skipped,
         summary.clamped_scores,
@@ -1156,6 +1169,51 @@ mod tests {
             ffmpeg.calls.lock().unwrap().is_empty(),
             "ffmpeg must never be invoked for an online row's legacy thumbnail"
         );
+    }
+
+    /// Re-importing the same `.wb` skips every already-registered row, but an
+    /// online row's legacy JPG must still be counted as skipped-online rather
+    /// than falling into `thumbnails_unmatched`.
+    #[test]
+    fn reimport_keeps_online_legacy_thumbnail_out_of_unmatched() {
+        let h = harness();
+
+        let online_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(online_file.path(), b"hello reimport online").unwrap();
+        let online_row = row(|r| {
+            r.movie_id = 1;
+            r.movie_path = online_file.path().to_string_lossy().to_string();
+            r.hash = "1e5e0fbf".to_string();
+        });
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![online_row]),
+            ..Default::default()
+        };
+        std::fs::write(
+            h.paths.thumbnail_folder.join("MyVideo.mp4.#1e5e0fbf.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+
+        let ffmpeg = no_op_ffmpeg();
+        for pass in 0..2 {
+            let notifier = FakeWbImportNotifier::default();
+            let catalog_notifier = FakeCatalogNotifier::default();
+            import_all(
+                &h.db,
+                &h.paths,
+                &wb_source,
+                &ffmpeg,
+                &notifier,
+                &catalog_notifier,
+            );
+            let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+            assert_eq!(summary.registered, 1 - pass, "pass {pass}");
+            assert_eq!(summary.skipped, pass, "pass {pass}");
+            assert_eq!(summary.thumbnails_unmatched, 0, "pass {pass}");
+            assert_eq!(summary.thumbnails_skipped_online, 1, "pass {pass}");
+        }
+        assert!(ffmpeg.calls.lock().unwrap().is_empty());
     }
 
     /// Online, offline and unrelated legacy JPGs in one folder must land in
