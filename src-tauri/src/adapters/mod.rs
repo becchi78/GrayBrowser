@@ -1,4 +1,5 @@
 pub mod dialog;
+pub mod dir_lister;
 pub mod drive_type;
 pub mod ffmpeg;
 pub mod file_rename;
