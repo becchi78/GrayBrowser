@@ -33,6 +33,18 @@ fn parent_folder(video_path: &str) -> Option<String> {
     Some(folder.to_string())
 }
 
+/// Whether `folder` still holds a `?` standing in for a character the legacy
+/// path could not represent. Windows paths cannot contain `?`, so such a
+/// folder can never be listed. The `\\?\` / `//?/` extended-length prefix is
+/// syntax, not a lost character, and is ignored.
+fn has_lost_char_marker(folder: &str) -> bool {
+    let body = folder
+        .strip_prefix("\\\\?\\")
+        .or_else(|| folder.strip_prefix("//?/"))
+        .unwrap_or(folder);
+    body.contains('?')
+}
+
 /// Watch folders to register for a batch of imported videos: the distinct
 /// parent folders of `video_paths`, minus those already covered by
 /// `existing_folders`.
@@ -49,6 +61,9 @@ fn parent_folder(video_path: &str) -> Option<String> {
 /// - Candidates nested inside another candidate collapse into the outer one;
 ///   unrelated siblings are never widened to their common parent, which could
 ///   pull in folders the user never meant to watch.
+/// - A path whose parent folders still contain a `?` is never a candidate: it
+///   would become a watch folder that can never be reached. A `?` only in the
+///   file name does not matter, since the folder is still valid.
 /// - Sorted ascending so the result is stable for the same input.
 pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]) -> Vec<String> {
     let mut candidates: Vec<(String, String)> = Vec::new();
@@ -56,6 +71,9 @@ pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]
         let Some(folder) = parent_folder(path) else {
             continue;
         };
+        if has_lost_char_marker(&folder) {
+            continue;
+        }
         let key = crate::paths::normalize_folder_path(&folder).to_lowercase();
         if candidates.iter().any(|(k, _)| *k == key) {
             continue;
@@ -243,6 +261,45 @@ mod tests {
     fn suggest_drops_a_candidate_equal_to_an_existing_folder() {
         let got = suggest_watch_folders(&v(&[r"D:\Videos\a.mp4"]), &v(&[r"d:\videos"]));
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn suggest_drops_a_path_whose_parent_folder_holds_a_question_mark() {
+        assert!(suggest_watch_folders(&v(&[r"W:\a?b\c.mp4"]), &[]).is_empty());
+        assert!(suggest_watch_folders(&v(&[r"W:\ok\a?b\c.mp4"]), &[]).is_empty());
+        assert!(suggest_watch_folders(&v(&[r"\\nas\share\a?\c.mp4"]), &[]).is_empty());
+        assert!(suggest_watch_folders(&v(&["W:/a?b/c.mp4"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn suggest_keeps_the_parent_when_only_the_file_name_has_a_question_mark() {
+        let got = suggest_watch_folders(&v(&[r"W:\ok\a?b.mp4"]), &[]);
+        assert_eq!(got, v(&[r"W:\ok"]));
+    }
+
+    #[test]
+    fn suggest_treats_the_extended_length_prefix_as_syntax_not_a_lost_char() {
+        let got = suggest_watch_folders(&v(&[r"\\?\D:\v\a.mp4"]), &[]);
+        assert_eq!(got, v(&[r"\\?\D:\v"]));
+        let got = suggest_watch_folders(&v(&["//?/D:/v/a.mp4"]), &[]);
+        assert_eq!(got, v(&[r"\\?\D:\v"]));
+        // A real `?` after the prefix is still a lost character.
+        assert!(suggest_watch_folders(&v(&[r"\\?\D:\v?\a.mp4"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn suggest_question_marks_in_some_paths_do_not_affect_other_candidates() {
+        let got = suggest_watch_folders(
+            &v(&[
+                r"W:\a?b\1.mp4",
+                r"W:\good\2.mp4",
+                r"W:\c?\d?\3.mp4",
+                r"D:\vids\4.mp4",
+                r"W:\good\sub\5.mp4",
+            ]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"D:\vids", r"W:\good"]));
     }
 
     #[test]
