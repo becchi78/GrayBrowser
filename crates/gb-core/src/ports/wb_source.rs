@@ -11,6 +11,12 @@ pub trait WbSourceAdapter: Send + Sync {
     /// Reads every text-column cell across all tables, for the
     /// anonymization tool's coverage scan. Not used by the importer itself.
     fn read_all_text_cells(&self) -> Result<Vec<WbTextCell>, WbSourceError>;
+
+    /// Every text value stored under `key` in the `profile` table (one per
+    /// skin that sets it); empty when the key is absent. Rows whose value is
+    /// not text are skipped: `profile` also holds binary values, so a row is
+    /// only read as far as the one column needed.
+    fn read_profile_value(&self, key: &str) -> Result<Vec<String>, WbSourceError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

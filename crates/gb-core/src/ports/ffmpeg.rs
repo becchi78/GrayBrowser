@@ -41,6 +41,26 @@ pub trait FfmpegAdapter: Send + Sync {
         output_tmp_path: &Path,
         quality: u8,
     ) -> Result<(), FfmpegError>;
+
+    /// Like `convert_image_to_webp`, but writes only the `crop` region of the
+    /// source image. A separate method rather than an optional parameter so
+    /// the whole-image path keeps its exact behavior.
+    fn crop_image_to_webp(
+        &self,
+        src_path: &Path,
+        output_tmp_path: &Path,
+        crop: CropRect,
+        quality: u8,
+    ) -> Result<(), FfmpegError>;
+}
+
+/// A rectangle in source-image pixels, origin at the top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CropRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
