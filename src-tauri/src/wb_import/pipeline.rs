@@ -314,11 +314,13 @@ fn import_all<S, F, N, C, W, D>(
     // migrated (a fresh thumbnail is generated from the video), but the
     // hashes are needed so those JPGs are not reported as unmatched.
     let mut online_hashes: Vec<String> = Vec::new();
-    // `movie_path` of every newly registered online row: the folders to
-    // register as watch folders. Skipped rows are excluded (not registered by
-    // this run) and so are offline rows, whose folder is typically a detached
-    // drive that would only show up as an unreachable watch folder.
-    let mut online_movie_paths: Vec<String> = Vec::new();
+    // Path of every row newly registered by this run, online or offline: the
+    // folders to register as watch folders. Offline rows are included so that
+    // their folders (e.g. a stopped NAS) can still be reached from the
+    // sidebar; a folder that is unreachable now is merely skipped by scans.
+    // Skipped rows are excluded (not registered by this run), so a re-import
+    // does not add the same folders twice.
+    let mut registered_movie_paths: Vec<String> = Vec::new();
     // Shared by every row so a parent folder is listed once per import, even
     // when it cannot be listed at all (see `CachingDirLister`).
     let dir_lister = CachingDirLister::new(dir_lister);
@@ -406,9 +408,7 @@ fn import_all<S, F, N, C, W, D>(
                 if candidate.rating_from_star_tags {
                     ratings_from_star_tags += 1;
                 }
-                if file_state.status != "offline" {
-                    online_movie_paths.push(file_path.clone());
-                }
+                registered_movie_paths.push(file_path.clone());
                 // Legacy-JPG thumbnail migration (link_thumbnails, below) is
                 // only for offline rows: their source video isn't available
                 // to generate a fresh thumbnail from, so the old JPG is the
@@ -454,7 +454,7 @@ fn import_all<S, F, N, C, W, D>(
     // moment, so adding the folders first puts new thumbnails straight into
     // their final directory.
     let watch_change = if watch.is_some() {
-        register_import_folders(db, &online_movie_paths)
+        register_import_folders(db, &registered_movie_paths)
     } else {
         None
     };
@@ -607,13 +607,16 @@ struct WatchFolderChange {
     added: Vec<String>,
 }
 
-/// Adds the parent folders of `online_movie_paths` to the stored watch-folder
-/// list. `None` when nothing needed adding or the DB could not be updated --
+/// Adds the parent folders of `registered_movie_paths` to the stored
+/// watch-folder list. `None` when nothing needed adding or the DB could not be updated --
 /// registering folders is a convenience, so a failure is logged and the
 /// import carries on without it. Read-merge-write happens under one writer
 /// lock so a concurrent change to the list is not overwritten.
-fn register_import_folders(db: &Db, online_movie_paths: &[String]) -> Option<WatchFolderChange> {
-    if online_movie_paths.is_empty() {
+fn register_import_folders(
+    db: &Db,
+    registered_movie_paths: &[String],
+) -> Option<WatchFolderChange> {
+    if registered_movie_paths.is_empty() {
         return None;
     }
     let conn = db.writer.lock().unwrap();
@@ -624,7 +627,7 @@ fn register_import_folders(db: &Db, online_movie_paths: &[String]) -> Option<Wat
             return None;
         }
     };
-    let added = gb_core::watch_folders::suggest_watch_folders(online_movie_paths, &before);
+    let added = gb_core::watch_folders::suggest_watch_folders(registered_movie_paths, &before);
     if added.is_empty() {
         return None;
     }
@@ -1934,7 +1937,7 @@ mod tests {
     }
 
     #[test]
-    fn only_parent_folders_of_newly_registered_online_rows_are_added() {
+    fn only_parent_folders_of_newly_registered_rows_are_added() {
         let h = harness();
         let fresh = OnlineDir::new("a.mp4");
         let known = OnlineDir::new("b.mp4");
@@ -1966,9 +1969,102 @@ mod tests {
 
         assert_eq!(summary.registered, 2);
         assert_eq!(summary.skipped, 1);
-        assert_eq!(summary.watch_folders_added, vec![fresh.folder()]);
-        assert_eq!(stored_watch_folders(&h), vec![fresh.folder()]);
-        assert_eq!(*reconf.calls.lock().unwrap(), vec![vec![fresh.folder()]]);
+        // The offline row's folder is added too; the skipped row's is not.
+        // `Z:` sorts after the temp dir's drive, so the order is stable.
+        let expected = vec![fresh.folder(), r"Z:\gone".to_string()];
+        assert_eq!(summary.watch_folders_added, expected);
+        assert_eq!(stored_watch_folders(&h), expected);
+        assert_eq!(*reconf.calls.lock().unwrap(), vec![expected]);
+    }
+
+    #[test]
+    fn offline_rows_parent_folders_are_added_and_nested_ones_collapse() {
+        let h = harness();
+        let online = OnlineDir::new("a.mp4");
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(
+            &h,
+            vec![
+                online_row(1, online.file("a.mp4")),
+                online_row(2, r"Z:\nas\x\b.mp4".to_string()),
+                online_row(3, r"Z:\nas\c.mp4".to_string()),
+                // Drive root: never a candidate, and must not swallow Z:\nas.
+                online_row(4, r"Z:\top.mp4".to_string()),
+            ],
+            &reconf,
+        );
+
+        assert_eq!(summary.registered, 4);
+        assert_eq!(
+            summary.watch_folders_added,
+            vec![online.folder(), r"Z:\nas".to_string()]
+        );
+        assert_eq!(stored_watch_folders(&h), summary.watch_folders_added);
+        assert_eq!(reconf.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_offline_row_with_a_question_mark_left_in_its_folder_adds_nothing() {
+        let h = harness();
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(
+            &h,
+            vec![
+                online_row(1, r"Z:\a?b\c.mp4".to_string()),
+                online_row(2, r"Z:\ok\d?e.mp4".to_string()),
+            ],
+            &reconf,
+        );
+
+        // Only the file-name `?` leaves a usable parent folder.
+        assert_eq!(summary.watch_folders_added, vec![r"Z:\ok".to_string()]);
+        assert_eq!(stored_watch_folders(&h), vec![r"Z:\ok".to_string()]);
+    }
+
+    #[test]
+    fn skipped_rows_folders_are_not_collected_on_reimport() {
+        let h = harness();
+        let reconf = FakeWatchReconfigurer::default();
+        let rows = || vec![online_row(1, r"Z:\nas\a.mp4".to_string())];
+
+        let first = import_registering(&h, rows(), &reconf);
+        assert_eq!(first.watch_folders_added, vec![r"Z:\nas".to_string()]);
+
+        // The user removes the watch folder; a re-import only sees a skipped
+        // row and so must not bring it back.
+        {
+            let conn = h.db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, &[]).unwrap();
+        }
+        let second = import_registering(&h, rows(), &reconf);
+
+        assert_eq!(second.skipped, 1);
+        assert!(second.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
+        assert_eq!(reconf.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn opting_out_adds_no_offline_folder_and_does_not_reconfigure() {
+        let h = harness();
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![online_row(1, r"Z:\nas\a.mp4".to_string())]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.registered, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
     }
 
     #[test]
