@@ -5,7 +5,9 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 
-use gb_core::ports::ffmpeg::{FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata};
+use gb_core::ports::ffmpeg::{
+    CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
+};
 
 use crate::adapters::long_path;
 
@@ -208,41 +210,87 @@ impl FfmpegAdapter for RealFfmpegAdapter {
         output_tmp_path: &Path,
         quality: u8,
     ) -> Result<(), FfmpegError> {
-        let long_input = long_path::to_long_path(src_path);
-        let long_output = long_path::to_long_path(output_tmp_path);
-        let input_str = path_to_str(&long_input)?;
-        let output_str = path_to_str(&long_output)?;
-
-        // Input is always `.jpg` (legacy WhiteBrowser thumbnail naming),
-        // so ffmpeg can infer the demuxer from the
-        // extension -- no input `-f` needed. The output, like
-        // `extract_thumbnail`'s, is a `[id].webp.tmp` path (atomic
-        // write scheme), so its extension can't tell ffmpeg the muxer;
-        // force it explicitly for the same reason documented there.
-        let output = hidden_command("ffmpeg")
-            .args([
-                "-i",
-                input_str,
-                "-quality",
-                &quality.to_string(),
-                "-lossless",
-                "0",
-                "-f",
-                "webp",
-                "-y",
-                output_str,
-            ])
-            .output()
-            .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
-
-        if !output.status.success() {
-            return Err(FfmpegError::NonZeroExit {
-                status: output.status.code().unwrap_or(-1),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            });
-        }
-        Ok(())
+        run_image_to_webp(src_path, output_tmp_path, None, quality)
     }
+
+    fn crop_image_to_webp(
+        &self,
+        src_path: &Path,
+        output_tmp_path: &Path,
+        crop: CropRect,
+        quality: u8,
+    ) -> Result<(), FfmpegError> {
+        run_image_to_webp(src_path, output_tmp_path, Some(&crop_filter(crop)), quality)
+    }
+}
+
+/// ffmpeg `-vf` value cutting `crop` out of the input.
+fn crop_filter(crop: CropRect) -> String {
+    format!("crop={}:{}:{}:{}", crop.w, crop.h, crop.x, crop.y)
+}
+
+/// Argument list for turning a still image into WebP, optionally through a
+/// `-vf` filter. Input is always `.jpg` (legacy WhiteBrowser thumbnail
+/// naming), so ffmpeg can infer the demuxer from the extension -- no input
+/// `-f` needed. The output, like `extract_thumbnail`'s, is a
+/// `[id].webp.tmp` path (atomic write scheme), so its extension can't tell
+/// ffmpeg the muxer; it is forced explicitly for the same reason documented
+/// there.
+fn image_to_webp_args(
+    input: &str,
+    output: &str,
+    video_filter: Option<&str>,
+    quality: u8,
+) -> Vec<String> {
+    let mut args = vec!["-i".to_string(), input.to_string()];
+    if let Some(filter) = video_filter {
+        args.push("-vf".to_string());
+        args.push(filter.to_string());
+    }
+    args.extend(
+        [
+            "-quality",
+            &quality.to_string(),
+            "-lossless",
+            "0",
+            "-f",
+            "webp",
+            "-y",
+            output,
+        ]
+        .map(String::from),
+    );
+    args
+}
+
+fn run_image_to_webp(
+    src_path: &Path,
+    output_tmp_path: &Path,
+    video_filter: Option<&str>,
+    quality: u8,
+) -> Result<(), FfmpegError> {
+    let long_input = long_path::to_long_path(src_path);
+    let long_output = long_path::to_long_path(output_tmp_path);
+    let input_str = path_to_str(&long_input)?;
+    let output_str = path_to_str(&long_output)?;
+
+    let output = hidden_command("ffmpeg")
+        .args(image_to_webp_args(
+            input_str,
+            output_str,
+            video_filter,
+            quality,
+        ))
+        .output()
+        .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(FfmpegError::NonZeroExit {
+            status: output.status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Parses ffprobe's `r_frame_rate` fraction string (e.g. `"30000/1001"`) into
@@ -280,6 +328,59 @@ fn version_of(binary_name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crop_filter_is_width_height_x_y() {
+        let crop = CropRect {
+            x: 400,
+            y: 0,
+            w: 200,
+            h: 150,
+        };
+        assert_eq!(crop_filter(crop), "crop=200:150:400:0");
+    }
+
+    #[test]
+    fn image_to_webp_args_without_a_filter_has_no_vf() {
+        let args = image_to_webp_args("in.jpg", "out.webp.tmp", None, 55);
+        assert_eq!(
+            args,
+            [
+                "-i",
+                "in.jpg",
+                "-quality",
+                "55",
+                "-lossless",
+                "0",
+                "-f",
+                "webp",
+                "-y",
+                "out.webp.tmp"
+            ]
+        );
+    }
+
+    #[test]
+    fn image_to_webp_args_with_a_filter_puts_vf_between_input_and_quality() {
+        let args = image_to_webp_args("in.jpg", "out.webp.tmp", Some("crop=200:150:0:0"), 55);
+        assert_eq!(
+            args,
+            [
+                "-i",
+                "in.jpg",
+                "-vf",
+                "crop=200:150:0:0",
+                "-quality",
+                "55",
+                "-lossless",
+                "0",
+                "-f",
+                "webp",
+                "-y",
+                "out.webp.tmp"
+            ]
+        );
+    }
 
     #[test]
     fn parse_frame_rate_handles_a_fractional_ntsc_rate() {

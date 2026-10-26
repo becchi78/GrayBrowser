@@ -13,12 +13,13 @@ use std::thread;
 
 use gb_core::path_restore::{last_segment, restore_path};
 use gb_core::ports::dir_lister::DirLister;
-use gb_core::ports::ffmpeg::FfmpegAdapter;
+use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::NewVideo;
 use gb_core::wb_import::{
     count_clamped_scores, count_source_tags, match_thumbnail_files, wb_row_to_import_candidate,
 };
+use gb_core::wb_thumbnail_split::{parse_thum_size, split_plan, ThumbLayout};
 
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
@@ -40,6 +41,9 @@ const WB_THUMBNAIL_QUALITY: u8 = 55;
 /// ~3072-row library, without emitting an event (and its IPC round trip) on
 /// every single row.
 const PROGRESS_NOTIFY_INTERVAL: u32 = 50;
+
+/// `profile` key holding the legacy thumbnail's frame grid.
+const THUM_SIZE_KEY: &str = "thum_size";
 
 /// The three filesystem paths `run_wb_import` needs, bundled into one struct
 /// so the function's own parameter count stays under
@@ -287,6 +291,8 @@ fn import_all<S, F, N, C, W, D>(
         }
     };
 
+    let thumb_layout = read_thumb_layout(wb_source);
+
     let total = rows.len() as u32;
     let clamped_scores = count_clamped_scores(&rows) as u32;
     let source_tag_count = count_source_tags(&rows) as u32;
@@ -495,6 +501,7 @@ fn import_all<S, F, N, C, W, D>(
         &registered_movies,
         &online_hashes,
         ffmpeg,
+        thumb_layout.as_ref(),
     );
 
     // The list view only fetches thumbnail images for rows whose
@@ -555,6 +562,41 @@ fn import_all<S, F, N, C, W, D>(
 
     if let (Some(watch), Some(change)) = (watch, &watch_change) {
         watch.reconfigure(&change.after);
+    }
+}
+
+/// The legacy thumbnail frame grid, when the `.wb` states one unambiguously:
+/// every skin that sets `thum_size` agrees and the value parses. Anything
+/// else (none, conflicting, unreadable) yields `None`, because cutting
+/// images by a guessed grid is worse than importing them whole.
+fn read_thumb_layout<S: WbSourceAdapter>(wb_source: &S) -> Option<ThumbLayout> {
+    let mut values = match wb_source.read_profile_value(THUM_SIZE_KEY) {
+        Ok(values) => values,
+        Err(e) => {
+            log::warn!("wb import: could not read {THUM_SIZE_KEY}: {e}; not splitting thumbnails");
+            return None;
+        }
+    };
+    values.sort();
+    values.dedup();
+    match values.as_slice() {
+        [] => None,
+        [value] => {
+            let layout = parse_thum_size(value);
+            if layout.is_none() {
+                log::warn!(
+                    "wb import: unrecognized {THUM_SIZE_KEY} {value:?}; not splitting thumbnails"
+                );
+            }
+            layout
+        }
+        _ => {
+            log::warn!(
+                "wb import: skins disagree on {THUM_SIZE_KEY} ({values:?}); \
+                 not splitting thumbnails"
+            );
+            None
+        }
     }
 }
 
@@ -627,6 +669,12 @@ struct LinkOutcome {
 /// `list_videos_missing_thumbnails` require all
 /// `THUMBNAILS_PER_VIDEO` slots to exist).
 ///
+/// When `layout` is given and describes the JPG (exact pixel size, exactly
+/// `THUMBNAILS_PER_VIDEO` frames), the JPG is instead cut into its frames and
+/// slot `i` receives frame `i`, matching what a normal scan produces. Any
+/// other case -- no layout, a size that does not match, a probe failure --
+/// falls back to the whole-image behavior above.
+///
 /// Returns a [`LinkOutcome`], where `linked`/`failed` count videos, not
 /// individual slot files, and `unmatched`/`skipped_online` count legacy JPG
 /// files. `online_hashes` separates JPGs of online videos (intentionally not
@@ -648,6 +696,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     registered_movies: &[(String, String, String)],
     online_hashes: &[String],
     ffmpeg: &F,
+    layout: Option<&ThumbLayout>,
 ) -> LinkOutcome {
     let filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
@@ -686,6 +735,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
 
     let mut linked_video_ids: Vec<String> = Vec::new();
     let mut thumbnails_failed = 0u32;
+    let mut split_count = 0u32;
     for (video_id, filename) in plan.matched {
         // Defensive only: every `video_id` here came from `movies_for_matching`,
         // which is derived from the very same `registered_movies` this map
@@ -710,6 +760,24 @@ fn link_thumbnails<F: FfmpegAdapter>(
         }
 
         let src_path = thumbnail_folder.join(&filename);
+
+        if let Some(rects) = layout.and_then(|l| split_rects(l, &src_path, &filename, ffmpeg)) {
+            match write_split_slots(ffmpeg, &src_path, &video_dir, &video_id, &rects) {
+                Ok(()) => {
+                    split_count += 1;
+                    linked_video_ids.push(video_id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "wb import: failed to split thumbnail for video {video_id} \
+                         ({filename}): {e}"
+                    );
+                    remove_slot_files(&video_dir, &video_id);
+                    thumbnails_failed += 1;
+                }
+            }
+            continue;
+        }
         // Shared scratch file for the single conversion pass below; distinct
         // from the per-slot `{video_id}_{i}.webp.tmp` names used by
         // `thumbnail::worker` so the two pipelines can never collide on a
@@ -751,13 +819,14 @@ fn link_thumbnails<F: FfmpegAdapter>(
                     "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
                      ({filename}): {e}"
                 );
-                for i in 0..THUMBNAILS_PER_VIDEO {
-                    let final_path = crate::thumbnail::paths::slot_path(&video_dir, &video_id, i);
-                    let _ = fs::remove_file(&final_path);
-                }
+                remove_slot_files(&video_dir, &video_id);
                 thumbnails_failed += 1;
             }
         }
+    }
+
+    if split_count > 0 {
+        log::info!("wb import: split {split_count} legacy thumbnail(s) into frames");
     }
 
     LinkOutcome {
@@ -766,6 +835,66 @@ fn link_thumbnails<F: FfmpegAdapter>(
         unmatched: thumbnails_unmatched,
         skipped_online: thumbnails_skipped_online,
         linked_video_ids,
+    }
+}
+
+/// Crop rectangles for `src_path`, or `None` (with a log line) when the JPG
+/// has to be imported whole.
+fn split_rects<F: FfmpegAdapter>(
+    layout: &ThumbLayout,
+    src_path: &Path,
+    filename: &str,
+    ffmpeg: &F,
+) -> Option<Vec<CropRect>> {
+    let metadata = match ffmpeg.probe_metadata(src_path) {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("wb import: could not read the size of {filename}: {e}; importing it whole");
+            return None;
+        }
+    };
+    let (Some(w), Some(h)) = (metadata.width, metadata.height) else {
+        log::warn!("wb import: {filename} reports no size; importing it whole");
+        return None;
+    };
+    let rects = split_plan(layout, w, h, THUMBNAILS_PER_VIDEO as u32);
+    if rects.is_none() {
+        log::warn!(
+            "wb import: {filename} is {w}x{h}, which does not match {THUM_SIZE_KEY} \
+             {layout:?}; importing it whole"
+        );
+    }
+    rects
+}
+
+/// Writes frame `i` of `src_path` to slot `i`, each through its own
+/// `{video_id}_{i}.webp.tmp` and a rename so a slot is never half written.
+/// Stops at the first failure; the caller removes whatever was written.
+fn write_split_slots<F: FfmpegAdapter>(
+    ffmpeg: &F,
+    src_path: &Path,
+    video_dir: &Path,
+    video_id: &str,
+    rects: &[CropRect],
+) -> Result<(), String> {
+    for (i, rect) in rects.iter().enumerate() {
+        let tmp_path = video_dir.join(format!("{video_id}_{i}.webp.tmp"));
+        let final_path = crate::thumbnail::paths::slot_path(video_dir, video_id, i);
+        ffmpeg
+            .crop_image_to_webp(src_path, &tmp_path, *rect, WB_THUMBNAIL_QUALITY)
+            .map_err(|e| format!("frame {i}: {e}"))?;
+        fs::rename(&tmp_path, &final_path).map_err(|e| format!("frame {i}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Best-effort removal of every slot file (and split scratch file) of a
+/// video, so a failure never leaves a partial set behind: readers treat
+/// "all slots present" as the only valid state.
+fn remove_slot_files(video_dir: &Path, video_id: &str) {
+    for i in 0..THUMBNAILS_PER_VIDEO {
+        let _ = fs::remove_file(crate::thumbnail::paths::slot_path(video_dir, video_id, i));
+        let _ = fs::remove_file(video_dir.join(format!("{video_id}_{i}.webp.tmp")));
     }
 }
 
@@ -1472,6 +1601,7 @@ mod tests {
             )],
             &[],
             &ffmpeg,
+            None,
         );
 
         assert_eq!(outcome.skipped_online, 0);
@@ -2404,5 +2534,333 @@ mod tests {
             summary.thumbnails_unmatched, 0,
             "no legacy thumbnail files exist, so none can be unmatched either"
         );
+    }
+
+    // ---- legacy thumbnail splitting ----
+
+    use gb_core::ports::ffmpeg::{CropRect, VideoMetadata};
+    use gb_core::ports::wb_source::WbSourceError;
+    use gb_core::testing::fake_ffmpeg::FakeCall;
+
+    fn image_size(w: u32, h: u32) -> Result<VideoMetadata, FfmpegError> {
+        Ok(VideoMetadata {
+            width: Some(w),
+            height: Some(h),
+            ..Default::default()
+        })
+    }
+
+    /// An ffmpeg fake whose JPG probe returns `size`, and whose convert and
+    /// crop calls succeed (crop unless `fail_crop_at_x` names its x).
+    fn split_ffmpeg(
+        size: Result<VideoMetadata, FfmpegError>,
+        fail_crop_at_x: Option<u32>,
+    ) -> FakeFfmpegAdapter {
+        FakeFfmpegAdapter {
+            metadata_for: Some(Box::new(move |_| size.clone())),
+            convert_result: Box::new(|_| Ok(())),
+            crop_result: Box::new(move |_, crop| {
+                if Some(crop.x) == fail_crop_at_x {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated crop failure".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn crops(ffmpeg: &FakeFfmpegAdapter) -> Vec<CropRect> {
+        ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::CropImageToWebp { crop, .. } => Some(*crop),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn converts(ffmpeg: &FakeFfmpegAdapter) -> usize {
+        ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| matches!(c, FakeCall::ConvertImageToWebp { .. }))
+            .count()
+    }
+
+    struct SplitRun {
+        summary: WbImportSummary,
+        video_dir: PathBuf,
+        video_id: String,
+        ready: i64,
+    }
+
+    impl SplitRun {
+        fn slot(&self, i: usize) -> PathBuf {
+            self.video_dir.join(format!("{}_{i}.webp", self.video_id))
+        }
+
+        fn slot_tmp(&self, i: usize) -> PathBuf {
+            self.video_dir
+                .join(format!("{}_{i}.webp.tmp", self.video_id))
+        }
+    }
+
+    /// Imports one offline row with a matching legacy JPG.
+    fn run_split_import(
+        h: &Harness,
+        profile_values: Result<Vec<String>, WbSourceError>,
+        ffmpeg: &FakeFfmpegAdapter,
+    ) -> SplitRun {
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_path = "Z:\\split.mp4".to_string();
+                r.hash = "1e5e0fbf".to_string();
+            })]),
+            profile_values,
+            ..Default::default()
+        };
+        std::fs::write(
+            h.paths.thumbnail_folder.join("MyVideo.mp4.#1e5e0fbf.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            ffmpeg,
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        let conn = h.db.writer.lock().unwrap();
+        let (video_id, ready): (String, i64) = conn
+            .query_row(
+                "SELECT id, thumbnail_ready FROM videos WHERE file_path = 'Z:\\split.mp4'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        SplitRun {
+            summary,
+            video_dir: unassigned_dir(&h.paths.thumbnails_dir),
+            video_id,
+            ready,
+        }
+    }
+
+    fn six_by_one() -> Result<Vec<String>, WbSourceError> {
+        Ok(vec!["200x150x6x1".to_string()])
+    }
+
+    #[test]
+    fn a_matching_size_splits_the_jpg_into_one_frame_per_slot() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+
+        let run = run_split_import(&h, six_by_one(), &ffmpeg);
+
+        assert_eq!(run.summary.thumbnails_linked, 1);
+        assert_eq!(run.summary.thumbnails_failed, 0);
+        assert_eq!(run.ready, 1);
+        let rects = crops(&ffmpeg);
+        assert_eq!(
+            rects.iter().map(|r| r.x).collect::<Vec<_>>(),
+            [0, 200, 400, 600, 800, 1000]
+        );
+        assert!(rects.iter().all(|r| r.y == 0 && r.w == 200 && r.h == 150));
+        assert_eq!(converts(&ffmpeg), 0, "the whole-image path must not run");
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(run.slot(i).exists(), "slot {i}");
+            assert!(!run.slot_tmp(i).exists(), "tmp {i}");
+        }
+        // Each frame is written through its own slot's scratch path.
+        let outs: Vec<PathBuf> = ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::CropImageToWebp {
+                    output_tmp_path, ..
+                } => Some(output_tmp_path.clone()),
+                _ => None,
+            })
+            .collect();
+        for (i, out) in outs.iter().enumerate() {
+            assert_eq!(out, &run.slot_tmp(i));
+        }
+    }
+
+    fn assert_imported_whole(run: &SplitRun, ffmpeg: &FakeFfmpegAdapter) {
+        assert_eq!(crops(ffmpeg).len(), 0, "no frame may be cut");
+        assert_eq!(converts(ffmpeg), 1, "the whole image is converted once");
+        assert_eq!(run.summary.thumbnails_linked, 1);
+        assert_eq!(run.ready, 1);
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(run.slot(i).exists(), "slot {i}");
+        }
+    }
+
+    #[test]
+    fn a_size_mismatch_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 151), None);
+        let run = run_split_import(&h, six_by_one(), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn a_failed_size_probe_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(
+            Err(FfmpegError::NonZeroExit {
+                status: 1,
+                stderr: "bad jpg".into(),
+            }),
+            None,
+        );
+        let run = run_split_import(&h, six_by_one(), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn a_probe_without_a_size_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(Ok(VideoMetadata::default()), None);
+        let run = run_split_import(&h, six_by_one(), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn a_missing_thum_size_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let run = run_split_import(&h, Ok(vec![]), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn an_unreadable_thum_size_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let err = WbSourceError::Query("no profile table".into());
+        let run = run_split_import(&h, Err(err), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn an_unparsable_thum_size_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let run = run_split_import(&h, Ok(vec!["wide".to_string()]), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn skins_that_disagree_on_thum_size_import_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let values = Ok(vec!["200x150x6x1".to_string(), "100x75x6x1".to_string()]);
+        let run = run_split_import(&h, values, &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn skins_that_agree_on_thum_size_still_split() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let values = Ok(vec!["200x150x6x1".to_string(), "200x150x6x1".to_string()]);
+        let run = run_split_import(&h, values, &ffmpeg);
+        assert_eq!(crops(&ffmpeg).len(), 6);
+        assert_eq!(run.summary.thumbnails_linked, 1);
+    }
+
+    #[test]
+    fn a_layout_that_is_not_six_frames_imports_the_jpg_whole() {
+        let h = harness();
+        let ffmpeg = split_ffmpeg(image_size(800, 150), None);
+        let run = run_split_import(&h, Ok(vec!["200x150x4x1".to_string()]), &ffmpeg);
+        assert_imported_whole(&run, &ffmpeg);
+    }
+
+    #[test]
+    fn a_crop_failure_partway_removes_every_slot_and_counts_as_failed() {
+        let h = harness();
+        // Fails on the fourth frame, after three slots were already written.
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), Some(600));
+
+        let run = run_split_import(&h, six_by_one(), &ffmpeg);
+
+        assert_eq!(run.summary.thumbnails_failed, 1);
+        assert_eq!(run.summary.thumbnails_linked, 0);
+        assert_eq!(run.ready, 0);
+        assert_eq!(
+            crops(&ffmpeg).len(),
+            4,
+            "frames after the failure are not attempted"
+        );
+        assert_eq!(converts(&ffmpeg), 0, "a failed split does not fall back");
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(!run.slot(i).exists(), "slot {i}");
+            assert!(!run.slot_tmp(i).exists(), "tmp {i}");
+        }
+    }
+
+    #[test]
+    fn a_rename_failure_partway_removes_every_slot() {
+        let h = harness();
+        let video_id = "fixed-video-id-for-rename-failure-test";
+        let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
+        std::fs::create_dir_all(&video_dir).unwrap();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("MyVideo.mp4.#deadbeef.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        // A directory at slot 2's destination makes only that rename fail.
+        std::fs::create_dir(video_dir.join(format!("{video_id}_2.webp"))).unwrap();
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+        let layout = gb_core::wb_thumbnail_split::parse_thum_size("200x150x6x1").unwrap();
+
+        let outcome = link_thumbnails(
+            &h.paths.thumbnail_folder,
+            &h.paths.thumbnails_dir,
+            &[],
+            &[(
+                video_id.to_string(),
+                "deadbeef".to_string(),
+                "Z:\\rename-failure.mp4".to_string(),
+            )],
+            &[],
+            &ffmpeg,
+            Some(&layout),
+        );
+
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(outcome.linked, 0);
+        assert!(outcome.linked_video_ids.is_empty());
+        assert_eq!(
+            crops(&ffmpeg).len(),
+            3,
+            "frames after the failure are not attempted"
+        );
+        for i in [0, 1, 3, 4, 5] {
+            assert!(!video_dir.join(format!("{video_id}_{i}.webp")).exists());
+        }
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            assert!(!video_dir.join(format!("{video_id}_{i}.webp.tmp")).exists());
+        }
+        assert!(video_dir.join(format!("{video_id}_2.webp")).is_dir());
     }
 }
