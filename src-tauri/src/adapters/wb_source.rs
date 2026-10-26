@@ -141,6 +141,25 @@ impl WbSourceAdapter for RealWbSourceAdapter {
         }
         Ok(cells)
     }
+
+    /// Reads only the `value` column of the matching rows, as text. `profile`
+    /// holds some binary values that are not valid text; reading whole rows
+    /// (or those values) would fail, so a row whose value is not text is
+    /// skipped instead.
+    fn read_profile_value(&self, key: &str) -> Result<Vec<String>, WbSourceError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT value FROM profile WHERE key = ?1")
+            .map_err(query_err)?;
+        let mut rows = stmt.query([key]).map_err(query_err)?;
+        let mut values = Vec::new();
+        while let Some(row) = rows.next().map_err(query_err)? {
+            if let Ok(value) = row.get::<_, String>(0) {
+                values.push(value);
+            }
+        }
+        Ok(values)
+    }
 }
 
 /// Guards the dynamic SQL built in this file against a malicious `.wb` file
@@ -153,4 +172,58 @@ fn is_safe_identifier(name: &str) -> bool {
 
 fn query_err(e: rusqlite::Error) -> WbSourceError {
     WbSourceError::Query(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter_with_profile(
+        rows: &[(&str, &str, rusqlite::types::Value)],
+    ) -> (tempfile::TempDir, RealWbSourceAdapter) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wb");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute("CREATE TABLE profile (skin TEXT, key TEXT, value TEXT)", [])
+            .unwrap();
+        for (skin, key, value) in rows {
+            conn.execute(
+                "INSERT INTO profile (skin, key, value) VALUES (?1, ?2, ?3)",
+                rusqlite::params![skin, key, value],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        let adapter = RealWbSourceAdapter::open(&path).unwrap();
+        (dir, adapter)
+    }
+
+    #[test]
+    fn profile_value_returns_every_skins_text_and_skips_non_text_rows() {
+        use rusqlite::types::Value;
+        let (_dir, adapter) = adapter_with_profile(&[
+            ("a", "thum_size", Value::Text("200x150x6x1".into())),
+            ("b", "thum_size", Value::Text("100x75x6x1".into())),
+            ("a", "thum_size", Value::Blob(vec![0xff, 0xfe, 0x00])),
+            ("a", "other", Value::Text("x".into())),
+        ]);
+        let mut values = adapter.read_profile_value("thum_size").unwrap();
+        values.sort();
+        assert_eq!(values, ["100x75x6x1", "200x150x6x1"]);
+    }
+
+    #[test]
+    fn profile_value_is_empty_when_the_key_is_absent() {
+        let (_dir, adapter) = adapter_with_profile(&[]);
+        assert!(adapter.read_profile_value("thum_size").unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_value_errors_when_there_is_no_profile_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wb");
+        drop(Connection::open(&path).unwrap());
+        let adapter = RealWbSourceAdapter::open(&path).unwrap();
+        assert!(adapter.read_profile_value("thum_size").is_err());
+    }
 }

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::ports::ffmpeg::{FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata};
+use crate::ports::ffmpeg::{
+    CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
+};
 
 /// Closure type backing `FakeFfmpegAdapter::convert_result`, factored out to
 /// satisfy `clippy::type_complexity`.
@@ -24,7 +26,19 @@ pub enum FakeCall {
         output_tmp_path: PathBuf,
         quality: u8,
     },
+    CropImageToWebp {
+        src_path: PathBuf,
+        output_tmp_path: PathBuf,
+        crop: CropRect,
+        quality: u8,
+    },
 }
+
+/// Closure type backing `FakeFfmpegAdapter::crop_result`.
+type CropResultFn = Box<dyn Fn(&Path, CropRect) -> Result<(), FfmpegError> + Send + Sync>;
+
+/// Closure type backing `FakeFfmpegAdapter::metadata_for`.
+type MetadataForFn = Box<dyn Fn(&Path) -> Result<VideoMetadata, FfmpegError> + Send + Sync>;
 
 pub struct FakeFfmpegAdapter {
     pub availability: Result<FfmpegAvailability, FfmpegError>,
@@ -35,11 +49,17 @@ pub struct FakeFfmpegAdapter {
     /// (the runtime-retry path).
     pub extract_result: Box<dyn Fn(f64) -> Result<(), FfmpegError> + Send + Sync>,
     pub metadata: Result<VideoMetadata, FfmpegError>,
+    /// When set, decides the result of `probe_metadata` from the probed path
+    /// instead of the fixed `metadata` (e.g. image dimensions per JPG).
+    pub metadata_for: Option<MetadataForFn>,
     /// Decides the result of `convert_image_to_webp` from the `src_path` it
     /// was called with -- a closure rather than a fixed `Result`, mirroring
     /// `extract_result`, so tests can model per-file success/failure (e.g.
     /// "this one legacy JPG is corrupt, the rest convert fine").
     pub convert_result: ConvertResultFn,
+    /// Decides the result of `crop_image_to_webp` from the source path and
+    /// the requested rectangle, so tests can fail at one specific frame.
+    pub crop_result: CropResultFn,
     pub calls: Mutex<Vec<FakeCall>>,
 }
 
@@ -57,9 +77,15 @@ impl Default for FakeFfmpegAdapter {
                 ))
             }),
             metadata: Err(not_configured()),
+            metadata_for: None,
             convert_result: Box::new(move |_src_path| {
                 Err(FfmpegError::Spawn(
                     "FakeFfmpegAdapter: no canned convert_result configured for this test".into(),
+                ))
+            }),
+            crop_result: Box::new(move |_src_path, _crop| {
+                Err(FfmpegError::Spawn(
+                    "FakeFfmpegAdapter: no canned crop_result configured for this test".into(),
                 ))
             }),
             calls: Mutex::new(Vec::new()),
@@ -112,7 +138,10 @@ impl FfmpegAdapter for FakeFfmpegAdapter {
             .lock()
             .unwrap()
             .push(FakeCall::ProbeMetadata(video_path.to_path_buf()));
-        self.metadata.clone()
+        match &self.metadata_for {
+            Some(f) => f(video_path),
+            None => self.metadata.clone(),
+        }
     }
 
     fn convert_image_to_webp(
@@ -134,6 +163,28 @@ impl FfmpegAdapter for FakeFfmpegAdapter {
             // Simulate ffmpeg having written the output file, so callers
             // testing the atomic tmp -> final rename step have a real file
             // to rename (see extract_thumbnail's identical rationale above).
+            let _ = std::fs::write(output_tmp_path, b"fake webp bytes");
+        }
+        result
+    }
+
+    fn crop_image_to_webp(
+        &self,
+        src_path: &Path,
+        output_tmp_path: &Path,
+        crop: CropRect,
+        quality: u8,
+    ) -> Result<(), FfmpegError> {
+        self.calls.lock().unwrap().push(FakeCall::CropImageToWebp {
+            src_path: src_path.to_path_buf(),
+            output_tmp_path: output_tmp_path.to_path_buf(),
+            crop,
+            quality,
+        });
+        let result = (self.crop_result)(src_path, crop);
+        if result.is_ok() {
+            // Same rationale as extract_thumbnail: leave a real file behind
+            // for the caller's rename step.
             let _ = std::fs::write(output_tmp_path, b"fake webp bytes");
         }
         result
@@ -173,6 +224,15 @@ mod tests {
         assert!(fake.probe_metadata(Path::new("x.mp4")).is_err());
         assert!(fake
             .convert_image_to_webp(Path::new("x.jpg"), Path::new("x.webp.tmp"), 50)
+            .is_err());
+        let crop = CropRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        };
+        assert!(fake
+            .crop_image_to_webp(Path::new("x.jpg"), Path::new("x.webp.tmp"), crop, 50)
             .is_err());
     }
 
