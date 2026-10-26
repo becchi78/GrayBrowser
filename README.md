@@ -93,13 +93,13 @@ Get-FileHash -Algorithm SHA256 .\GrayBrowser_x.y.z_x64-setup.exe
 8. 画面上部の「情報を隠す」で、各行の右側の詳細情報(プロパティ・評価・タグ)を畳んで、サムネイルを広く見られます。
 9. 旧WhiteBrowserのデータがある場合は、「.wbインポート」から `.wb` ファイルと旧サムネイルフォルダを指定して移行できます。
 
-より詳しい使い方ガイドは、以下を順次追加予定です(準備中、リンク先は未作成):
+より詳しい使い方ガイドは、以下です(「準備中」のものは順次追加予定で、リンク先は未作成です):
 
 - [インストールと初期設定](docs/getting-started.md)(準備中)
 - [フォルダ登録・スキャンの詳細](docs/folder-scan.md)(準備中)
 - [タグ・レーティングの活用法](docs/tags-and-rating.md)(準備中)
 - [重複ファイルの管理](docs/duplicate-files.md)(準備中)
-- [旧WhiteBrowser(.wb)からの移行](docs/wb-import.md)(準備中)
+- [旧WhiteBrowser(.wb)からの移行](docs/wb-import.md)
 
 ## 開発者向けセットアップ
 
