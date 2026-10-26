@@ -104,7 +104,10 @@ pub fn last_segment(path: &str) -> &str {
     path.rsplit(is_sep).next().unwrap_or(path)
 }
 
-#[cfg(test)]
+// フェイクは Cargo feature `testing` 限定のため、feature なしの
+// clippy/build でテストモジュールがコンパイル不能にならないよう
+// feature 有効時のみ対象にする。
+#[cfg(all(test, feature = "testing"))]
 mod tests {
     use super::*;
     use crate::testing::fake_dir_lister::FakeDirLister;
