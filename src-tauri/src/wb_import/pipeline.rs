@@ -5,11 +5,14 @@
 //! background thread (`run_wb_import`) so the command layer never blocks on
 //! it -- a ~3072-row real library must not freeze the UI.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
+use gb_core::path_restore::{last_segment, restore_path};
+use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::NewVideo;
@@ -75,7 +78,7 @@ pub struct WbImportPaths {
 // One argument over clippy's limit: each is an independent handle the spawned
 // thread needs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-pub fn run_wb_import<S, F, N, C, W>(
+pub fn run_wb_import<S, F, N, C, W, D>(
     db: Db,
     paths: WbImportPaths,
     wb_source: S,
@@ -86,12 +89,14 @@ pub fn run_wb_import<S, F, N, C, W>(
     reachability: ReachabilityRegistry,
     register_watch_folders: bool,
     watch_reconfigurer: Arc<W>,
+    dir_lister: Arc<D>,
 ) where
     S: WbSourceAdapter + 'static,
     F: FfmpegAdapter + 'static,
     N: WbImportNotifier + 'static,
     C: CatalogNotifier + 'static,
     W: WatchReconfigurer + 'static,
+    D: DirLister + 'static,
 {
     thread::spawn(move || {
         import_all(
@@ -102,6 +107,7 @@ pub fn run_wb_import<S, F, N, C, W>(
             notifier.as_ref(),
             catalog_notifier.as_ref(),
             register_watch_folders.then_some(watch_reconfigurer.as_ref()),
+            dir_lister.as_ref(),
         );
 
         // `db`/`paths.thumbnails_dir`/`ffmpeg`/`catalog_notifier` were only
@@ -186,6 +192,51 @@ fn resolve_file_state(movie_path: &str) -> ResolvedFileState {
     }
 }
 
+/// Restores a stored path containing `?` when -- and only when -- that path
+/// does not exist as written. Rows that exist, or have no `?`, are left
+/// exactly as before (no listing happens for them).
+fn restore_missing_path(movie_path: &str, lister: &impl DirLister) -> Option<String> {
+    if !movie_path.contains('?') {
+        return None;
+    }
+    if fs::metadata(long_path::to_long_path(Path::new(movie_path))).is_ok() {
+        return None;
+    }
+    restore_path(movie_path, lister)
+}
+
+/// Remembers each folder's listing -- including "could not be listed" -- for
+/// one import. Listing a stopped NAS share blocks for about 20 seconds, so
+/// without this every row under that share would pay the wait again.
+struct CachingDirLister<'a, D: DirLister> {
+    inner: &'a D,
+    listings: Mutex<HashMap<String, Option<Vec<String>>>>,
+}
+
+impl<'a, D: DirLister> CachingDirLister<'a, D> {
+    fn new(inner: &'a D) -> Self {
+        Self {
+            inner,
+            listings: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<D: DirLister> DirLister for CachingDirLister<'_, D> {
+    fn list_names(&self, dir: &str) -> Option<Vec<String>> {
+        // The lock is held across the inner call on purpose: this runs on the
+        // import thread only, so there is no contention to avoid, and it
+        // keeps two callers from both paying for the same slow listing.
+        let mut listings = self.listings.lock().unwrap();
+        if let Some(cached) = listings.get(dir) {
+            return cached.clone();
+        }
+        let names = self.inner.list_names(dir);
+        listings.insert(dir.to_string(), names.clone());
+        names
+    }
+}
+
 /// The actual import logic, run synchronously. `run_wb_import` is the only
 /// production caller (from its background thread); tests call this directly
 /// so counts/idempotency can be asserted without any thread-timing
@@ -194,7 +245,10 @@ fn resolve_file_state(movie_path: &str) -> ResolvedFileState {
 /// `watch` is `Some` only when the user opted in to registering the imported
 /// videos' folders as watch folders; it is then also told to re-apply the
 /// watchers once the list actually grew.
-fn import_all<S, F, N, C, W>(
+// One argument over clippy's limit, same as `run_wb_import`: each is an
+// independent handle, and grouping them would only rename the problem.
+#[allow(clippy::too_many_arguments)]
+fn import_all<S, F, N, C, W, D>(
     db: &Db,
     paths: &WbImportPaths,
     wb_source: &S,
@@ -202,12 +256,14 @@ fn import_all<S, F, N, C, W>(
     notifier: &N,
     catalog_notifier: &C,
     watch: Option<&W>,
+    dir_lister: &D,
 ) where
     S: WbSourceAdapter,
     F: FfmpegAdapter,
     N: WbImportNotifier,
     C: CatalogNotifier,
     W: WatchReconfigurer,
+    D: DirLister,
 {
     log::info!("wb import started: wb_path={}", paths.wb_path.display());
 
@@ -257,6 +313,9 @@ fn import_all<S, F, N, C, W>(
     // this run) and so are offline rows, whose folder is typically a detached
     // drive that would only show up as an unreachable watch folder.
     let mut online_movie_paths: Vec<String> = Vec::new();
+    // Shared by every row so a parent folder is listed once per import, even
+    // when it cannot be listed at all (see `CachingDirLister`).
+    let dir_lister = CachingDirLister::new(dir_lister);
 
     for (idx, row) in rows.iter().enumerate() {
         let candidate = match wb_row_to_import_candidate(row) {
@@ -273,18 +332,33 @@ fn import_all<S, F, N, C, W>(
             }
         };
 
-        let file_state = resolve_file_state(&candidate.movie_path);
+        // The real path on disk: `movie_path` as stored, or -- when it holds
+        // `?` for characters the old WhiteBrowser could not convert and the
+        // stored path therefore does not exist -- the path restored from the
+        // parent folder's contents. Everything downstream (DB row, watch
+        // folders, thumbnail location) must use this one, never the stored
+        // `?` form.
+        let restored_path = restore_missing_path(&candidate.movie_path, &dir_lister);
+        let file_path = restored_path
+            .clone()
+            .unwrap_or_else(|| candidate.movie_path.clone());
+        let file_state = resolve_file_state(&file_path);
         let id = uuid::Uuid::new_v4().to_string();
 
         let new_video = NewVideo {
             id: id.clone(),
-            file_path: candidate.movie_path.clone(),
+            file_path: file_path.clone(),
             // movie_name is the file's basename, filled for every row --
             // reused directly rather than re-deriving from movie_path
             // (which may use `\`-separated legacy Windows paths not
             // guaranteed to parse the same way on every platform this
-            // workspace builds/tests on).
-            file_name: candidate.movie_name.clone(),
+            // workspace builds/tests on). A restored row takes the name from
+            // the restored path instead, as movie_name carries the same `?`.
+            file_name: if restored_path.is_some() {
+                last_segment(&file_path).to_string()
+            } else {
+                candidate.movie_name.clone()
+            },
             file_size: file_state.file_size,
             quick_hash: file_state.quick_hash,
             status: file_state.status,
@@ -327,7 +401,7 @@ fn import_all<S, F, N, C, W>(
                     ratings_from_star_tags += 1;
                 }
                 if file_state.status != "offline" {
-                    online_movie_paths.push(candidate.movie_path.clone());
+                    online_movie_paths.push(file_path.clone());
                 }
                 // Legacy-JPG thumbnail migration (link_thumbnails, below) is
                 // only for offline rows: their source video isn't available
@@ -340,7 +414,7 @@ fn import_all<S, F, N, C, W>(
                 // video can produce a fresh one.
                 if let Some(hash) = candidate.thumbnail_hash {
                     if file_state.status == "offline" {
-                        registered_movies.push((id, hash, candidate.movie_path.clone()));
+                        registered_movies.push((id, hash, file_path.clone()));
                     } else {
                         online_hashes.push(hash);
                     }
@@ -700,6 +774,7 @@ mod tests {
     use super::*;
     use gb_core::ports::ffmpeg::FfmpegError;
     use gb_core::ports::wb_source::WbMovieRow;
+    use gb_core::testing::fake_dir_lister::FakeDirLister;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
@@ -730,6 +805,7 @@ mod tests {
             notifier,
             catalog_notifier,
             None::<&FakeWatchReconfigurer>,
+            &FakeDirLister::default(),
         );
     }
 
@@ -1698,6 +1774,7 @@ mod tests {
             &notifier,
             &FakeCatalogNotifier::default(),
             Some(reconfigurer),
+            &FakeDirLister::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
         summary
@@ -1826,6 +1903,197 @@ mod tests {
         assert!(second.watch_folders_added.is_empty());
         assert_eq!(stored_watch_folders(&h), vec![dir.folder()]);
         assert_eq!(reconf.calls.lock().unwrap().len(), 1);
+    }
+
+    // --- restoring `?` in stored paths ---------------------------------------
+
+    const DASH: &str = "\u{2014}";
+
+    fn import_with_lister(
+        h: &Harness,
+        rows: Vec<WbMovieRow>,
+        lister: &FakeDirLister,
+        reconfigurer: Option<&FakeWatchReconfigurer>,
+    ) -> crate::events::WbImportSummary {
+        let notifier = FakeWbImportNotifier::default();
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(rows),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            reconfigurer,
+            lister,
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        summary
+    }
+
+    /// A row as the old WhiteBrowser stored it: the dash replaced by `?` in
+    /// both the path and the name.
+    fn replaced_row(id: i64, folder: &str, stem: &str) -> WbMovieRow {
+        row(|r| {
+            r.movie_id = id;
+            r.movie_name = format!("{stem}?.mp4");
+            r.movie_path = format!("{folder}\\{stem}?.mp4");
+        })
+    }
+
+    fn video_columns(h: &Harness) -> (String, String, String, String) {
+        h.db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT file_path, file_name, status, quick_hash FROM videos",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn a_question_mark_path_is_restored_and_registered_online_under_the_real_name() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+
+        let summary =
+            import_with_lister(&h, vec![replaced_row(1, &dir.folder(), "a")], &lister, None);
+
+        assert_eq!(summary.registered, 1);
+        let (file_path, file_name, status, quick_hash) = video_columns(&h);
+        assert_eq!(file_path, dir.file(&real));
+        assert_eq!(file_name, real, "the name must not keep the `?`");
+        assert_eq!(status, "online");
+        assert_ne!(quick_hash, "");
+    }
+
+    #[test]
+    fn several_candidates_leave_the_row_offline_with_the_stored_path() {
+        let h = harness();
+        let dir = OnlineDir::new("unrelated.mp4");
+        let lister =
+            FakeDirLister::default().with_dir(&dir.folder(), &[&format!("a{DASH}.mp4"), "a-.mp4"]);
+        let row = replaced_row(1, &dir.folder(), "a");
+        let stored = row.movie_path.clone();
+
+        let summary = import_with_lister(&h, vec![row], &lister, None);
+
+        assert_eq!(summary.registered, 1);
+        let (file_path, file_name, status, quick_hash) = video_columns(&h);
+        assert_eq!(file_path, stored);
+        assert_eq!(file_name, "a?.mp4");
+        assert_eq!(status, "offline");
+        assert_eq!(quick_hash, "");
+    }
+
+    #[test]
+    fn an_unlistable_folder_leaves_the_row_offline() {
+        let h = harness();
+        let dir = OnlineDir::new(&format!("a{DASH}.mp4"));
+        let row = replaced_row(1, &dir.folder(), "a");
+        let stored = row.movie_path.clone();
+
+        import_with_lister(&h, vec![row], &FakeDirLister::default(), None);
+
+        let (file_path, _, status, _) = video_columns(&h);
+        assert_eq!(file_path, stored);
+        assert_eq!(status, "offline");
+    }
+
+    #[test]
+    fn a_folder_is_listed_once_per_import_however_many_rows_need_it() {
+        let h = harness();
+        let names: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|stem| format!("{stem}{DASH}.mp4"))
+            .collect();
+        let dir = OnlineDir::new(&names[0]);
+        for name in &names[1..] {
+            std::fs::write(dir.dir.path().join(name), b"video bytes").unwrap();
+        }
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &name_refs);
+
+        let summary = import_with_lister(
+            &h,
+            vec![
+                replaced_row(1, &dir.folder(), "a"),
+                replaced_row(2, &dir.folder(), "b"),
+                replaced_row(3, &dir.folder(), "c"),
+            ],
+            &lister,
+            None,
+        );
+
+        assert_eq!(summary.registered, 3);
+        assert_eq!(lister.call_count_for(&dir.folder()), 1);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_not_retried_for_each_row() {
+        let h = harness();
+        let lister = FakeDirLister::default();
+        let folder = "Z:\\gone";
+
+        import_with_lister(
+            &h,
+            vec![
+                replaced_row(1, folder, "a"),
+                replaced_row(2, folder, "b"),
+                replaced_row(3, folder, "c"),
+            ],
+            &lister,
+            None,
+        );
+
+        assert_eq!(lister.call_count_for(folder), 1);
+    }
+
+    #[test]
+    fn the_folder_of_a_restored_online_video_becomes_a_watch_folder() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_with_lister(
+            &h,
+            vec![replaced_row(1, &dir.folder(), "a")],
+            &lister,
+            Some(&reconf),
+        );
+
+        assert_eq!(summary.watch_folders_added, vec![dir.folder()]);
+        assert_eq!(stored_watch_folders(&h), vec![dir.folder()]);
+    }
+
+    #[test]
+    fn reimporting_skips_the_restored_path() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+        let rows = || vec![replaced_row(1, &dir.folder(), "a")];
+
+        import_with_lister(&h, rows(), &lister, None);
+        let second = import_with_lister(&h, rows(), &lister, None);
+
+        assert_eq!(second.registered, 0);
+        assert_eq!(second.skipped, 1);
+        let count: i64 =
+            h.db.writer
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+                .unwrap();
+        assert_eq!(count, 1);
     }
 
     /// Registering folders is a convenience: a failed save must neither abort

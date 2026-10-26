@@ -11,6 +11,7 @@ pub mod hash;
 pub mod log_view;
 pub mod migrations;
 pub mod nas_poll_interval;
+pub mod path_restore;
 pub mod paths;
 pub mod ports;
 pub mod rating;

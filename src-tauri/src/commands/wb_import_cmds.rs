@@ -117,6 +117,7 @@ pub async fn start_wb_import(
         reachability.inner().clone(),
         register_watch_folders,
         watch_reconfigurer,
+        Arc::new(adapters::dir_lister::RealDirLister),
     );
 
     Ok(())
