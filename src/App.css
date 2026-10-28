@@ -87,6 +87,11 @@ button:disabled {
 .wb-import-path {
   font-size: 0.9em;
   opacity: 0.8;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wb-import-progress {
@@ -1671,10 +1676,21 @@ button.link-button:focus-visible {
   color: #b00020;
 }
 
+/* Wider than the base .dialog so a long .wb / folder path sits beside its
+   button; 92vw keeps it inside narrow windows. */
+.wb-import-dialog {
+  width: min(44em, 92vw);
+}
+
 .wb-import-dialog-row {
   display: flex;
   align-items: center;
   gap: 0.75em;
+}
+
+.wb-import-dialog-row button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .wb-import-steps {
@@ -1711,8 +1727,8 @@ button.link-button:focus-visible {
 }
 
 /* The result-line color scheme this section exists for -- green =
-   success, amber = "not an error, needs manual follow-up", grey = a
-   muted 0-count line, red = a *real* failure only. Deliberately distinct
+   success, amber = "not an error, needs manual follow-up", red = a *real*
+   failure only. Deliberately distinct
    from `.thumbnail-offline-badge`'s existing red (see that rule's own
    history) -- red is scoped to this dialog only, not a repaint of every
    red usage elsewhere in the app (that's a separate, out-of-scope
@@ -1733,28 +1749,47 @@ button.link-button:focus-visible {
   font-weight: 600;
 }
 
-.wb-import-result-muted {
-  opacity: 0.6;
-}
-
-.wb-import-result-amber {
-  color: #7a5a00;
-}
-
-.wb-import-result-failed {
-  color: #8a1f1f;
-  font-weight: 600;
-}
-
-.wb-import-result-needs-review {
-  background-color: #fff3cd;
-  color: #7a5a00;
+.wb-import-result-attention {
   border-radius: 6px;
   padding: 0.5em 0.75em;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.4em;
+}
+
+.wb-import-result-attention--amber {
+  background-color: #fff3cd;
+  color: #7a5a00;
+}
+
+.wb-import-result-attention--failed {
+  background-color: #fbe3e3;
+  color: #8a1f1f;
+  font-weight: 600;
+}
+
+.wb-import-result-details {
+  font-size: 0.9em;
+}
+
+.wb-import-result-details summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.wb-import-result-details-list {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+
+.wb-import-result-watch-folder-list {
+  margin: 0.2em 0 0;
+  padding-left: 1.2em;
+  overflow-wrap: anywhere;
 }
 
 .wb-import-result-detail {
@@ -1982,17 +2017,14 @@ button.link-button:focus-visible {
     color: #7ed494;
   }
 
-  .wb-import-result-amber {
-    color: #f0c674;
-  }
-
-  .wb-import-result-failed {
-    color: #f3caca;
-  }
-
-  .wb-import-result-needs-review {
+  .wb-import-result-attention--amber {
     background-color: #5a4600;
     color: #f0c674;
+  }
+
+  .wb-import-result-attention--failed {
+    background-color: #5a1f1f;
+    color: #f3caca;
   }
 }
 
