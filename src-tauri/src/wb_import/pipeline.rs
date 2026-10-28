@@ -307,7 +307,12 @@ fn import_all<S, F, N, C, W, D>(
     let clamped_scores = count_clamped_scores(&rows) as u32;
     let source_tag_count = count_source_tags(&rows) as u32;
 
-    let mut registered = 0u32;
+    // Every row ends in exactly one of `registered_*`, `skipped`,
+    // `skipped_invalid_name` and `failed_rows`, so the summary's counts add up
+    // to `total`.
+    let mut registered_online = 0u32;
+    let mut registered_offline = 0u32;
+    let mut failed_rows = 0u32;
     let mut skipped = 0u32;
     let mut skipped_invalid_name = 0u32;
     let mut tags_assigned = 0u32;
@@ -352,6 +357,7 @@ fn import_all<S, F, N, C, W, D>(
                     row.movie_id,
                     row.movie_name
                 );
+                failed_rows += 1;
                 continue;
             }
         };
@@ -447,6 +453,7 @@ fn import_all<S, F, N, C, W, D>(
                         row.movie_id,
                         row.movie_name
                     );
+                    failed_rows += 1;
                     continue;
                 }
             }
@@ -456,7 +463,11 @@ fn import_all<S, F, N, C, W, D>(
             queries::WbImportOutcome::Inserted {
                 tags_assigned: row_tags_assigned,
             } => {
-                registered += 1;
+                if file_state.status == "offline" {
+                    registered_offline += 1;
+                } else {
+                    registered_online += 1;
+                }
                 tags_assigned += row_tags_assigned as u32;
                 if candidate.rating_from_star_tags {
                     ratings_from_star_tags += 1;
@@ -574,7 +585,11 @@ fn import_all<S, F, N, C, W, D>(
     let thumbnails_skipped_online = link_outcome.skipped_online;
 
     let summary = WbImportSummary {
-        registered,
+        total,
+        registered: registered_online + registered_offline,
+        registered_online,
+        registered_offline,
+        failed_rows,
         skipped,
         skipped_invalid_name,
         clamped_scores,
@@ -589,13 +604,18 @@ fn import_all<S, F, N, C, W, D>(
     };
 
     log::info!(
-        "wb import complete: registered={} skipped={} skipped_invalid_name={} \
+        "wb import complete: total={} registered={} registered_online={} \
+         registered_offline={} skipped={} failed_rows={} skipped_invalid_name={} \
          clamped_scores={} tags_assigned={} \
          source_tag_count={} ratings_from_star_tags={} thumbnails_linked={} \
          thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={} \
          watch_folders_added={:?}",
+        summary.total,
         summary.registered,
+        summary.registered_online,
+        summary.registered_offline,
         summary.skipped,
+        summary.failed_rows,
         summary.skipped_invalid_name,
         summary.clamped_scores,
         summary.tags_assigned,
@@ -3336,5 +3356,181 @@ mod tests {
         assert_eq!(summary.registered, 1);
         assert_eq!(summary.thumbnails_linked, 1);
         assert_eq!(summary.thumbnails_unmatched, 0);
+    }
+
+    /// Every row lands in exactly one bucket, so the buckets add up to the
+    /// number of rows in the `.wb`.
+    fn assert_counts_add_up(summary: &WbImportSummary) {
+        assert_eq!(
+            summary.total,
+            summary.registered
+                + summary.skipped
+                + summary.skipped_invalid_name
+                + summary.failed_rows,
+            "total must equal registered + skipped + skipped_invalid_name + failed_rows: \
+             {summary:?}"
+        );
+        assert_eq!(
+            summary.registered,
+            summary.registered_online + summary.registered_offline,
+            "registered must equal registered_online + registered_offline: {summary:?}"
+        );
+    }
+
+    fn import_and_summarize(h: &Harness, rows: Vec<WbMovieRow>) -> WbImportSummary {
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(rows),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        summary
+    }
+
+    #[test]
+    fn counts_split_registered_rows_into_online_and_offline() {
+        let h = harness();
+        let online_dir = tempfile::tempdir().unwrap();
+        let mut rows = Vec::new();
+        for i in 0..2 {
+            let path = online_dir.path().join(format!("on{i}.mp4"));
+            std::fs::write(&path, b"online bytes").unwrap();
+            rows.push(row(|r| {
+                r.movie_id = i + 1;
+                r.movie_name = format!("on{i}.mp4");
+                r.movie_path = path.to_string_lossy().to_string();
+            }));
+        }
+        for i in 0..3 {
+            rows.push(row(|r| {
+                r.movie_id = 10 + i;
+                r.movie_name = format!("off{i}.mp4");
+                r.movie_path = format!("Z:\\gone\\off{i}.mp4");
+            }));
+        }
+
+        let summary = import_and_summarize(&h, rows);
+
+        assert_eq!(summary.total, 5);
+        assert_eq!(summary.registered, 5);
+        assert_eq!(summary.registered_online, 2);
+        assert_eq!(summary.registered_offline, 3);
+        assert_eq!(summary.failed_rows, 0);
+        assert_counts_add_up(&summary);
+    }
+
+    #[test]
+    fn a_row_with_an_unparseable_date_counts_as_failed() {
+        let h = harness();
+        let summary = import_and_summarize(
+            &h,
+            vec![
+                row(|r| {
+                    r.movie_id = 1;
+                    r.movie_path = "Z:\\ok.mp4".to_string();
+                }),
+                row(|r| {
+                    r.movie_id = 2;
+                    r.movie_path = "Z:\\bad_date.mp4".to_string();
+                    r.regist_date = "not-a-date".to_string();
+                }),
+            ],
+        );
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.registered, 1);
+        assert_eq!(summary.failed_rows, 1);
+        assert_counts_add_up(&summary);
+    }
+
+    /// A trigger that aborts the insert for one path stands in for any
+    /// database write failure; the other row must still import.
+    #[test]
+    fn a_row_whose_database_write_fails_counts_as_failed() {
+        let h = harness();
+        {
+            let conn = h.db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER fail_one_insert BEFORE INSERT ON videos \
+                 WHEN NEW.file_path = 'Z:\\db_fail.mp4' \
+                 BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+            )
+            .unwrap();
+        }
+
+        let summary = import_and_summarize(
+            &h,
+            vec![
+                row(|r| {
+                    r.movie_id = 1;
+                    r.movie_path = "Z:\\ok.mp4".to_string();
+                }),
+                row(|r| {
+                    r.movie_id = 2;
+                    r.movie_path = "Z:\\db_fail.mp4".to_string();
+                }),
+            ],
+        );
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.registered, 1);
+        assert_eq!(summary.failed_rows, 1);
+        assert_counts_add_up(&summary);
+    }
+
+    #[test]
+    fn counts_add_up_with_every_kind_of_row_and_on_a_repeat_import() {
+        let h = harness();
+        let online_dir = tempfile::tempdir().unwrap();
+        let online_path = online_dir.path().join("online.mp4");
+        std::fs::write(&online_path, b"online bytes").unwrap();
+        let rows = vec![
+            row(|r| {
+                r.movie_id = 1;
+                r.movie_name = "online.mp4".to_string();
+                r.movie_path = online_path.to_string_lossy().to_string();
+            }),
+            row(|r| {
+                r.movie_id = 2;
+                r.movie_name = "offline.mp4".to_string();
+                r.movie_path = "Z:\\gone\\offline.mp4".to_string();
+            }),
+            row(|r| {
+                r.movie_id = 3;
+                r.movie_name = "bad\u{2460}.mp4".to_string();
+                r.movie_path = "Z:\\gone\\bad\u{2460}.mp4".to_string();
+            }),
+            row(|r| {
+                r.movie_id = 4;
+                r.movie_path = "Z:\\bad_date.mp4".to_string();
+                r.last_date = "not-a-date".to_string();
+            }),
+        ];
+
+        let first = import_and_summarize(&h, rows.clone());
+        assert_eq!(first.total, 4);
+        assert_eq!(first.registered_online, 1);
+        assert_eq!(first.registered_offline, 1);
+        assert_eq!(first.skipped_invalid_name, 1);
+        assert_eq!(first.failed_rows, 1);
+        assert_eq!(first.skipped, 0);
+        assert_counts_add_up(&first);
+
+        let second = import_and_summarize(&h, rows);
+        assert_eq!(second.total, 4);
+        assert_eq!(second.registered, 0);
+        assert_eq!(second.registered_online, 0);
+        assert_eq!(second.registered_offline, 0);
+        assert_eq!(second.skipped, 2, "the two registered rows are skipped");
+        assert_eq!(second.skipped_invalid_name, 1);
+        assert_eq!(second.failed_rows, 1);
+        assert_counts_add_up(&second);
     }
 }
