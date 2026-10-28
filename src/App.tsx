@@ -209,11 +209,15 @@ function App() {
         onClose={() => setFolderDialogOpen(false)}
         onChanged={() => setRefreshKey((k) => k + 1)}
       />
-      <WbImportDialog
-        open={wbImportDialogOpen}
-        onClose={() => setWbImportDialogOpen(false)}
-        onImportComplete={() => setRefreshKey((k) => k + 1)}
-      />
+      {/* Mounted only while open: unmounting on close is what discards the
+          previous selection/result so each open starts at file selection.
+          Always rendering it with an open flag would keep that state. */}
+      {wbImportDialogOpen && (
+        <WbImportDialog
+          onClose={() => setWbImportDialogOpen(false)}
+          onImportComplete={() => setRefreshKey((k) => k + 1)}
+        />
+      )}
       <TagBarEditDialog
         open={tagBarDialogOpen}
         onClose={() => setTagBarDialogOpen(false)}

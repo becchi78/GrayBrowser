@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { pickWbFile, pickWbThumbnailFolder, startWbImport } from "../api";
 import { onWbImportComplete, onWbImportFailed, onWbImportProgress } from "../events";
-import { classifyTagsAssigned, type TagsAssignedTone } from "../lib/wbImportTagsDisplay";
+import { abbreviatePath } from "../lib/abbreviatePath";
+import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import type { WbImportProgress, WbImportSummary } from "../types";
 
 interface Props {
-  open: boolean;
   onClose: () => void;
   onImportComplete: () => void;
 }
@@ -18,7 +18,21 @@ const STEPS: { key: StepKey; label: string }[] = [
   { key: "rebuild", label: "UUID再構築" },
 ];
 
-export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
+// 表示用に省略するパスの最大文字数。全体は title で見られる。
+const PATH_DISPLAY_MAX_CHARS = 60;
+
+function PathLabel({ path }: { path: string }) {
+  return (
+    <span className="wb-import-path" title={path}>
+      {abbreviatePath(path, PATH_DISPLAY_MAX_CHARS)}
+    </span>
+  );
+}
+
+// The parent mounts this only while the dialog is open (see App.tsx), so
+// every open starts from the file-selection step: all state below is
+// discarded on close.
+export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [wbPath, setWbPath] = useState<string | null>(null);
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
   // On by default: the imported videos' folders are otherwise missing from
@@ -55,10 +69,6 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
     // old WbImportPanel this dialog replaces used).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  if (!open) {
-    return null;
-  }
 
   function requestClose() {
     // Closing mid-import would unmount this component (and with it, its
@@ -142,30 +152,13 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
     return rowLoopFinished ? "active" : "pending";
   }
 
-  // tags_assigned===0 になる原因(元データにタグが無かった/全行
-  // 既登録スキップ/推定失敗/真の異常)を区別する表示ロジックは
-  // src/lib/wbImportTagsDisplay.ts の classifyTagsAssigned に切り出し済み。
-  // ここではトーンをCSSクラスへマッピングするだけ。"success"は既存の見た目
-  // (元々クラス無指定だった)を変えないため意図的にクラスを付けない。
-  function tagsAssignedClassName(tone: TagsAssignedTone): string {
-    if (tone === "success") {
-      return "wb-import-result-line";
-    }
-    return `wb-import-result-line wb-import-result-${tone}`;
-  }
-
-  function renderTagsAssignedLine(s: WbImportSummary) {
-    const { tone, text } = classifyTagsAssigned(s);
-    return <p className={tagsAssignedClassName(tone)}>{text}</p>;
-  }
+  const resultDisplay = summary ? buildWbImportResultDisplay(summary) : null;
 
   return (
-    <div className="dialog-overlay" onClick={requestClose}>
-      <div
-        className="dialog wb-import-dialog"
-        data-testid="import-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
+    // No overlay click-to-close: a stray click outside would throw away the
+    // result or a half-made selection; only the close button closes.
+    <div className="dialog-overlay">
+      <div className="dialog wb-import-dialog" data-testid="import-dialog">
         <h2>.wbインポート</h2>
 
         {!summary && !error && (
@@ -174,13 +167,13 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
               <button type="button" onClick={handlePickWbFile} disabled={importing}>
                 .wbファイルを選択
               </button>
-              {wbPath && <span className="wb-import-path">{wbPath}</span>}
+              {wbPath && <PathLabel path={wbPath} />}
             </div>
             <div className="wb-import-dialog-row">
               <button type="button" onClick={handlePickThumbnailFolder} disabled={importing}>
                 旧サムネイルフォルダを選択
               </button>
-              {thumbnailFolderPath && <span className="wb-import-path">{thumbnailFolderPath}</span>}
+              {thumbnailFolderPath && <PathLabel path={thumbnailFolderPath} />}
             </div>
             <div className="wb-import-dialog-row">
               <label className="folder-row-check">
@@ -229,96 +222,83 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
           </div>
         )}
 
-        {summary && (
+        {summary && resultDisplay && (
           <div className="wb-import-result">
             <p
               className="wb-import-result-line wb-import-result-success"
               data-testid="import-result-success"
             >
-              正常インポート: {summary.registered}件
+              {resultDisplay.registeredText}
             </p>
-
-            {summary.skipped_invalid_name > 0 && (
-              <p
-                className="wb-import-result-line wb-import-result-amber"
-                data-testid="import-result-skipped-invalid-name"
-              >
-                機種依存文字のため未登録: {summary.skipped_invalid_name}件 —
-                「未登録」パネルで名前を変更すると登録できます
-              </p>
+            {resultDisplay.watchFoldersAddedText && (
+              <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
             )}
 
-            {summary.thumbnails_skipped_online > 0 && (
-              <p
-                className="wb-import-result-line wb-import-result-muted"
-                data-testid="import-result-skipped-online"
-              >
-                オンライン動画の旧サムネイル: {summary.thumbnails_skipped_online}件 —
-                動画本体から自動生成します（移行対象外）。
-              </p>
-            )}
+            {resultDisplay.attention.map((item) => {
+              const testId =
+                item.key === "unmatched"
+                  ? "import-result-needs-review"
+                  : item.key === "invalid-name"
+                    ? "import-result-skipped-invalid-name"
+                    : undefined;
+              return (
+                <div
+                  key={item.key}
+                  className={`wb-import-result-attention wb-import-result-attention--${item.tone}`}
+                  data-testid={testId}
+                >
+                  <p className="wb-import-result-line">{item.text}</p>
+                  {item.expandable && (
+                    <>
+                      <button type="button" onClick={() => setShowUnmatchedDetail((v) => !v)}>
+                        確認する
+                      </button>
+                      {showUnmatchedDetail && (
+                        // A real per-file list/manual-relink UI is out of scope
+                        // here. This only surfaces where the unmatched files
+                        // still are.
+                        <p className="wb-import-result-detail">
+                          対象の旧サムネイルファイルは、選択した旧サムネイルフォルダ内に残っています。個別の一覧表示・手動での紐付け操作は今後のアップデートで対応予定です。
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
 
-            {summary.thumbnails_unmatched > 0 ? (
-              <div
-                className="wb-import-result-needs-review"
-                data-testid="import-result-needs-review"
-              >
-                <p className="wb-import-result-line">
-                  自動対応できなかった旧サムネイル: {summary.thumbnails_unmatched}件 —
-                  エラーではありません。手動で紐付けてください。
-                </p>
-                <button type="button" onClick={() => setShowUnmatchedDetail((v) => !v)}>
-                  確認する
-                </button>
-                {showUnmatchedDetail && (
-                  // A real per-file list/manual-relink UI is out of scope
-                  // here. This only surfaces where the unmatched files
-                  // still are.
-                  <p className="wb-import-result-detail">
-                    対象の旧サムネイルファイルは、選択した旧サムネイルフォルダ内に残っています。個別の一覧表示・手動での紐付け操作は今後のアップデートで対応予定です。
+            {(resultDisplay.details.length > 0 || resultDisplay.watchFolders.length > 0) && (
+              <details className="wb-import-result-details">
+                <summary>詳細</summary>
+                <ul className="wb-import-result-details-list">
+                  {resultDisplay.details.map((item) => (
+                    <li
+                      key={item.key}
+                      data-testid={
+                        item.key === "skipped-online" ? "import-result-skipped-online" : undefined
+                      }
+                    >
+                      {item.text}
+                    </li>
+                  ))}
+                  {resultDisplay.watchFolders.length > 0 && (
+                    <li data-testid="import-result-watch-folders">
+                      監視フォルダに追加:
+                      <ul className="wb-import-result-watch-folder-list">
+                        {resultDisplay.watchFolders.map((folder) => (
+                          <li key={folder}>{folder}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  )}
+                </ul>
+                {resultDisplay.showOnlineThumbnailNote && (
+                  <p className="wb-import-note">
+                    オンライン動画のサムネイルは動画ファイルから別途バックグラウンドで自動生成されます。
                   </p>
                 )}
-              </div>
-            ) : (
-              <p className="wb-import-result-line wb-import-result-muted">
-                自動対応できなかった旧サムネイル: 0件
-              </p>
+              </details>
             )}
-
-            {summary.thumbnails_failed > 0 ? (
-              <p className="wb-import-result-line wb-import-result-failed">
-                旧サムネイル変換に失敗: {summary.thumbnails_failed}件
-              </p>
-            ) : (
-              <p className="wb-import-result-line wb-import-result-muted">
-                旧サムネイル変換の失敗: 0件
-              </p>
-            )}
-
-            {renderTagsAssignedLine(summary)}
-
-            {summary.ratings_from_star_tags > 0 && (
-              <p className="wb-import-result-line wb-import-result-muted">
-                ★タグから評価にした: {summary.ratings_from_star_tags}件
-              </p>
-            )}
-
-            {summary.watch_folders_added.length > 0 && (
-              <p
-                className="wb-import-result-line wb-import-result-muted"
-                data-testid="import-result-watch-folders"
-              >
-                監視フォルダに追加: {summary.watch_folders_added.join(", ")}
-              </p>
-            )}
-
-            <p className="wb-import-result-line wb-import-result-muted">
-              スキップ (登録済み): {summary.skipped}件 / score丸め: {summary.clamped_scores}件 /
-              旧サムネイル紐付け成功: {summary.thumbnails_linked}件
-            </p>
-            <p className="wb-import-note">
-              オンライン動画のサムネイルは動画ファイルから別途バックグラウンドで自動生成されます。
-            </p>
           </div>
         )}
 
