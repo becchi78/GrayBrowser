@@ -120,6 +120,10 @@ pub struct WbImportSummary {
     /// `.wb` rows whose `movie_path` was already a registered `file_path`
     /// (`WbImportOutcome::Skipped`) -- e.g. a repeat import run.
     pub skipped: u32,
+    /// `.wb` rows whose file name contains a machine-dependent character. They
+    /// are not registered; they are recorded in `skipped_files` so they show up
+    /// in the unregistered-files panel, exactly as a normal scan would.
+    pub skipped_invalid_name: u32,
     /// `.wb` rows with `score > 5`, clamped to a 5-star rating
     /// (`gb_core::wb_import::count_clamped_scores`).
     pub clamped_scores: u32,

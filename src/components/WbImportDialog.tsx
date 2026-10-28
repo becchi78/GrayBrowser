@@ -238,6 +238,16 @@ export function WbImportDialog({ open, onClose, onImportComplete }: Props) {
               正常インポート: {summary.registered}件
             </p>
 
+            {summary.skipped_invalid_name > 0 && (
+              <p
+                className="wb-import-result-line wb-import-result-amber"
+                data-testid="import-result-skipped-invalid-name"
+              >
+                機種依存文字のため未登録: {summary.skipped_invalid_name}件 —
+                「未登録」パネルで名前を変更すると登録できます
+              </p>
+            )}
+
             {summary.thumbnails_skipped_online > 0 && (
               <p
                 className="wb-import-result-line wb-import-result-muted"

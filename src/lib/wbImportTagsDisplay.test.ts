@@ -12,6 +12,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
   return {
     registered: 0,
     skipped: 0,
+    skipped_invalid_name: 0,
     clamped_scores: 0,
     tags_assigned: 0,
     source_tag_count: 0,
@@ -61,6 +62,34 @@ test("registered === 0 かつ skipped === 0 なら failed（全行失敗の推�
 
   assert.equal(result.tone, "failed");
   assert.match(result.text, /インポートに失敗した可能性があります/);
+});
+
+// 機種依存文字のファイル名は仕様どおり登録されないだけで、取り込みの失敗ではない。
+test("全行が機種依存文字でスキップされた場合は failed にならず muted", () => {
+  const s = makeSummary({
+    registered: 0,
+    skipped: 0,
+    skipped_invalid_name: 5,
+    tags_assigned: 0,
+    source_tag_count: 5,
+  });
+  const result = classifyTagsAssigned(s);
+
+  assert.equal(result.tone, "muted");
+  assert.doesNotMatch(result.text, /インポートに失敗した可能性/);
+  assert.match(result.text, /機種依存文字/);
+});
+
+test("機種依存文字スキップが0件で registered/skipped も0件なら従来どおり failed", () => {
+  const s = makeSummary({
+    registered: 0,
+    skipped: 0,
+    skipped_invalid_name: 0,
+    tags_assigned: 0,
+    source_tag_count: 5,
+  });
+
+  assert.equal(classifyTagsAssigned(s).tone, "failed");
 });
 
 test("registered > 0 かつ tags_assigned === 0 の残余ケースは amber（要確認）", () => {
