@@ -300,7 +300,8 @@ pub fn count_videos_under_folder(db: State<Db>, folder_path: String) -> Result<u
 /// `FolderDialog`'s ✕ delete action: removes every `videos` row under
 /// `folder_path` -- plus every
 /// `video_tags`/`path_collisions` row referencing one of them, all in one
-/// transaction (`queries::delete_videos_under_folder_cascade`) -- deletes
+/// transaction (`queries::delete_videos_under_folder_cascade`, which also
+/// removes the folder's `skipped_files` rows) -- deletes
 /// their cached thumbnails (the whole per-folder subdirectory at once, since
 /// every video under it is gone), then drops `folder_path` from the
 /// persisted `watch_folders` setting and re-`reconfigure`s the watch

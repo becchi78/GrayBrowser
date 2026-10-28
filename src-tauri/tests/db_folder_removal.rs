@@ -181,3 +181,95 @@ fn delete_videos_under_folder_cascade_is_a_no_op_for_an_already_empty_folder() {
     let conn = db.writer.lock().unwrap();
     assert_eq!(video_ids(&conn), vec!["elsewhere"]);
 }
+
+fn insert_skipped_file(conn: &Connection, file_path: &str) {
+    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
+    conn.execute(
+        "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
+         VALUES (?1, ?2, 'unsupported_char', '①')",
+        params![file_path, file_name],
+    )
+    .unwrap();
+}
+
+fn skipped_paths(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT file_path FROM skipped_files ORDER BY file_path")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+#[test]
+fn delete_videos_under_folder_cascade_removes_skipped_files_under_the_folder_including_subfolders()
+{
+    let (_dir, db) = init_temp_db();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+        insert_skipped_file(&conn, r"C:\Videos\Sub\Deep\①b.mp4");
+        insert_skipped_file(&conn, r"D:\Other\①c.mp4");
+
+        queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Videos").unwrap();
+    }
+
+    let conn = db.writer.lock().unwrap();
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①c.mp4"]);
+}
+
+#[test]
+fn delete_videos_under_folder_cascade_keeps_skipped_files_of_a_same_prefix_sibling_and_other_drive()
+{
+    let (_dir, db) = init_temp_db();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+        insert_skipped_file(&conn, r"C:\Videos2\①b.mp4");
+        insert_skipped_file(&conn, r"D:\Videos\①c.mp4");
+
+        queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Videos").unwrap();
+    }
+
+    let conn = db.writer.lock().unwrap();
+    assert_eq!(
+        skipped_paths(&conn),
+        vec![r"C:\Videos2\①b.mp4", r"D:\Videos\①c.mp4"]
+    );
+}
+
+#[test]
+fn delete_videos_under_folder_cascade_leaves_skipped_files_alone_for_an_empty_folder() {
+    let (_dir, db) = init_temp_db();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        insert_skipped_file(&conn, r"D:\Other\①a.mp4");
+
+        let deleted_ids =
+            queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Empty").unwrap();
+        assert!(deleted_ids.is_empty());
+    }
+
+    let conn = db.writer.lock().unwrap();
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
+}
+
+#[test]
+fn delete_videos_under_folder_cascade_removes_videos_and_skipped_files_together() {
+    let (_dir, db) = init_temp_db();
+    let deleted_ids = {
+        let mut conn = db.writer.lock().unwrap();
+        insert_video(&conn, "in_folder", r"C:\Videos\a.mp4");
+        insert_video(&conn, "outside", r"D:\Other\b.mp4");
+        insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+        insert_skipped_file(&conn, r"D:\Other\①b.mp4");
+
+        queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Videos").unwrap()
+    };
+    assert_eq!(deleted_ids, vec!["in_folder"]);
+
+    let conn = db.writer.lock().unwrap();
+    assert_eq!(video_ids(&conn), vec!["outside"]);
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①b.mp4"]);
+}
