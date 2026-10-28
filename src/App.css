@@ -697,6 +697,11 @@ button.search-box-clear {
   color: #8a2a2a;
 }
 
+.thumbnail-placeholder--offline {
+  background-color: #e4e4e8;
+  color: #6b6b75;
+}
+
 .video-row--offline .video-row-thumbnail-wrap img,
 .video-row--offline .video-row-thumbnail-wrap .thumbnail-placeholder {
   /* 45% opacity. `filter: grayscale` kept alongside opacity, same as the
@@ -1856,6 +1861,11 @@ button.link-button:focus-visible {
   .thumbnail-placeholder--failed {
     background-color: #5a2f2f;
     color: #f0b4b4;
+  }
+
+  .thumbnail-placeholder--offline {
+    background-color: #3a3a40;
+    color: #a0a0aa;
   }
 
   .video-row {

@@ -3,6 +3,7 @@ import { getThumbnails, getVideoProperties, playVideo } from "../api";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import { setWithEviction, THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import type { ClickModifiers } from "../lib/multiSelect";
+import { thumbnailPlaceholderState, THUMBNAIL_PLACEHOLDER_LABELS } from "../lib/thumbnailPlaceholder";
 import { needsPropertiesRefresh } from "../lib/videoProperties";
 import { useIsPathUnreachable } from "../reachabilityContext";
 import type { VideoDto, VideoPropertiesDto } from "../types";
@@ -121,6 +122,7 @@ export function VideoRow({
   // 同じ見た目・同じ操作制限にする（フォルダが戻れば自動で元に戻る）。
   const folderUnreachable = useIsPathUnreachable(video.file_path);
   const isOffline = video.status === "offline" || folderUnreachable;
+  const placeholderState = thumbnailPlaceholderState(video, isOffline);
 
   // サムネイルは元動画のアスペクト比を保ったまま表示する（バックエンドの
   // `extract_thumbnail`は`-vf
@@ -204,12 +206,9 @@ export function VideoRow({
                   <img src={url} alt={video.file_name} loading="lazy" />
                 ) : (
                   <div
-                    className={
-                      "thumbnail-placeholder" +
-                      (video.thumbnail_failed ? " thumbnail-placeholder--failed" : "")
-                    }
+                    className={`thumbnail-placeholder thumbnail-placeholder--${placeholderState}`}
                   >
-                    {video.thumbnail_failed ? "生成失敗" : "生成中..."}
+                    {THUMBNAIL_PLACEHOLDER_LABELS[placeholderState]}
                   </div>
                 )}
               </div>
