@@ -1292,6 +1292,12 @@ pub fn list_video_ids_and_paths(conn: &Connection) -> anyhow::Result<Vec<(String
 /// folder_path)` instead of looping per id -- but the ids are kept in the
 /// return value for callers/tests that still want per-video confirmation of
 /// what was deleted. This function itself never touches the filesystem.
+///
+/// `skipped_files` rows under `folder_path` are deleted in the same
+/// transaction, with the same prefix predicate. Once the folder is no longer
+/// watched there is nowhere left to act on such a row (the file is never
+/// rescanned, so it can never be registered or cleared by a later scan), and
+/// leaving it would accumulate unactionable entries in the skipped list.
 pub fn delete_videos_under_folder_cascade(
     conn: &mut Connection,
     folder_path: &str,
@@ -1323,6 +1329,10 @@ pub fn delete_videos_under_folder_cascade(
     )?;
     tx.execute(
         "DELETE FROM videos WHERE file_path LIKE ?1 ESCAPE '\\'",
+        params![pattern],
+    )?;
+    tx.execute(
+        "DELETE FROM skipped_files WHERE file_path LIKE ?1 ESCAPE '\\'",
         params![pattern],
     )?;
 
