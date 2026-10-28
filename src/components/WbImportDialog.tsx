@@ -35,9 +35,6 @@ function PathLabel({ path }: { path: string }) {
 export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [wbPath, setWbPath] = useState<string | null>(null);
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
-  // On by default: the imported videos' folders are otherwise missing from
-  // the sidebar until the user adds them by hand.
-  const [registerWatchFolders, setRegisterWatchFolders] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<WbImportProgress | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
@@ -114,7 +111,9 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     setError(null);
     setShowUnmatchedDetail(false);
     try {
-      await startWbImport(wbPath, thumbnailFolderPath, registerWatchFolders);
+      // Always register the imported videos' folders: without them in the
+      // sidebar the migration is left half-done.
+      await startWbImport(wbPath, thumbnailFolderPath, true);
     } catch (e) {
       console.error(e);
       setError(String(e));
@@ -176,24 +175,12 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
               {thumbnailFolderPath && <PathLabel path={thumbnailFolderPath} />}
             </div>
             <div className="wb-import-dialog-row">
-              <label className="folder-row-check">
-                <input
-                  type="checkbox"
-                  data-testid="import-register-watch-folders"
-                  checked={registerWatchFolders}
-                  onChange={(e) => setRegisterWatchFolders(e.target.checked)}
-                  disabled={importing}
-                />
-                インポートした動画のフォルダを監視フォルダに追加する
-              </label>
-            </div>
-            <div className="wb-import-dialog-row">
               <button
                 type="button"
                 onClick={handleStartImport}
                 disabled={importing || wbPath === null || thumbnailFolderPath === null}
               >
-                {importing ? "インポート中..." : "移行開始"}
+                {importing ? "インポート中..." : "インポート"}
               </button>
             </div>
           </>
