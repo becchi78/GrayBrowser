@@ -73,6 +73,9 @@ export interface VideoPropertiesDto {
 export interface WbImportSummary {
   registered: number;
   skipped: number;
+  /** Rows not registered because the file name has a machine-dependent
+   * character; they are listed in the unregistered-files panel. */
+  skipped_invalid_name: number;
   clamped_scores: number;
   tags_assigned: number;
   /** Total tags present in the raw `.wb` source across every row, so the

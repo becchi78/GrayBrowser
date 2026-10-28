@@ -36,6 +36,14 @@ export function classifyTagsAssigned(s: WbImportSummary): TagsAssignedDisplay {
       text: "タグ付与: 0件（対象の動画はすべて既に登録済みのため、新規のタグ付与はありませんでした）",
     };
   }
+  if (s.registered === 0 && s.skipped === 0 && s.skipped_invalid_name > 0) {
+    // 全行が機種依存文字のファイル名で登録されなかった場合。取り込みの失敗ではなく
+    // 仕様どおりの結果なので、「失敗した可能性」とは表示しない。
+    return {
+      tone: "muted",
+      text: "タグ付与: 0件（対象の動画はすべて機種依存文字のファイル名のため登録されませんでした）",
+    };
+  }
   if (s.registered === 0 && s.skipped === 0) {
     // WbImportSummaryに行レベルの失敗件数を表す専用フィールドが無いため、
     // 「新規挿入も既登録スキップも0件なのに元データにタグは存在した」ことから

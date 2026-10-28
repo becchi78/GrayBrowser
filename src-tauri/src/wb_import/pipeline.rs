@@ -5,7 +5,7 @@
 //! background thread (`run_wb_import`) so the command layer never blocks on
 //! it -- a ~3072-row real library must not freeze the UI.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -15,9 +15,10 @@ use gb_core::path_restore::{last_segment, restore_path};
 use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
 use gb_core::ports::wb_source::WbSourceAdapter;
-use gb_core::scan_pipeline::NewVideo;
+use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
-    count_clamped_scores, count_source_tags, match_thumbnail_files, wb_row_to_import_candidate,
+    count_clamped_scores, count_source_tags, extract_thumbnail_hash, match_thumbnail_files,
+    wb_row_to_import_candidate,
 };
 use gb_core::wb_thumbnail_split::{parse_thum_size, split_plan, ThumbLayout};
 
@@ -209,6 +210,15 @@ fn restore_missing_path(movie_path: &str, lister: &impl DirLister) -> Option<Str
     restore_path(movie_path, lister)
 }
 
+/// Reports progress after row `idx` (0-based), throttled to every
+/// `PROGRESS_NOTIFY_INTERVAL` rows plus the last one.
+fn notify_row_progress<N: WbImportNotifier>(notifier: &N, idx: usize, total: u32) {
+    let processed = (idx + 1) as u32;
+    if processed.is_multiple_of(PROGRESS_NOTIFY_INTERVAL) || processed == total {
+        notifier.notify_progress(processed, total);
+    }
+}
+
 /// Remembers each folder's listing -- including "could not be listed" -- for
 /// one import. Listing a stopped NAS share blocks for about 20 seconds, so
 /// without this every row under that share would pay the wait again.
@@ -299,6 +309,7 @@ fn import_all<S, F, N, C, W, D>(
 
     let mut registered = 0u32;
     let mut skipped = 0u32;
+    let mut skipped_invalid_name = 0u32;
     let mut tags_assigned = 0u32;
     let mut ratings_from_star_tags = 0u32;
     // (video_id, thumbnail_hash, file_path) for every row that was actually
@@ -314,6 +325,11 @@ fn import_all<S, F, N, C, W, D>(
     // migrated (a fresh thumbnail is generated from the video), but the
     // hashes are needed so those JPGs are not reported as unmatched.
     let mut online_hashes: Vec<String> = Vec::new();
+    // Thumbnail hashes of rows refused for a machine-dependent file name. The
+    // video is not registered, so its legacy JPG has nothing to attach to and
+    // nothing to report either: `link_thumbnails` drops these JPGs instead of
+    // counting them as needing manual attention.
+    let mut invalid_name_hashes: HashSet<String> = HashSet::new();
     // Path of every row newly registered by this run, online or offline: the
     // folders to register as watch folders. Offline rows are included so that
     // their folders (e.g. a stopped NAS) can still be reached from the
@@ -350,6 +366,43 @@ fn import_all<S, F, N, C, W, D>(
         let file_path = restored_path
             .clone()
             .unwrap_or_else(|| candidate.movie_path.clone());
+
+        // Checked on the restored name (the stored `?` form has lost the
+        // original character) and before any hashing, like a normal scan:
+        // such a file is never registered, hashed or given a thumbnail.
+        // Offline rows are judged by name alone, so they are covered too.
+        let scanned_file = ScannedFile {
+            file_path: file_path.clone(),
+            file_name: last_segment(&file_path).to_string(),
+            file_size: 0,
+            mtime: 0,
+        };
+        if let ValidationOutcome::Invalid { detected_char } = scan_pipeline::validate(&scanned_file)
+        {
+            let skipped_file = scan_pipeline::build_skipped_file(&scanned_file, detected_char);
+            log::warn!(
+                "wb import: skipped machine-dependent filename: {} (char: {detected_char})",
+                skipped_file.file_name
+            );
+            let recorded = {
+                let conn = db.writer.lock().unwrap();
+                queries::upsert_skipped_file(&conn, &skipped_file)
+            };
+            if let Err(e) = recorded {
+                log::error!(
+                    "wb import: failed to record skipped file {} for movie_id={}: {e}",
+                    file_path,
+                    row.movie_id
+                );
+            }
+            skipped_invalid_name += 1;
+            if let Some(hash) = candidate.thumbnail_hash {
+                invalid_name_hashes.insert(hash);
+            }
+            notify_row_progress(notifier, idx, total);
+            continue;
+        }
+
         let file_state = resolve_file_state(&file_path);
         let id = uuid::Uuid::new_v4().to_string();
 
@@ -443,10 +496,7 @@ fn import_all<S, F, N, C, W, D>(
             }
         }
 
-        let processed = (idx + 1) as u32;
-        if processed.is_multiple_of(PROGRESS_NOTIFY_INTERVAL) || processed == total {
-            notifier.notify_progress(processed, total);
-        }
+        notify_row_progress(notifier, idx, total);
     }
 
     // Must precede `link_thumbnails` and the thumbnail queue: both decide
@@ -500,6 +550,7 @@ fn import_all<S, F, N, C, W, D>(
         &watch_folders,
         &registered_movies,
         &online_hashes,
+        &invalid_name_hashes,
         ffmpeg,
         thumb_layout.as_ref(),
     );
@@ -525,6 +576,7 @@ fn import_all<S, F, N, C, W, D>(
     let summary = WbImportSummary {
         registered,
         skipped,
+        skipped_invalid_name,
         clamped_scores,
         tags_assigned,
         source_tag_count,
@@ -537,12 +589,14 @@ fn import_all<S, F, N, C, W, D>(
     };
 
     log::info!(
-        "wb import complete: registered={} skipped={} clamped_scores={} tags_assigned={} \
+        "wb import complete: registered={} skipped={} skipped_invalid_name={} \
+         clamped_scores={} tags_assigned={} \
          source_tag_count={} ratings_from_star_tags={} thumbnails_linked={} \
          thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={} \
          watch_folders_added={:?}",
         summary.registered,
         summary.skipped,
+        summary.skipped_invalid_name,
         summary.clamped_scores,
         summary.tags_assigned,
         summary.source_tag_count,
@@ -686,22 +740,31 @@ struct LinkOutcome {
 /// This function only writes files and never touches the DB; the caller
 /// marks `LinkOutcome::linked_video_ids` ready afterwards.
 ///
+/// `invalid_name_hashes` are thumbnail hashes of rows refused for a
+/// machine-dependent file name. Their JPGs are dropped before matching, so they
+/// count as neither unmatched nor skipped-online -- unless the same hash also
+/// belongs to a registered video, which still takes it.
+///
 /// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
 /// `watch_folders` (fetched once by the caller, `import_all`) is used
 /// together with each matched video's own `file_path` (carried in
 /// `registered_movies`) to resolve its registered-folder subdirectory
 /// (`thumbnail::paths::video_thumbnail_dir`) before writing anything into
 /// it.
+// One argument over clippy's limit: the hash lists and registered videos are
+// independent inputs, and grouping them would only rename the problem.
+#[allow(clippy::too_many_arguments)]
 fn link_thumbnails<F: FfmpegAdapter>(
     thumbnail_folder: &Path,
     thumbnails_root: &Path,
     watch_folders: &[String],
     registered_movies: &[(String, String, String)],
     online_hashes: &[String],
+    invalid_name_hashes: &HashSet<String>,
     ffmpeg: &F,
     layout: Option<&ThumbLayout>,
 ) -> LinkOutcome {
-    let filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
+    let mut filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
         Err(e) => {
             log::warn!(
@@ -712,6 +775,19 @@ fn link_thumbnails<F: FfmpegAdapter>(
             return LinkOutcome::default();
         }
     };
+
+    if !invalid_name_hashes.is_empty() {
+        filenames.retain(|filename| {
+            let Some(hash) = extract_thumbnail_hash(filename) else {
+                return true;
+            };
+            if !invalid_name_hashes.contains(&hash) {
+                return true;
+            }
+            // Only a hash shared with a registered video needs the scan.
+            online_hashes.contains(&hash) || registered_movies.iter().any(|(_, h, _)| *h == hash)
+        });
+    }
 
     // `match_thumbnail_files` only needs (video_id, thumbnail_hash) pairs --
     // `file_path` is looked back up per matched video via this map instead
@@ -1603,6 +1679,7 @@ mod tests {
                 video_file_path.to_string(),
             )],
             &[],
+            &HashSet::new(),
             &ffmpeg,
             None,
         );
@@ -2939,6 +3016,7 @@ mod tests {
                 "Z:\\rename-failure.mp4".to_string(),
             )],
             &[],
+            &HashSet::new(),
             &ffmpeg,
             Some(&layout),
         );
@@ -2958,5 +3036,305 @@ mod tests {
             assert!(!video_dir.join(format!("{video_id}_{i}.webp.tmp")).exists());
         }
         assert!(video_dir.join(format!("{video_id}_2.webp")).is_dir());
+    }
+
+    // --- machine-dependent file names -----------------------------------------
+
+    /// A row for `name` under `folder`, as a normal (non-`?`) stored path.
+    fn named_row(id: i64, folder: &str, name: &str) -> WbMovieRow {
+        row(|r| {
+            r.movie_id = id;
+            r.movie_name = name.to_string();
+            r.movie_path = format!("{folder}\\{name}");
+        })
+    }
+
+    fn count_of(h: &Harness, sql: &str) -> i64 {
+        h.db.writer
+            .lock()
+            .unwrap()
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn skipped_file_paths(h: &Harness) -> Vec<String> {
+        let conn = h.db.writer.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT file_path FROM skipped_files ORDER BY file_path")
+            .unwrap();
+        let paths = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap();
+        paths
+    }
+
+    #[test]
+    fn machine_dependent_names_are_recorded_as_skipped_files_not_videos() {
+        let h = harness();
+        let names = [
+            "circled\u{2460}.mp4",
+            "roman\u{2163}.mp4",
+            "corp\u{3231}.mp4",
+        ];
+        let dir = OnlineDir::new("plain.mp4");
+        for name in names {
+            std::fs::write(dir.dir.path().join(name), b"video bytes").unwrap();
+        }
+        let rows = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| named_row(i as i64 + 1, &dir.folder(), n))
+            .chain([named_row(9, &dir.folder(), "plain.mp4")])
+            .collect();
+
+        let summary = import_with_lister(&h, rows, &FakeDirLister::default(), None);
+
+        assert_eq!(summary.skipped_invalid_name, 3);
+        assert_eq!(summary.registered, 1, "the plain name registers as before");
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 1);
+        assert_eq!(
+            count_of(
+                &h,
+                "SELECT COUNT(*) FROM videos WHERE file_name = 'plain.mp4' AND status = 'online'"
+            ),
+            1
+        );
+        let mut expected: Vec<String> = names.iter().map(|n| dir.file(n)).collect();
+        expected.sort();
+        assert_eq!(skipped_file_paths(&h), expected);
+        assert_eq!(
+            count_of(
+                &h,
+                "SELECT COUNT(*) FROM skipped_files WHERE reason = 'machine_dependent_char'"
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn offline_rows_are_judged_by_name_alone() {
+        let h = harness();
+        let row = named_row(1, "Z:\\gone", "off\u{2460}.mp4");
+
+        let summary = import_with_lister(&h, vec![row], &FakeDirLister::default(), None);
+
+        assert_eq!(summary.skipped_invalid_name, 1);
+        assert_eq!(summary.registered, 0);
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 0);
+        assert_eq!(
+            skipped_file_paths(&h),
+            vec!["Z:\\gone\\off\u{2460}.mp4".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_name_is_judged_after_restoring_question_marks() {
+        let h = harness();
+        let real = "a\u{2460}.mp4".to_string();
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+
+        let summary =
+            import_with_lister(&h, vec![replaced_row(1, &dir.folder(), "a")], &lister, None);
+
+        assert_eq!(summary.skipped_invalid_name, 1);
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 0);
+        assert_eq!(skipped_file_paths(&h), vec![dir.file(&real)]);
+    }
+
+    #[test]
+    fn a_question_mark_name_that_restores_to_a_clean_name_still_registers() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+
+        let summary =
+            import_with_lister(&h, vec![replaced_row(1, &dir.folder(), "a")], &lister, None);
+
+        assert_eq!(summary.skipped_invalid_name, 0);
+        assert_eq!(summary.registered, 1);
+        assert!(skipped_file_paths(&h).is_empty());
+    }
+
+    #[test]
+    fn a_refused_rows_folder_does_not_become_a_watch_folder() {
+        let h = harness();
+        let dir = OnlineDir::new("bad\u{2460}.mp4");
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary = import_registering(
+            &h,
+            vec![named_row(1, &dir.folder(), "bad\u{2460}.mp4")],
+            &reconf,
+        );
+
+        assert_eq!(summary.skipped_invalid_name, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert!(stored_watch_folders(&h).is_empty());
+        assert!(reconf.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reimporting_does_not_duplicate_skipped_files() {
+        let h = harness();
+        let rows = || vec![named_row(1, "Z:\\gone", "off\u{2460}.mp4")];
+
+        import_with_lister(&h, rows(), &FakeDirLister::default(), None);
+        let second = import_with_lister(&h, rows(), &FakeDirLister::default(), None);
+
+        assert_eq!(second.skipped_invalid_name, 1);
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM skipped_files"), 1);
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 0);
+    }
+
+    #[test]
+    fn a_refused_rows_legacy_jpg_is_not_counted_for_manual_attention() {
+        let h = harness();
+        let dir = OnlineDir::new("bad\u{2460}.mp4");
+        let bad = row(|r| {
+            r.movie_id = 1;
+            r.movie_name = "bad\u{2460}.mp4".to_string();
+            r.movie_path = dir.file("bad\u{2460}.mp4");
+            r.hash = "1e5e0fbf".to_string();
+        });
+        let offline_bad = row(|r| {
+            r.movie_id = 2;
+            r.movie_name = "off\u{2460}.mp4".to_string();
+            r.movie_path = "Z:\\gone\\off\u{2460}.mp4".to_string();
+            r.hash = "2f6f1cc0".to_string();
+        });
+        for name in [
+            "bad\u{2460}.mp4.#1e5e0fbf.jpg",
+            "off\u{2460}.mp4.#2f6f1cc0.jpg",
+        ] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+        let ffmpeg = no_op_ffmpeg();
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![bad, offline_bad]),
+                ..Default::default()
+            },
+            &ffmpeg,
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.skipped_invalid_name, 2);
+        assert_eq!(summary.thumbnails_unmatched, 0);
+        assert_eq!(summary.thumbnails_skipped_online, 0);
+        assert_eq!(summary.thumbnails_linked, 0);
+        assert!(
+            ffmpeg.calls.lock().unwrap().is_empty(),
+            "no thumbnail work for a refused row"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_jpg_is_still_unmatched_next_to_refused_rows() {
+        let h = harness();
+        let bad = row(|r| {
+            r.movie_id = 1;
+            r.movie_name = "off\u{2460}.mp4".to_string();
+            r.movie_path = "Z:\\gone\\off\u{2460}.mp4".to_string();
+            r.hash = "2f6f1cc0".to_string();
+        });
+        for name in ["off\u{2460}.mp4.#2f6f1cc0.jpg", "Other.mp4.#deadbeef.jpg"] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![bad]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.thumbnails_unmatched, 1);
+    }
+
+    #[test]
+    fn progress_still_reaches_the_last_row_when_it_is_refused() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![
+                named_row(1, "Z:\\gone", "ok.mp4"),
+                named_row(2, "Z:\\gone", "bad\u{2460}.mp4"),
+            ]),
+            ..Default::default()
+        };
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        assert_eq!(
+            notifier.progress_calls.lock().unwrap().last().copied(),
+            Some((2, 2))
+        );
+    }
+
+    /// Two rows can share a thumbnail hash; if only one of them is refused the
+    /// JPG still belongs to the registered one and must be linked.
+    #[test]
+    fn a_jpg_shared_with_a_registered_row_is_still_linked() {
+        let h = harness();
+        let bad = row(|r| {
+            r.movie_id = 1;
+            r.movie_name = "dup\u{2460}.mp4".to_string();
+            r.movie_path = "Z:\\gone\\dup\u{2460}.mp4".to_string();
+            r.hash = "2f6f1cc0".to_string();
+        });
+        let good = row(|r| {
+            r.movie_id = 2;
+            r.movie_name = "dup.mp4".to_string();
+            r.movie_path = "Z:\\gone\\dup.mp4".to_string();
+            r.hash = "2f6f1cc0".to_string();
+        });
+        std::fs::write(
+            h.paths.thumbnail_folder.join("dup.mp4.#2f6f1cc0.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![bad, good]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.skipped_invalid_name, 1);
+        assert_eq!(summary.registered, 1);
+        assert_eq!(summary.thumbnails_linked, 1);
+        assert_eq!(summary.thumbnails_unmatched, 0);
     }
 }
