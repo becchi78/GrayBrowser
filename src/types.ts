@@ -71,7 +71,15 @@ export interface VideoPropertiesDto {
 // Mirrors src-tauri/src/events.rs's WbImportSummary, the payload of the
 // wb_import:complete event emitted once by wb_import::pipeline::run_wb_import.
 export interface WbImportSummary {
+  /** Number of movie rows in the `.wb`. Equals
+   * `registered + skipped + skipped_invalid_name + failed_rows`. */
+  total: number;
+  /** Always `registered_online + registered_offline`. */
   registered: number;
+  registered_online: number;
+  registered_offline: number;
+  /** Rows that could not be imported (bad date, failed database write). */
+  failed_rows: number;
   skipped: number;
   /** Rows not registered because the file name has a machine-dependent
    * character; they are listed in the unregistered-files panel. */

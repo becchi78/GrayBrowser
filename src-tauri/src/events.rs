@@ -115,8 +115,21 @@ pub trait WbImportNotifier: Send + Sync {
 /// `notify_complete`.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct WbImportSummary {
-    /// New `videos` rows created (`WbImportOutcome::Inserted`).
+    /// Number of `movie` rows in the `.wb`. Every row lands in exactly one of
+    /// `registered`, `skipped`, `skipped_invalid_name` and `failed_rows`, so
+    /// `total == registered + skipped + skipped_invalid_name + failed_rows`.
+    pub total: u32,
+    /// New `videos` rows created (`WbImportOutcome::Inserted`); always
+    /// `registered_online + registered_offline`.
     pub registered: u32,
+    /// Newly registered rows whose file was reachable at import time.
+    pub registered_online: u32,
+    /// Newly registered rows whose file was not reachable (stored as the
+    /// offline placeholder).
+    pub registered_offline: u32,
+    /// Rows that could not be imported at all: an unparseable date, or a
+    /// failed database write. They are neither registered nor skipped.
+    pub failed_rows: u32,
     /// `.wb` rows whose `movie_path` was already a registered `file_path`
     /// (`WbImportOutcome::Skipped`) -- e.g. a repeat import run.
     pub skipped: u32,

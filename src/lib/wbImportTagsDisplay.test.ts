@@ -10,7 +10,11 @@ import type { WbImportSummary } from "../types.ts";
 // 他フィールドは分類ロジックに関与しないため0で埋める。
 function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
   return {
+    total: 0,
     registered: 0,
+    registered_online: 0,
+    registered_offline: 0,
+    failed_rows: 0,
     skipped: 0,
     skipped_invalid_name: 0,
     clamped_scores: 0,
@@ -31,7 +35,7 @@ test("tags_assigned > 0 なら success", () => {
   const result = classifyTagsAssigned(s);
 
   assert.equal(result.tone, "success");
-  assert.match(result.text, /3件/);
+  assert.match(result.text, /^タグをインポート: 3件/);
 });
 
 test("source_tag_count === 0 なら muted（元データにタグが無かった、ケース1）", () => {
@@ -56,8 +60,14 @@ test("registered === 0 かつ skipped > 0 なら muted（全行既登録スキ�
 // これが今回のPlan差し戻しで追加された回帰対象: registered === 0 だけでは
 // 「全行スキップ（正常）」と「全行失敗（異常）」を区別できない。
 // skipped === 0 まで確認して初めて実失敗の推定として扱う。
-test("registered === 0 かつ skipped === 0 なら failed（全行失敗の推定、ケース4）", () => {
-  const s = makeSummary({ registered: 0, skipped: 0, tags_assigned: 0, source_tag_count: 5 });
+test("registered === 0 かつ skipped === 0 かつ failed_rows > 0 なら failed（全行失敗、ケース4）", () => {
+  const s = makeSummary({
+    registered: 0,
+    skipped: 0,
+    failed_rows: 3,
+    tags_assigned: 0,
+    source_tag_count: 5,
+  });
   const result = classifyTagsAssigned(s);
 
   assert.equal(result.tone, "failed");
@@ -80,16 +90,24 @@ test("全行が機種依存文字でスキップされた場合は failed にな
   assert.match(result.text, /機種依存文字/);
 });
 
-test("機種依存文字スキップが0件で registered/skipped も0件なら従来どおり failed", () => {
+test("機種依存文字スキップが0件で registered/skipped も0件、失敗行があるなら failed", () => {
   const s = makeSummary({
     registered: 0,
     skipped: 0,
     skipped_invalid_name: 0,
+    failed_rows: 2,
     tags_assigned: 0,
     source_tag_count: 5,
   });
 
   assert.equal(classifyTagsAssigned(s).tone, "failed");
+});
+
+// 失敗行が無いのに何も入らなかった場合は「失敗した可能性」と言い切れないので amber。
+test("取り込めなかった行が無い registered === 0 && skipped === 0 は amber", () => {
+  const s = makeSummary({ registered: 0, skipped: 0, tags_assigned: 0, source_tag_count: 5 });
+
+  assert.equal(classifyTagsAssigned(s).tone, "amber");
 });
 
 test("registered > 0 かつ tags_assigned === 0 の残余ケースは amber（要確認）", () => {

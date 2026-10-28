@@ -211,14 +211,27 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
 
         {summary && resultDisplay && (
           <div className="wb-import-result">
+            <p className="wb-import-result-line" data-testid="import-result-total">
+              {resultDisplay.totalText}
+            </p>
             <p
               className="wb-import-result-line wb-import-result-success"
               data-testid="import-result-success"
             >
               {resultDisplay.registeredText}
             </p>
+            {resultDisplay.offlineThumbnailsText && (
+              <p className="wb-import-result-line" data-testid="import-result-offline-thumbnails">
+                {resultDisplay.offlineThumbnailsText}
+              </p>
+            )}
             {resultDisplay.watchFoldersAddedText && (
               <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
+            )}
+            {resultDisplay.skippedText && (
+              <p className="wb-import-result-line" data-testid="import-result-skipped">
+                {resultDisplay.skippedText}
+              </p>
             )}
 
             {resultDisplay.attention.map((item) => {
@@ -227,7 +240,9 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                   ? "import-result-needs-review"
                   : item.key === "invalid-name"
                     ? "import-result-skipped-invalid-name"
-                    : undefined;
+                    : item.key === "failed-rows"
+                      ? "import-result-failed-rows"
+                      : undefined;
               return (
                 <div
                   key={item.key}
@@ -259,14 +274,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                 <summary>詳細</summary>
                 <ul className="wb-import-result-details-list">
                   {resultDisplay.details.map((item) => (
-                    <li
-                      key={item.key}
-                      data-testid={
-                        item.key === "skipped-online" ? "import-result-skipped-online" : undefined
-                      }
-                    >
-                      {item.text}
-                    </li>
+                    <li key={item.key}>{item.text}</li>
                   ))}
                   {resultDisplay.watchFolders.length > 0 && (
                     <li data-testid="import-result-watch-folders">
@@ -279,11 +287,6 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                     </li>
                   )}
                 </ul>
-                {resultDisplay.showOnlineThumbnailNote && (
-                  <p className="wb-import-note">
-                    オンライン動画のサムネイルは動画ファイルから別途バックグラウンドで自動生成されます。
-                  </p>
-                )}
               </details>
             )}
           </div>
