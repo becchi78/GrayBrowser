@@ -39,7 +39,7 @@ jobs:
       group: pr-checks-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,12 +68,10 @@ jobs:
         run: cargo test -p gb-core --all-features
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          # 22+ required: package.json's test:unit script runs
-          # `node --experimental-strip-types --test`, which needs Node
-          # 22.6+ (not available on Node 20).
-          node-version: "22"
+          # 22+ required: test:unit uses --experimental-strip-types (22.6+).
+          node-version: "24"
           cache: "npm"
 
       - name: Install frontend deps
@@ -108,7 +106,7 @@ jobs:
     runs-on: windows-latest
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -130,14 +128,10 @@ jobs:
         run: cargo test --workspace --all-features
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          # 22+ required: package.json's test:unit script runs
-          # `node --experimental-strip-types --test`, which needs Node
-          # 22.6+ (not available on Node 20). Already used by the e2e job
-          # below for a different reason (node:sqlite); this bumps checks
-          # to match.
-          node-version: "22"
+          # 22+ required: test:unit uses --experimental-strip-types (22.6+).
+          node-version: "24"
           cache: "npm"
 
       - name: Install frontend deps
@@ -165,7 +159,7 @@ jobs:
     needs: checks
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -176,9 +170,9 @@ jobs:
           workspaces: ". -> target"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - name: Install frontend deps
@@ -188,7 +182,7 @@ jobs:
         run: npm run tauri build
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: grayb-windows-installer
           # Cargo workspace build output lands under the repo root's
@@ -201,7 +195,7 @@ jobs:
           retention-days: 7
 
       - name: Upload built app (for e2e reuse)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: grayb-app-exe
           # e2e reuses this release build instead of doing its own separate
@@ -252,7 +246,7 @@ jobs:
     needs: build
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -263,21 +257,17 @@ jobs:
           workspaces: ". -> target"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          # 22+ required: e2e/fixtures.mjs uses node:sqlite (stable from
-          # 22.5), which the other jobs' Node 20 doesn't have at all
-          # (ERR_UNKNOWN_BUILTIN_MODULE, found via a real CI run on PR #4).
-          # Scoped to this job only -- checks/build never touch
-          # node:sqlite.
-          node-version: "22"
+          # 22+ required: e2e/fixtures.mjs uses node:sqlite (22.5+).
+          node-version: "24"
           cache: "npm"
 
       - name: Install frontend deps
         run: npm ci
 
       - name: Download built app from build job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: grayb-app-exe
           path: target/release/
@@ -357,7 +347,7 @@ jobs:
 
       - name: Upload E2E failure screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-screenshots
           path: e2e/screenshots/**

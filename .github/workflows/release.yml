@@ -24,7 +24,7 @@ jobs:
     # なしには鍵が使われない。
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ビルド（約10分）より前に、タグと各ファイルのバージョン・CHANGELOGの
       # 不一致で失敗させる。失敗したらこれ以降のステップは実行されない。
@@ -44,9 +44,9 @@ jobs:
           workspaces: ". -> target"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - name: Install frontend deps
@@ -101,7 +101,7 @@ jobs:
           node scripts/release/release-notes.mjs "$TAG" "release-out/$(basename "$installer")" > release-out/notes.md
 
       - name: Upload installer, update manifest and notes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: release-out/*
@@ -115,7 +115,7 @@ jobs:
       contents: write
     steps:
       - name: Download installer, update manifest and notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: release-out
