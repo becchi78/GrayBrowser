@@ -89,11 +89,12 @@ impl<R: tauri::Runtime> CatalogNotifier for TauriCatalogNotifier<R> {
 /// `CatalogNotifier`'s deliberately payload-less `notify_changed` -- the
 /// import log needs actual counts, not just "something changed".
 pub trait WbImportNotifier: Send + Sync {
-    /// Emitted periodically while importing `.wb` movie rows (not during the
-    /// subsequent thumbnail-linking pass) so a long-running import (e.g. the
-    /// real ~3072-row library) can show live progress. `processed`/`total`
-    /// are movie-row counts.
-    fn notify_progress(&self, processed: u32, total: u32);
+    /// Emitted periodically while a phase runs so a long-running import (e.g.
+    /// the real ~3072-row library) can show live progress. `processed` and
+    /// `total` count that phase's own unit of work (movie rows, legacy
+    /// thumbnails). `total` is `None` while the phase cannot know its size yet;
+    /// the phases that report here today always know it.
+    fn notify_progress(&self, stage: WbImportStage, processed: u32, total: Option<u32>);
 
     /// Emitted exactly once, after both the row-import loop and the
     /// thumbnail-linking pass have finished.
@@ -203,16 +204,21 @@ impl<R: tauri::Runtime> TauriWbImportNotifier<R> {
 }
 
 impl<R: tauri::Runtime> WbImportNotifier for TauriWbImportNotifier<R> {
-    fn notify_progress(&self, processed: u32, total: u32) {
+    fn notify_progress(&self, stage: WbImportStage, processed: u32, total: Option<u32>) {
         #[derive(Clone, serde::Serialize)]
         struct Progress {
+            stage: &'static str,
             processed: u32,
-            total: u32,
+            total: Option<u32>,
         }
-        if let Err(e) = self
-            .app
-            .emit("wb_import:progress", Progress { processed, total })
-        {
+        if let Err(e) = self.app.emit(
+            "wb_import:progress",
+            Progress {
+                stage: stage.as_str(),
+                processed,
+                total,
+            },
+        ) {
             log::error!("failed to emit wb_import:progress: {e}");
         }
     }
@@ -364,7 +370,7 @@ impl<R: tauri::Runtime> ReachabilityNotifier for TauriReachabilityNotifier<R> {
 #[cfg(feature = "testing")]
 pub use fake::{
     FakeCatalogNotifier, FakeDedupNotifier, FakeReachabilityNotifier, FakeWatchReconfigurer,
-    FakeWbImportNotifier,
+    FakeWbImportNotifier, WbImportEvent,
 };
 
 #[cfg(feature = "testing")]
@@ -414,19 +420,41 @@ mod fake {
     /// `STATUS_ENTRYPOINT_NOT_FOUND` test-harness issue documented above.
     #[derive(Default)]
     pub struct FakeWbImportNotifier {
-        pub progress_calls: Mutex<Vec<(u32, u32)>>,
+        /// Every `(stage, processed, total)` passed to `notify_progress`.
+        pub progress_calls: Mutex<Vec<(WbImportStage, u32, Option<u32>)>>,
         pub complete_calls: Mutex<Vec<WbImportSummary>>,
         pub failed_calls: Mutex<Vec<String>>,
         pub stage_calls: Mutex<Vec<WbImportStage>>,
+        /// Stage and progress calls interleaved in arrival order, which the
+        /// two separate lists above cannot show.
+        pub event_order: Mutex<Vec<WbImportEvent>>,
+    }
+
+    /// One entry of `FakeWbImportNotifier::event_order`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum WbImportEvent {
+        Stage(WbImportStage),
+        Progress(WbImportStage, u32, Option<u32>),
     }
 
     impl WbImportNotifier for FakeWbImportNotifier {
         fn notify_stage(&self, stage: WbImportStage) {
             self.stage_calls.lock().unwrap().push(stage);
+            self.event_order
+                .lock()
+                .unwrap()
+                .push(WbImportEvent::Stage(stage));
         }
 
-        fn notify_progress(&self, processed: u32, total: u32) {
-            self.progress_calls.lock().unwrap().push((processed, total));
+        fn notify_progress(&self, stage: WbImportStage, processed: u32, total: Option<u32>) {
+            self.progress_calls
+                .lock()
+                .unwrap()
+                .push((stage, processed, total));
+            self.event_order
+                .lock()
+                .unwrap()
+                .push(WbImportEvent::Progress(stage, processed, total));
         }
 
         fn notify_complete(&self, summary: &WbImportSummary) {

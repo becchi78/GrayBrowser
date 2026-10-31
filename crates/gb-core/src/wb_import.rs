@@ -279,7 +279,7 @@ pub fn count_source_tags(rows: &[WbMovieRow]) -> usize {
 pub enum WbImportStage {
     /// Reading the `.wb` file.
     Reading,
-    /// Registering each movie row as a video (the only phase with a count).
+    /// Registering each movie row as a video.
     Registering,
     /// Linking legacy thumbnails to the registered videos.
     Linking,

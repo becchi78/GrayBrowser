@@ -107,15 +107,17 @@ export interface WbImportSummary {
   watch_folders_added: string[];
 }
 
-// Mirrors src-tauri/src/events.rs's TauriWbImportNotifier::notify_progress
-// anonymous Progress struct, the payload of the wb_import:progress event.
-export interface WbImportProgress {
-  processed: number;
-  total: number;
-}
-
 // Payload of the wb_import:stage event: gb_core::wb_import::WbImportStage::as_str.
 export type WbImportStageId = "reading" | "registering" | "linking";
+
+// Mirrors src-tauri/src/events.rs's TauriWbImportNotifier::notify_progress
+// anonymous Progress struct, the payload of the wb_import:progress event.
+// `total` is null while the stage cannot know its size yet.
+export interface WbImportProgress {
+  stage: WbImportStageId;
+  processed: number;
+  total: number | null;
+}
 
 // Mirrors src-tauri/src/dedup/mod.rs's DuplicateGroupMember/DuplicateGroupKind/
 // DuplicateGroup. DuplicateGroupKind is #[serde(rename_all = "snake_case")]
