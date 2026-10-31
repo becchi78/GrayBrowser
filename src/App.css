@@ -906,15 +906,12 @@ button.search-box-clear {
 .skipped-file-name {
   font-weight: 500;
   margin-right: 0.5em;
+  overflow-wrap: anywhere;
 }
 
-.skipped-file-folder {
-  display: block;
-  font-size: 0.8em;
-  opacity: 0.8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.skipped-file-dir {
+  opacity: 0.7;
+  overflow-wrap: anywhere;
 }
 
 .skipped-file-reason {

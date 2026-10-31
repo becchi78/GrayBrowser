@@ -1,23 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listSkippedFiles, renameSkippedFile } from "../api";
-import { abbreviatePath } from "../lib/abbreviatePath";
-import { parentFolder } from "../lib/parentFolder";
+import { splitDirAndFileName } from "../lib/paths";
 import type { SkippedFileDto } from "../types";
-
-// 表示用に省略するパスの最大文字数。全体は title で見られる。
-const PATH_DISPLAY_MAX_CHARS = 60;
-
-function FolderLabel({ filePath }: { filePath: string }) {
-  const folder = parentFolder(filePath);
-  if (!folder) {
-    return null;
-  }
-  return (
-    <span className="skipped-file-folder" title={folder}>
-      {abbreviatePath(folder, PATH_DISPLAY_MAX_CHARS)}
-    </span>
-  );
-}
 
 // The only reason code emitted today (crates/gb-core/src/scan_pipeline.rs),
 // but kept as a lookup with a fallback so a future reason doesn't render
@@ -25,6 +9,17 @@ function FolderLabel({ filePath }: { filePath: string }) {
 const REASON_LABELS: Record<string, string> = {
   machine_dependent_char: "機種依存文字を含むファイル名",
 };
+
+// 同名ファイルをフォルダで見分けられるよう、パス全体を1つの連続したテキストとして出す。
+function SkippedFilePath({ filePath }: { filePath: string }) {
+  const { dir, name } = splitDirAndFileName(filePath);
+  return (
+    <>
+      <span className="skipped-file-dir">{dir}</span>
+      <span className="skipped-file-name">{name}</span>
+    </>
+  );
+}
 
 interface Props {
   refreshKey: number;
@@ -156,8 +151,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
                   </div>
                 ) : (
                   <>
-                    <span className="skipped-file-name">{f.file_name}</span>
-                    <FolderLabel filePath={f.file_path} />
+                    <SkippedFilePath filePath={f.file_path} />
                     <span className="skipped-file-reason">
                       {REASON_LABELS[f.reason] ?? f.reason}
                       {f.detected_char ? `（検出文字: ${f.detected_char}）` : ""}
