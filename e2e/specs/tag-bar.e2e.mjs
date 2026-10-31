@@ -1,22 +1,24 @@
-// E2E flow: the left-pane TagBar -- pinned-tag position stability,
-// "すべて解除"'s fixed leading position, and the full tag list (pinned first,
-// then the rest) with click-to-filter and clear-all.
+// E2E flow: the left-pane TagBar -- the saved tag order (tags.sort_order)
+// being what the bar shows and staying put while selecting/deselecting,
+// "すべて解除"'s fixed leading position, and the full tag list with
+// click-to-filter and clear-all.
 //
-// Tags/pinned list are seeded directly via DB (fixtures.mjs's
-// seedTags/seedTagBarPinnedTagIds), the same "skip the native-adjacent flow,
+// Tags and their order are seeded directly via DB (fixtures.mjs's
+// seedTags/seedTagOrder), the same "skip the native-adjacent flow,
 // write the row the real UI would otherwise produce" shape as
-// seedWatchFolder -- see that function's own comment. `tag_bar_pinned_tags`
-// is a single global `settings` row (unlike a per-video tag assignment,
+// seedWatchFolder -- see that function's own comment. `tags.sort_order`
+// is global to the tag library (unlike a per-video tag assignment,
 // which is scoped to that video and harmless to leave behind -- see
 // tag-management.e2e.mjs's "e2e-smoke-tag", never cleaned up), so every
 // test below restores whatever was persisted before it ran, in its own
-// `finally`, to avoid leaking pinned tags into whichever e2e spec runs next
+// `finally`, to avoid leaking a tag order into whichever e2e spec runs next
 // against this same, persistent app.db.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  getTagBarPinnedTagIds,
-  seedTagBarPinnedTagIds,
+  getTagSortOrders,
+  restoreTagSortOrders,
+  seedTagOrder,
   seedTags,
 } from "../fixtures.mjs";
 import { createSession, saveFailureScreenshot } from "../session.mjs";
@@ -35,14 +37,15 @@ async function tagBarChipNames(browser, token = "") {
   return all.filter((name) => name.startsWith(token));
 }
 
-test("pinned tag chips keep their bar position while being selected and deselected", async () => {
+test("tag chips follow the saved order and keep their position while being selected and deselected", async () => {
   await ensureAppDbExists();
 
-  const token = `e2e${Date.now()}pin`;
-  const names = [`${token}_alpha`, `${token}_bravo`, `${token}_charlie`];
+  const token = `e2e${Date.now()}ord`;
+  // Deliberately not name order, so passing proves sort_order is what decides.
+  const names = [`${token}_charlie`, `${token}_alpha`, `${token}_bravo`];
   const ids = seedTags(names);
-  const originalPinned = getTagBarPinnedTagIds();
-  seedTagBarPinnedTagIds(ids);
+  const originalOrders = getTagSortOrders();
+  seedTagOrder(ids);
 
   const browser = await createSession();
   try {
@@ -62,13 +65,12 @@ test("pinned tag chips keep their bar position while being selected and deselect
     assert.deepEqual(
       initialOrder,
       names,
-      `expected pinned tag chips to render in the persisted pinned order, got ${JSON.stringify(initialOrder)}`,
+      `expected tag chips to render in the persisted sort_order, got ${JSON.stringify(initialOrder)}`,
     );
 
-    // The middle pinned tag ("bravo") is already pinned before this click --
-    // per TagBar.tsx's own design, selecting/deselecting an *already-pinned*
-    // tag must never move it.
-    const bravoName = names[1];
+    // The order is purely the saved one -- selecting/deselecting a tag must
+    // never move it.
+    const bravoName = names[2];
     const bravoChip = await browser.$(
       `//button[@data-testid="tag-bar-chip" and text()="${bravoName}"]`,
     );
@@ -80,13 +82,13 @@ test("pinned tag chips keep their bar position while being selected and deselect
       {
         timeout: 10_000,
         timeoutMsg:
-          "clicking the pinned chip never marked it aria-pressed=true",
+          "clicking the chip never marked it aria-pressed=true",
       },
     );
     assert.deepEqual(
       await tagBarChipNames(browser, token),
       names,
-      "selecting an already-pinned tag must not change the chip order",
+      "selecting a tag must not change the chip order",
     );
 
     await bravoChip.click();
@@ -94,34 +96,32 @@ test("pinned tag chips keep their bar position while being selected and deselect
       async () => (await bravoChip.getAttribute("aria-pressed")) === "false",
       {
         timeout: 10_000,
-        timeoutMsg: "clicking the pinned chip again never cleared aria-pressed",
+        timeoutMsg: "clicking the chip again never cleared aria-pressed",
       },
     );
     assert.deepEqual(
       await tagBarChipNames(browser, token),
       names,
-      "deselecting an already-pinned tag must not change the chip order either",
+      "deselecting a tag must not change the chip order either",
     );
   } catch (e) {
-    await saveFailureScreenshot(browser, "tag-bar-pinned-position");
+    await saveFailureScreenshot(browser, "tag-bar-order-position");
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});
-    seedTagBarPinnedTagIds(originalPinned);
+    restoreTagSortOrders(originalOrders);
   }
 });
 
-test('"すべて解除" stays the first element of the bar, disabled, with nothing selected or pinned', async () => {
+test('"すべて解除" stays the first element of the bar, disabled, with nothing selected', async () => {
   await ensureAppDbExists();
 
   const token = `e2e${Date.now()}clearall`;
   // TagBar renders nothing at all (`null`) once `allTags.length === 0` (see
   // its own comment) -- a tag must exist in the library for it to render
-  // anything, but this scenario is about the "0件選択・0件pin" state
-  // specifically, so the seeded tag is deliberately left unpinned.
+  // anything.
   seedTags([`${token}_solo`]);
-  const originalPinned = getTagBarPinnedTagIds();
-  seedTagBarPinnedTagIds([]);
+  const originalOrders = getTagSortOrders();
 
   const browser = await createSession();
   try {
@@ -157,18 +157,20 @@ test('"すべて解除" stays the first element of the bar, disabled, with nothi
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});
-    seedTagBarPinnedTagIds(originalPinned);
+    restoreTagSortOrders(originalOrders);
   }
 });
 
-test("all tags are listed (pinned first), toggle on click, and clear-all deselects", async () => {
+test("all tags are listed (ordered ones first), toggle on click, and clear-all deselects", async () => {
   await ensureAppDbExists();
 
   const token = `e2e${Date.now()}others`;
-  const names = [`${token}_pinned`, `${token}_other`];
+  const names = [`${token}_aaa_unordered`, `${token}_zzz_ordered`];
   const ids = seedTags(names);
-  const originalPinned = getTagBarPinnedTagIds();
-  seedTagBarPinnedTagIds([ids[1]]);
+  const originalOrders = getTagSortOrders();
+  // Only the second (name-wise later) tag is ordered; it must still come
+  // before the unordered one.
+  seedTagOrder([ids[1]]);
 
   const browser = await createSession();
   try {
@@ -183,7 +185,7 @@ test("all tags are listed (pinned first), toggle on click, and clear-all deselec
     assert.ok(
       listed.indexOf(names[1]) !== -1 &&
         listed.indexOf(names[1]) < listed.indexOf(names[0]),
-      "the pinned tag must come before the unpinned one, and both must be listed",
+      "the ordered tag must come before the unordered one, and both must be listed",
     );
 
     await otherChip.click();
@@ -192,7 +194,7 @@ test("all tags are listed (pinned first), toggle on click, and clear-all deselec
       {
         timeout: 10_000,
         timeoutMsg:
-          "clicking an unpinned tag never marked it aria-pressed=true",
+          "clicking an unordered tag never marked it aria-pressed=true",
       },
     );
     assert.deepEqual(
@@ -212,6 +214,6 @@ test("all tags are listed (pinned first), toggle on click, and clear-all deselec
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});
-    seedTagBarPinnedTagIds(originalPinned);
+    restoreTagSortOrders(originalOrders);
   }
 });

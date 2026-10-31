@@ -48,9 +48,9 @@ export function cleanupFixtureFolder(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// tags/tag_bar_pinned_tags seeding for tag-bar.e2e.mjs. Same "write directly
+// tags/tags.sort_order seeding for tag-bar.e2e.mjs. Same "write directly
 // to the row the real UI would otherwise produce" shape as seedWatchFolder
-// above -- driving TagBarEditDialog's ↑/↓/✕/+ 追加 buttons through WebDriver
+// above -- driving TagBarEditDialog's ↑/↓ buttons through WebDriver
 // would work too, but this is faster/more deterministic, and this project's
 // e2e history already prefers a direct DB write wherever the schema is
 // simple enough for one (see seedWatchFolder's own comment).
@@ -68,28 +68,44 @@ export function seedTags(names) {
   }
 }
 
-// Reads the currently-persisted pinned list so a test can restore it in its
-// own `finally` block -- `tag_bar_pinned_tags` is a single global `settings`
-// row (unlike a per-video tag assignment), so leaving a test's seeded list
-// in place would leak into every e2e spec that runs afterward against this
-// same, persistent app.db.
-export function getTagBarPinnedTagIds() {
+// Reads every tag's persisted `sort_order` (NULL = not yet ordered) so a test
+// can restore it in its own `finally` block -- `sort_order` is global to the
+// tag library (unlike a per-video tag assignment), so leaving a test's seeded
+// order in place would leak into every e2e spec that runs afterward against
+// this same, persistent app.db.
+export function getTagSortOrders() {
   const db = new DatabaseSync(appDbPath());
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'tag_bar_pinned_tags'").get();
-    return row ? JSON.parse(row.value) : [];
+    return db.prepare("SELECT id, sort_order FROM tags").all();
   } finally {
     db.close();
   }
 }
 
-export function seedTagBarPinnedTagIds(tagIds) {
+// Restores a snapshot from getTagSortOrders(). Tags created after the snapshot
+// (the test's own seeded ones) are reset to NULL.
+export function restoreTagSortOrders(snapshot) {
   const db = new DatabaseSync(appDbPath());
   try {
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES ('tag_bar_pinned_tags', ?) " +
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(JSON.stringify(tagIds));
+    db.exec("UPDATE tags SET sort_order = NULL");
+    const stmt = db.prepare("UPDATE tags SET sort_order = ? WHERE id = ?");
+    for (const { id, sort_order } of snapshot) {
+      stmt.run(sort_order, id);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+// Gives `tagIds` sort_order 0.. in the given order; every other tag becomes
+// NULL (= after the ordered ones, by name), the same shape set_tag_order
+// leaves behind.
+export function seedTagOrder(tagIds) {
+  const db = new DatabaseSync(appDbPath());
+  try {
+    db.exec("UPDATE tags SET sort_order = NULL");
+    const stmt = db.prepare("UPDATE tags SET sort_order = ? WHERE id = ?");
+    tagIds.forEach((id, index) => stmt.run(index, id));
   } finally {
     db.close();
   }

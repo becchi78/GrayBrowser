@@ -923,49 +923,6 @@ pub fn set_nas_poll_interval_secs(conn: &Connection, secs: i64) -> anyhow::Resul
     Ok(())
 }
 
-const TAG_BAR_PINNED_TAGS_KEY: &str = "tag_bar_pinned_tags";
-
-pub fn get_tag_bar_pinned_tag_ids(conn: &Connection) -> anyhow::Result<Vec<i64>> {
-    match get_setting(conn, TAG_BAR_PINNED_TAGS_KEY)? {
-        Some(json) => Ok(serde_json::from_str(&json)?),
-        None => Ok(Vec::new()),
-    }
-}
-
-pub fn set_tag_bar_pinned_tag_ids(conn: &Connection, tag_ids: &[i64]) -> anyhow::Result<()> {
-    let json = serde_json::to_string(tag_ids)?;
-    set_setting(conn, TAG_BAR_PINNED_TAGS_KEY, &json)?;
-    Ok(())
-}
-
-/// Reads the persisted tag-bar pin list and prunes ids of tags that no
-/// longer exist (`gb_core::tags::prune_missing_tag_ids`), writing the pruned
-/// list back only when pruning actually changed something. Deletion has no
-/// dedicated tag-bar unpin path exposed to the frontend yet, so this lazy,
-/// read-triggered cleanup is the only place stale ids ever get removed.
-///
-/// Skips the `tags` table lookup entirely when the persisted list is already
-/// empty -- the common case once nothing is pinned -- rather than querying
-/// `existing_tag_ids` just to filter nothing.
-pub fn get_tag_bar_pinned_tag_ids_self_healing(conn: &Connection) -> anyhow::Result<Vec<i64>> {
-    let pinned = get_tag_bar_pinned_tag_ids(conn)?;
-    if pinned.is_empty() {
-        return Ok(pinned);
-    }
-
-    let mut stmt = conn.prepare("SELECT id FROM tags")?;
-    let existing_tag_ids: std::collections::HashSet<i64> = stmt
-        .query_map([], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    drop(stmt);
-
-    let pruned = gb_core::tags::prune_missing_tag_ids(pinned.clone(), &existing_tag_ids);
-    if pruned != pinned {
-        set_tag_bar_pinned_tag_ids(conn, &pruned)?;
-    }
-    Ok(pruned)
-}
-
 const INFO_PANE_COLLAPSED_KEY: &str = "info_pane_collapsed";
 
 /// Unset and unrecognized values both read as `false` (expanded): a corrupt
@@ -1269,10 +1226,12 @@ pub fn list_tags_for_video(
 }
 
 /// Every tag in the `tags` master table, for a tag picker/autocomplete UI --
-/// independent of whether it's currently assigned to any video.
+/// independent of whether it's currently assigned to any video. Ordered by the
+/// user-defined `sort_order`; tags without one follow, by name.
 pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Result<Vec<TagRow>> {
     let conn = pool.get()?;
-    let mut stmt = conn.prepare("SELECT id, name FROM tags ORDER BY name")?;
+    let mut stmt =
+        conn.prepare("SELECT id, name FROM tags ORDER BY (sort_order IS NULL), sort_order, name")?;
     let rows = stmt
         .query_map([], |r| {
             Ok(TagRow {
@@ -1282,6 +1241,27 @@ pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Resu
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// Stores the user's tag order: the first id gets 0, the next 1, and so on.
+/// Ids with no tag are skipped without leaving a gap, and a repeated id keeps
+/// its first position. Every tag not in the list is reset to NULL (placed
+/// after the listed ones, by name) rather than left as is: a stale number
+/// could equal one just assigned and make the order between the two
+/// undefined. One transaction, so a failure leaves the previous order intact.
+pub fn set_tag_order(conn: &mut Connection, tag_ids: &[i64]) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("UPDATE tags SET sort_order = NULL", [])?;
+    let mut next = 0_i64;
+    {
+        let mut stmt = tx.prepare("UPDATE tags SET sort_order = ?1 WHERE id = ?2")?;
+        for id in gb_core::tags::dedup_keep_first(tag_ids) {
+            if stmt.execute(params![next, id])? > 0 {
+                next += 1;
+            }
+        }
+    }
+    tx.commit()
 }
 
 /// Deletes a tag from the `tags` master table and every `video_tags` row

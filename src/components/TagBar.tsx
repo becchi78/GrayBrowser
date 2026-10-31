@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { getTagBarPinnedTagIds, listAllTags } from "../api";
+import { useEffect, useState } from "react";
+import { listAllTags } from "../api";
 import { onCatalogChanged } from "../events";
-import { deriveTagLists } from "../lib/sidebarSections";
 import type { TagDto } from "../types";
 
 interface Props {
@@ -12,17 +11,18 @@ interface Props {
 }
 
 // 左ペイン用のタグ絞り込み(複数選択)。全タグをフォルダ一覧と同じ縦のボタン
-// リストで出す。順序は固定: [すべて解除] [常設(常設の順)...] [それ以外...]。
-// 常設タグの編集はネイティブメニュー「タグ > タグバーの編集...」からのみ開く
+// リストで出す。順序は [すべて解除] の後に、編集画面で決めた並び
+// (list_all_tags の順そのまま)。
+// 並びの編集はネイティブメニュー「タグ > タグバーの編集...」からのみ開く
 // (src-tauri/src/lib.rsのMENU_ITEM_TAG_BAR_MANAGE参照) -- この部品自体には
 // 編集への導線は置かない。
 export function TagBar({ selected, onChange, refreshKey }: Props) {
   const [allTags, setAllTags] = useState<TagDto[]>([]);
-  const [pinnedTagIds, setPinnedTagIds] = useState<number[]>([]);
 
   // list_all_tags on mount + re-fetch on catalog:changed -- a newly assigned
   // tag (via a video's own TagEditor) must appear as a candidate here without
-  // a full app reload.
+  // a full app reload. refreshKey is bumped by the parent once the edit
+  // dialog saves a new order, which re-runs this effect to pick it up.
   useEffect(() => {
     let cancelled = false;
     const reload = () => {
@@ -38,26 +38,7 @@ export function TagBar({ selected, onChange, refreshKey }: Props) {
       cancelled = true;
       unlisten();
     };
-  }, []);
-
-  // refreshKey is bumped by the parent once the edit dialog saves a new
-  // pinned list.
-  useEffect(() => {
-    let cancelled = false;
-    getTagBarPinnedTagIds()
-      .then((ids) => {
-        if (!cancelled) setPinnedTagIds(ids);
-      })
-      .catch(console.error);
-    return () => {
-      cancelled = true;
-    };
   }, [refreshKey]);
-
-  const tags = useMemo(
-    () => deriveTagLists(allTags, pinnedTagIds),
-    [allTags, pinnedTagIds],
-  );
 
   if (allTags.length === 0) return null;
 
@@ -80,7 +61,7 @@ export function TagBar({ selected, onChange, refreshKey }: Props) {
       >
         すべて解除
       </button>
-      {tags.map((tag) => {
+      {allTags.map((tag) => {
         const active = selected.includes(tag.id);
         return (
           <button

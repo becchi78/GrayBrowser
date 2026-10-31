@@ -99,15 +99,15 @@ fn rerunning_migrations_is_a_no_op() {
             .expect("re-running migrations should be a no-op, not an error");
     }
     let conn = db.writer.lock().unwrap();
-    // Nine migrations exist (v1 initial schema, v2
+    // Ten migrations exist (v1 initial schema, v2
     // mtime, v3 kana/roma, v4 video metadata, v5 sort indexes, v6
     // path_collisions, v7 generation retry columns, v8 thumbnail_ready,
-    // v9 skipped_files.dismissed) -- a fresh DB should land on all nine, and
+    // v9 skipped_files.dismissed, v10 tags.sort_order) -- a fresh DB should land on all ten, and
     // re-running must not insert extra schema_version rows for any of them.
     let version_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version_count, 9);
+    assert_eq!(version_count, 10);
 }
 
 /// kana/roma (v3) and the ffprobe metadata columns
@@ -176,7 +176,7 @@ fn migrating_from_a_real_v2_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
 
     conn.execute(
         "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
@@ -256,7 +256,7 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9, "should also pick up v8 and v9");
+    assert_eq!(version, 10, "should also pick up v8 to v10");
 
     let (thumbnail_attempts, metadata_attempts): (i64, i64) = conn
         .query_row(
@@ -331,7 +331,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
 
     let thumbnail_ready: i64 = conn
         .query_row(
@@ -402,7 +402,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     let dismissed: i64 = conn
         .query_row("SELECT dismissed FROM skipped_files", [], |r| r.get(0))
         .unwrap();
@@ -469,9 +469,167 @@ fn migrating_from_a_real_v1_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
 
     // The column must be usable, not just present in the schema.
     conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])
         .expect("mtime column should be queryable/writable after the upgrade");
+}
+
+/// Builds a database with migrations 1..=9 applied (the last schema before
+/// `tags.sort_order`), seeded with `tags` and an optional raw
+/// `tag_bar_pinned_tags` setting value, then upgrades it through `db::init`.
+fn upgrade_v9_with(
+    tags: &[(i64, &str)],
+    pinned_setting: Option<&str>,
+) -> (tempfile::TempDir, db::Db) {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        for sql in [
+            include_str!("../migrations/0001_initial.sql"),
+            include_str!("../migrations/0002_add_mtime.sql"),
+            include_str!("../migrations/0003_add_kana_roma.sql"),
+            include_str!("../migrations/0004_add_video_metadata.sql"),
+            include_str!("../migrations/0005_add_sort_indexes.sql"),
+            include_str!("../migrations/0006_add_path_collisions.sql"),
+            include_str!("../migrations/0007_add_generation_retry_columns.sql"),
+            include_str!("../migrations/0008_add_thumbnail_ready.sql"),
+            include_str!("../migrations/0009_add_skipped_files_dismissed.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        for version in 1..=9 {
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                [version],
+            )
+            .unwrap();
+        }
+        for (id, name) in tags {
+            conn.execute(
+                "INSERT INTO tags (id, name) VALUES (?1, ?2)",
+                rusqlite::params![id, name],
+            )
+            .unwrap();
+        }
+        if let Some(value) = pinned_setting {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('tag_bar_pinned_tags', ?1)",
+                [value],
+            )
+            .unwrap();
+        }
+    }
+    let db = db::init(&db_path).expect("db::init should upgrade a v9 database");
+    (dir, db)
+}
+
+fn sort_orders(db: &db::Db) -> Vec<(i64, Option<i64>)> {
+    let conn = db.writer.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, sort_order FROM tags ORDER BY id")
+        .unwrap();
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    rows
+}
+
+fn tag_names(db: &db::Db) -> Vec<String> {
+    db::queries::list_all_tags(&db.read_pool)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect()
+}
+
+fn pinned_setting_rows(db: &db::Db) -> i64 {
+    let conn = db.writer.lock().unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM settings WHERE key = 'tag_bar_pinned_tags'",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+const TAGS: [(i64, &str); 4] = [(1, "a"), (2, "b"), (3, "c"), (4, "d")];
+
+#[test]
+fn migration_v10_bundled_sqlite_has_json_each_and_json_valid() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let sum: i64 = conn
+        .query_row(
+            "SELECT SUM(value) FROM json_each('[1,2,3]') WHERE json_valid('[1,2,3]')",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the bundled SQLite must provide json_each and json_valid");
+    assert_eq!(sum, 6);
+}
+
+#[test]
+fn migration_v10_without_pinned_setting_leaves_every_sort_order_null() {
+    let (_dir, db) = upgrade_v9_with(&TAGS, None);
+    assert_eq!(
+        sort_orders(&db),
+        vec![(1, None), (2, None), (3, None), (4, None)]
+    );
+}
+
+#[test]
+fn migration_v10_carries_pinned_tags_over_in_pinned_order_and_removes_the_setting() {
+    let (_dir, db) = upgrade_v9_with(&TAGS, Some("[3,1]"));
+    assert_eq!(
+        sort_orders(&db),
+        vec![(1, Some(1)), (2, None), (3, Some(0)), (4, None)]
+    );
+    assert_eq!(pinned_setting_rows(&db), 0);
+    assert_eq!(tag_names(&db), ["c", "a", "b", "d"]);
+}
+
+#[test]
+fn migration_v10_ignores_a_malformed_or_non_array_pinned_setting() {
+    for raw in ["not json", "{\"a\":1}", "3", "\"[3,1]\"", "", "null"] {
+        let (_dir, db) = upgrade_v9_with(&TAGS, Some(raw));
+        assert_eq!(
+            sort_orders(&db),
+            vec![(1, None), (2, None), (3, None), (4, None)],
+            "setting {raw:?}"
+        );
+        assert_eq!(pinned_setting_rows(&db), 0, "setting {raw:?}");
+    }
+}
+
+#[test]
+fn migration_v10_skips_unknown_ids_and_non_integers_and_keeps_first_of_duplicates() {
+    let (_dir, db) = upgrade_v9_with(&TAGS, Some("[99,3,\"1\",3,null,2.5,1,4]"));
+    // Positions: 99@0 (no tag), 3@1, "1"@2 (string), 3@3 (dup), null@4,
+    // 2.5@5, 1@6, 4@7. Only the order has to be preserved, not contiguity.
+    assert_eq!(
+        sort_orders(&db),
+        vec![(1, Some(6)), (2, None), (3, Some(1)), (4, Some(7))]
+    );
+    assert_eq!(tag_names(&db), ["c", "a", "d", "b"]);
+}
+
+#[test]
+fn migration_v10_adds_a_nullable_sort_order_column_without_default() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+    let mut stmt = conn.prepare("PRAGMA table_info(tags)").unwrap();
+    let cols: Vec<(String, i64, Option<String>)> = stmt
+        .query_map([], |r| Ok((r.get(1)?, r.get(3)?, r.get(4)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let col = cols
+        .iter()
+        .find(|(name, _, _)| name == "sort_order")
+        .expect("tags.sort_order should exist");
+    assert_eq!((col.1, &col.2), (0, &None));
 }

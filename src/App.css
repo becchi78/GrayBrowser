@@ -212,33 +212,6 @@ button.search-box-clear {
   color: #ffffff;
 }
 
-/* TagBarEditDialog: 2-column "常設タグ / その他のタグ" layout, wider than
-   `.dialog`'s default `min(32em, 90vw)` so both columns have room to breathe
-   side by side rather than squeezing tag names down to their ellipsis. */
-.tag-bar-edit-dialog {
-  width: min(44em, 90vw);
-}
-
-.tag-bar-edit-columns {
-  display: flex;
-  gap: 1em;
-  min-height: 0;
-}
-
-.tag-bar-edit-column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4em;
-}
-
-.tag-bar-edit-column h3 {
-  margin: 0;
-  font-size: 0.9em;
-  opacity: 0.8;
-}
-
 .tag-bar-edit-empty {
   opacity: 0.7;
   margin: 0;
@@ -253,9 +226,8 @@ button.search-box-clear {
   flex-direction: column;
   gap: 0.3em;
   /* Same self-contained scroll budget as `.folder-dialog-list`'s own
-     `max-height`/`overflow: auto` -- caps each column independently so a
-     long tag library doesn't grow the dialog itself past `.dialog`'s own
-     `max-height: 85vh`. */
+     `max-height`/`overflow: auto` -- so a long tag library doesn't grow the
+     dialog itself past `.dialog`'s own `max-height: 85vh`. */
   max-height: 40vh;
   overflow: auto;
 }

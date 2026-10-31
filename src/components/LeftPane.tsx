@@ -28,7 +28,7 @@ interface Props {
   onTagIdsChange: (tagIds: number[]) => void;
   /** Bumped after a scan/folder change so the folder list reloads. */
   refreshKey?: number;
-  /** Bumped after the pinned-tag edit dialog saves so TagBar re-fetches. */
+  /** Bumped after the tag-order edit dialog saves so TagBar re-fetches. */
   tagBarRefreshKey?: number;
 }
 

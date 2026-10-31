@@ -1,10 +1,10 @@
-// Pure array operations behind TagBarEditDialog's "バーに常設するタグ" list
-// (↑/↓ reorder, ✕ remove, + 追加). Generic over the element type so the
-// folder dialog can reuse them for string paths. Split out into this JSX非依存 file so
+// Pure ↑/↓ reorder operations behind TagBarEditDialog's tag list and
+// FolderDialog's folder list. Generic over the element type so both can share
+// them (tag objects, string paths). Split out into this JSX非依存 file so
 // they're unit-testable without mounting the dialog, same pattern as
 // src/lib/sidebarResize.ts. Every function returns a new
 // array (never mutates `ids`), matching how React state setters are used
-// at each call site (`setDraftPinnedIds((ids) => moveUp(ids, index))`).
+// at each call site (`setDraftTags((tags) => moveUp(tags, index))`).
 
 /**
  * Swaps the element at `index` with the one before it. A no-op (returns
@@ -27,20 +27,4 @@ export function moveUp<T>(ids: T[], index: number): T[] {
  */
 export function moveDown<T>(ids: T[], index: number): T[] {
   return moveUp(ids, index + 1);
-}
-
-/** Removes the element at `index`. A no-op for an out-of-range index. */
-export function removeAt<T>(ids: T[], index: number): T[] {
-  if (index < 0 || index >= ids.length) return ids;
-  return ids.filter((_, i) => i !== index);
-}
-
-/**
- * Appends `id` to the end, unless it's already present -- the "その他の
- * タグ"側の「+ 追加」ボタンはUI側で既にdraftPinnedIdsに含まれるものを
- * 除外して表示しているため通常は重複しないが、二重クリック等に対する
- * 保険として重複追加を防ぐ。
- */
-export function addIfAbsent<T>(ids: T[], id: T): T[] {
-  return ids.includes(id) ? ids : [...ids, id];
 }

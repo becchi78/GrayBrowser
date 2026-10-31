@@ -54,20 +54,11 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, TagNameError> {
     Ok(normalized)
 }
 
-/// Filters a persisted tag-bar "pinned" list down to the ids that still
-/// exist, preserving order. Self-healing for the tag bar's persisted pin
-/// list: a tag can be deleted (`queries::delete_tag`) independently of the
-/// tag bar, so a previously-pinned id can go stale. Reading
-/// `existing_tag_ids` from the DB is `src-tauri::db::queries`'s job -- this
-/// stays a pure filter so it can be unit-tested without any DB access.
-pub fn prune_missing_tag_ids(
-    pinned: Vec<i64>,
-    existing_tag_ids: &std::collections::HashSet<i64>,
-) -> Vec<i64> {
-    pinned
-        .into_iter()
-        .filter(|id| existing_tag_ids.contains(id))
-        .collect()
+/// Drops repeated ids, keeping each id's first occurrence and the input
+/// order. Used to turn a user-submitted tag order into one position per tag.
+pub fn dedup_keep_first(ids: &[i64]) -> Vec<i64> {
+    let mut seen = std::collections::HashSet::new();
+    ids.iter().copied().filter(|id| seen.insert(*id)).collect()
 }
 
 #[cfg(test)]
@@ -175,50 +166,20 @@ mod tests {
         );
     }
 
-    // --- prune_missing_tag_ids ------------------------------------------
+    // --- dedup_keep_first -----------------------------------------------
 
     #[test]
-    fn prune_missing_tag_ids_keeps_order_of_surviving_ids() {
-        let existing = std::collections::HashSet::from([1, 3, 5]);
-        assert_eq!(
-            prune_missing_tag_ids(vec![5, 1, 3], &existing),
-            vec![5, 1, 3]
-        );
+    fn dedup_keep_first_keeps_first_occurrence_and_order() {
+        assert_eq!(dedup_keep_first(&[3, 1, 3, 2, 1]), vec![3, 1, 2]);
     }
 
     #[test]
-    fn prune_missing_tag_ids_removes_only_the_stale_ids() {
-        let existing = std::collections::HashSet::from([1, 3]);
-        assert_eq!(
-            prune_missing_tag_ids(vec![1, 2, 3, 4], &existing),
-            vec![1, 3]
-        );
+    fn dedup_keep_first_leaves_unique_input_unchanged() {
+        assert_eq!(dedup_keep_first(&[5, 1, 3]), vec![5, 1, 3]);
     }
 
     #[test]
-    fn prune_missing_tag_ids_removes_everything_when_none_exist() {
-        let existing = std::collections::HashSet::new();
-        assert_eq!(
-            prune_missing_tag_ids(vec![1, 2, 3], &existing),
-            Vec::<i64>::new()
-        );
-    }
-
-    #[test]
-    fn prune_missing_tag_ids_keeps_everything_when_all_exist() {
-        let existing = std::collections::HashSet::from([1, 2, 3]);
-        assert_eq!(
-            prune_missing_tag_ids(vec![1, 2, 3], &existing),
-            vec![1, 2, 3]
-        );
-    }
-
-    #[test]
-    fn prune_missing_tag_ids_on_empty_input_returns_empty() {
-        let existing = std::collections::HashSet::from([1, 2]);
-        assert_eq!(
-            prune_missing_tag_ids(Vec::new(), &existing),
-            Vec::<i64>::new()
-        );
+    fn dedup_keep_first_on_empty_input_returns_empty() {
+        assert_eq!(dedup_keep_first(&[]), Vec::<i64>::new());
     }
 }

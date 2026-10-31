@@ -69,9 +69,7 @@ export const removeTag = (videoId: string, tagId: number) =>
 export const listTagsForVideo = (videoId: string) =>
   invoke<TagDto[]>("list_tags_for_video", { videoId });
 export const listAllTags = () => invoke<TagDto[]>("list_all_tags");
-export const getTagBarPinnedTagIds = () => invoke<number[]>("get_tag_bar_pinned_tag_ids");
-export const setTagBarPinnedTagIds = (tagIds: number[]) =>
-  invoke<void>("set_tag_bar_pinned_tag_ids", { tagIds });
+export const setTagOrder = (tagIds: number[]) => invoke<void>("set_tag_order", { tagIds });
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>
   invoke<void>("set_info_pane_collapsed", { collapsed });
