@@ -1,11 +1,12 @@
-// computeWbImportSteps / showsRowProgress のユニットテスト。
+// computeWbImportSteps / formatStepCount / progressBarValue のユニットテスト。
 // src/lib/ratingBar.test.ts と同じパターン(package.jsonのtest:unit参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   computeWbImportSteps,
+  formatStepCount,
   isWbImportStageId,
-  showsRowProgress,
+  progressBarValue,
 } from "./wbImportSteps.ts";
 import type { WbImportStageId } from "../types.ts";
 
@@ -57,11 +58,59 @@ test("失敗後は、失敗した段階とそれ以降を未着手のままに�
   assert.deepEqual(statuses("registering", "failed"), ["done", "pending", "pending"]);
 });
 
-test("進捗バーは動画の登録の段階だけ", () => {
-  assert.equal(showsRowProgress("registering"), true);
-  assert.equal(showsRowProgress("reading"), false);
-  assert.equal(showsRowProgress("linking"), false);
-  assert.equal(showsRowProgress(null), false);
+test("未着手の段階は件数を出さない", () => {
+  assert.equal(formatStepCount("pending", { processed: 3, total: 10 }), "");
+  assert.equal(formatStepCount("pending", undefined), "");
+});
+
+test("実行中で件数がまだ届いていなければ件数を出さない", () => {
+  assert.equal(formatStepCount("active", undefined), "");
+});
+
+test("実行中は、分母ありなら「x / y件」、分母なしなら「x件」", () => {
+  assert.equal(formatStepCount("active", { processed: 12, total: 50 }), "12 / 50件");
+  assert.equal(formatStepCount("active", { processed: 12, total: null }), "12件");
+});
+
+test("完了は最終件数。分母があればそれ、無ければ処理済み件数", () => {
+  assert.equal(formatStepCount("done", { processed: 49, total: 50 }), "50件");
+  assert.equal(formatStepCount("done", { processed: 7, total: null }), "7件");
+  assert.equal(formatStepCount("done", undefined), "");
+});
+
+test("件数0でも崩れない", () => {
+  assert.equal(formatStepCount("active", { processed: 0, total: 0 }), "0 / 0件");
+  assert.equal(formatStepCount("active", { processed: 0, total: null }), "0件");
+  assert.equal(formatStepCount("done", { processed: 0, total: 0 }), "0件");
+});
+
+test("件数は3桁区切りにする", () => {
+  assert.equal(formatStepCount("active", { processed: 1200, total: 5000 }), "1,200 / 5,000件");
+  assert.equal(formatStepCount("done", { processed: 1234567, total: null }), "1,234,567件");
+});
+
+test("進捗バーは、実行中の段階に分母があるときだけ出す", () => {
+  const counts = {
+    reading: { processed: 5, total: 5 },
+    registering: { processed: 20, total: 50 },
+    linking: { processed: 1, total: null },
+  };
+  assert.deepEqual(progressBarValue("registering", counts), { value: 20, max: 50 });
+  assert.deepEqual(progressBarValue("reading", counts), { value: 5, max: 5 });
+  assert.equal(progressBarValue("linking", counts), null);
+  assert.equal(progressBarValue(null, counts), null);
+  assert.equal(progressBarValue("registering", {}), null);
+});
+
+test("分母が0の段階には進捗バーを出さない", () => {
+  assert.equal(progressBarValue("linking", { linking: { processed: 0, total: 0 } }), null);
+});
+
+test("進捗バーの値は分母を超えない", () => {
+  assert.deepEqual(progressBarValue("registering", { registering: { processed: 9, total: 5 } }), {
+    value: 5,
+    max: 5,
+  });
 });
 
 test("段階名の判定は未知の文字列を弾く", () => {

@@ -8,8 +8,14 @@ import {
 } from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
-import { computeWbImportSteps, isWbImportStageId, showsRowProgress } from "../lib/wbImportSteps";
-import type { WbImportProgress, WbImportStageId, WbImportSummary } from "../types";
+import {
+  computeWbImportSteps,
+  formatStepCount,
+  isWbImportStageId,
+  progressBarValue,
+} from "../lib/wbImportSteps";
+import type { WbImportStageCounts } from "../lib/wbImportSteps";
+import type { WbImportStageId, WbImportSummary } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -66,14 +72,19 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [wbPath, setWbPath] = useState<string | null>(null);
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [progress, setProgress] = useState<WbImportProgress | null>(null);
+  const [counts, setCounts] = useState<WbImportStageCounts>({});
   const [stage, setStage] = useState<WbImportStageId | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUnmatchedDetail, setShowUnmatchedDetail] = useState(false);
 
   useEffect(() => {
-    const unlistenProgress = onWbImportProgress((p) => setProgress(p));
+    const unlistenProgress = onWbImportProgress((p) => {
+      // 未知の段階名は段階イベントと同様に無視する。
+      if (isWbImportStageId(p.stage)) {
+        setCounts((prev) => ({ ...prev, [p.stage]: { processed: p.processed, total: p.total } }));
+      }
+    });
     const unlistenStage = onWbImportStage((st) => {
       // 未知の段階名(将来の追加など)は無視し、表示を壊さない。
       if (isWbImportStageId(st)) {
@@ -83,13 +94,11 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     const unlistenComplete = onWbImportComplete((s) => {
       setSummary(s);
       setImporting(false);
-      setProgress(null);
       onImportComplete();
     });
     const unlistenFailed = onWbImportFailed((reason) => {
       setError(reason);
       setImporting(false);
-      setProgress(null);
     });
 
     return () => {
@@ -144,7 +153,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
       return;
     }
     setImporting(true);
-    setProgress(null);
+    setCounts({});
     setStage(null);
     setSummary(null);
     setError(null);
@@ -160,6 +169,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     }
   }
 
+  const bar = progressBarValue(stage, counts);
   const resultDisplay = summary ? buildWbImportResultDisplay(summary) : null;
 
   return (
@@ -198,26 +208,23 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
         {importing && (
           <div className="wb-import-steps">
             <ol className="wb-import-steps-list">
-              {computeWbImportSteps(stage, null).map((s) => (
-                <li key={s.key} className={`wb-import-step wb-import-step--${s.status}`}>
-                  {s.label}
-                </li>
-              ))}
+              {computeWbImportSteps(stage, null).map((s) => {
+                const countText = formatStepCount(s.status, counts[s.key]);
+                return (
+                  <li key={s.key} className={`wb-import-step wb-import-step--${s.status}`}>
+                    {s.label}
+                    {countText && <span className="wb-import-step-count">{countText}</span>}
+                  </li>
+                );
+              })}
             </ol>
-            {showsRowProgress(stage) && (
-              <>
-                <progress
-                  data-testid="import-progress-bar"
-                  className="wb-import-progress-bar"
-                  value={progress?.processed ?? 0}
-                  max={progress && progress.total > 0 ? progress.total : 1}
-                />
-                {progress && (
-                  <span className="wb-import-progress">
-                    {progress.processed} / {progress.total}件
-                  </span>
-                )}
-              </>
+            {bar && (
+              <progress
+                data-testid="import-progress-bar"
+                className="wb-import-progress-bar"
+                value={bar.value}
+                max={bar.max}
+              />
             )}
           </div>
         )}

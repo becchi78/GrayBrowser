@@ -94,11 +94,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-.wb-import-progress {
-  font-size: 0.9em;
-  opacity: 0.8;
-}
-
 .wb-import-error {
   color: #8a1f1f;
   font-size: 0.9em;
@@ -1731,6 +1726,14 @@ button.link-button:focus-visible {
 .wb-import-step--done {
   opacity: 0.75;
   text-decoration: line-through;
+}
+
+/* inline-block にするのは、完了行の取り消し線を件数に引き継がせないため。 */
+.wb-import-step-count {
+  display: inline-block;
+  margin-left: 0.5em;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 
 .wb-import-progress-bar {

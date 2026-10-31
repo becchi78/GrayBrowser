@@ -218,12 +218,27 @@ fn restore_missing_path(movie_path: &str, lister: &impl DirLister) -> Option<Str
     restore_path(movie_path, lister)
 }
 
-/// Reports progress after row `idx` (0-based), throttled to every
-/// `PROGRESS_NOTIFY_INTERVAL` rows plus the last one.
-fn notify_row_progress<N: WbImportNotifier>(notifier: &N, idx: usize, total: u32) {
+/// Whether a progress count is worth an event: every
+/// `PROGRESS_NOTIFY_INTERVAL` items plus the last one.
+fn is_progress_tick(processed: u32, total: u32) -> bool {
+    processed.is_multiple_of(PROGRESS_NOTIFY_INTERVAL) || processed == total
+}
+
+/// Reports progress after row `idx` (0-based), throttled by
+/// [`is_progress_tick`]. `reported` remembers the last count actually sent, so
+/// the caller can tell whether the final count still has to be sent: rows that
+/// fail early never reach this function, so the last row alone cannot be
+/// relied on to deliver `processed == total`.
+fn notify_row_progress<N: WbImportNotifier>(
+    notifier: &N,
+    idx: usize,
+    total: u32,
+    reported: &mut Option<u32>,
+) {
     let processed = (idx + 1) as u32;
-    if processed.is_multiple_of(PROGRESS_NOTIFY_INTERVAL) || processed == total {
-        notifier.notify_progress(processed, total);
+    if is_progress_tick(processed, total) {
+        notifier.notify_progress(WbImportStage::Registering, processed, Some(total));
+        *reported = Some(processed);
     }
 }
 
@@ -326,6 +341,9 @@ fn import_all<S, F, N, C, W, D, L>(
     let thumb_layout = read_thumb_layout(wb_source);
 
     let total = rows.len() as u32;
+    // Reading has no intermediate count (one query fills the whole `Vec`), so
+    // the size is only known, and reported, once it has finished.
+    notifier.notify_progress(WbImportStage::Reading, total, Some(total));
     import_log.append(&wb_log::format_read_count(total));
     let clamped_scores = count_clamped_scores(&rows) as u32;
     let source_tag_count = count_source_tags(&rows) as u32;
@@ -379,6 +397,7 @@ fn import_all<S, F, N, C, W, D, L>(
     let mut row_logs: Vec<RowLog> = Vec::with_capacity(rows.len());
 
     notifier.notify_stage(WbImportStage::Registering);
+    let mut reported_rows: Option<u32> = None;
     for (idx, row) in rows.iter().enumerate() {
         let mut entry = RowLog {
             movie_id: row.movie_id,
@@ -464,7 +483,7 @@ fn import_all<S, F, N, C, W, D, L>(
             if let Some(hash) = candidate.thumbnail_hash {
                 invalid_name_hashes.insert(hash);
             }
-            notify_row_progress(notifier, idx, total);
+            notify_row_progress(notifier, idx, total, &mut reported_rows);
             continue;
         }
 
@@ -583,7 +602,12 @@ fn import_all<S, F, N, C, W, D, L>(
         }
 
         row_logs.push(entry);
-        notify_row_progress(notifier, idx, total);
+        notify_row_progress(notifier, idx, total, &mut reported_rows);
+    }
+    // Also covers an empty `.wb` (no row ever reports) so the phase still ends
+    // with a count.
+    if reported_rows != Some(total) {
+        notifier.notify_progress(WbImportStage::Registering, total, Some(total));
     }
 
     // Must precede `link_thumbnails` and the thumbnail queue: both decide
@@ -642,6 +666,9 @@ fn import_all<S, F, N, C, W, D, L>(
         &already_registered_offline_hashes,
         ffmpeg,
         thumb_layout.as_ref(),
+        |processed, total| {
+            notifier.notify_progress(WbImportStage::Linking, processed, Some(total));
+        },
     );
 
     // The list view only fetches thumbnail images for rows whose
@@ -937,6 +964,11 @@ struct LinkOutcome {
 /// `registered_movies`) to resolve its registered-folder subdirectory
 /// (`thumbnail::paths::video_thumbnail_dir`) before writing anything into
 /// it.
+///
+/// `on_progress(processed, total)` is called once before the first conversion
+/// with `(0, matched)`, then at the [`is_progress_tick`] cadence, and finally
+/// with `(matched, matched)`. Nothing is reported while the folder is listed
+/// and matched (the total is unknown), nor when the folder cannot be listed.
 // One argument over clippy's limit: the hash lists and registered videos are
 // independent inputs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
@@ -950,6 +982,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     already_registered_offline_hashes: &HashSet<String>,
     ffmpeg: &F,
     layout: Option<&ThumbLayout>,
+    on_progress: impl Fn(u32, u32),
 ) -> LinkOutcome {
     let mut filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
@@ -1007,7 +1040,15 @@ fn link_thumbnails<F: FfmpegAdapter>(
     let mut linked_video_ids: Vec<String> = Vec::new();
     let mut failed_video_ids: Vec<(String, String)> = Vec::new();
     let mut split_count = 0u32;
-    for (video_id, filename) in plan.matched {
+    let matched_total = plan.matched.len() as u32;
+    on_progress(0, matched_total);
+    for (done, (video_id, filename)) in plan.matched.into_iter().enumerate() {
+        // Reported at the top of the iteration, as the count already finished,
+        // because the body leaves through many `continue`s.
+        let done = done as u32;
+        if done > 0 && is_progress_tick(done, matched_total) {
+            on_progress(done, matched_total);
+        }
         // Defensive only: every `video_id` here came from `movies_for_matching`,
         // which is derived from the very same `registered_movies` this map
         // was built from, so a miss should never actually occur.
@@ -1094,6 +1135,9 @@ fn link_thumbnails<F: FfmpegAdapter>(
                 failed_video_ids.push((video_id, format!("保存に失敗: {e}")));
             }
         }
+    }
+    if matched_total > 0 {
+        on_progress(matched_total, matched_total);
     }
 
     if split_count > 0 {
@@ -1183,7 +1227,9 @@ mod tests {
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
     use crate::db::test_support::init_temp_db;
-    use crate::events::{FakeCatalogNotifier, FakeWatchReconfigurer, FakeWbImportNotifier};
+    use crate::events::{
+        FakeCatalogNotifier, FakeWatchReconfigurer, FakeWbImportNotifier, WbImportEvent,
+    };
 
     /// Import without registering watch folders -- the behavior the tests
     /// below that predate the option exercise. Shadows the production
@@ -1880,6 +1926,7 @@ mod tests {
             &HashSet::new(),
             &ffmpeg,
             None,
+            |_, _| {},
         );
 
         assert_eq!(outcome.skipped_online, 0);
@@ -3360,6 +3407,7 @@ mod tests {
             &HashSet::new(),
             &ffmpeg,
             Some(&layout),
+            |_, _| {},
         );
 
         assert_eq!(outcome.failed, 1);
@@ -3641,9 +3689,291 @@ mod tests {
         );
 
         assert_eq!(
-            notifier.progress_calls.lock().unwrap().last().copied(),
-            Some((2, 2))
+            registering_progress(&notifier),
+            vec![(2, Some(2))],
+            "the refused last row reports the final count itself"
         );
+    }
+
+    /// Progress sent for one stage, in order.
+    fn stage_progress(
+        notifier: &FakeWbImportNotifier,
+        stage: WbImportStage,
+    ) -> Vec<(u32, Option<u32>)> {
+        notifier
+            .progress_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(s, _, _)| *s == stage)
+            .map(|&(_, processed, total)| (processed, total))
+            .collect()
+    }
+
+    fn registering_progress(notifier: &FakeWbImportNotifier) -> Vec<(u32, Option<u32>)> {
+        stage_progress(notifier, WbImportStage::Registering)
+    }
+
+    /// Rows whose date cannot be parsed fail before they reach
+    /// `notify_row_progress`.
+    fn bad_date_row(id: i64) -> WbMovieRow {
+        let mut r = named_row(id, "Z:\\gone", &format!("bad-date-{id}.mp4"));
+        r.regist_date = "not a date".to_string();
+        r
+    }
+
+    fn import_rows(rows: Vec<WbMovieRow>) -> FakeWbImportNotifier {
+        let h = harness();
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(rows),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        notifier
+    }
+
+    #[test]
+    fn reading_reports_the_row_count_once_it_is_known() {
+        let notifier = import_rows(vec![
+            named_row(1, "Z:\\gone", "a.mp4"),
+            named_row(2, "Z:\\gone", "b.mp4"),
+            named_row(3, "Z:\\gone", "c.mp4"),
+        ]);
+
+        assert_eq!(
+            stage_progress(&notifier, WbImportStage::Reading),
+            vec![(3, Some(3))]
+        );
+    }
+
+    #[test]
+    fn a_failed_read_reports_no_progress_at_all() {
+        let h = harness();
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter::default(),
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        assert!(notifier.progress_calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn registering_reports_the_final_count_once_when_the_last_row_reports_it() {
+        let notifier = import_rows(vec![
+            named_row(1, "Z:\\gone", "a.mp4"),
+            named_row(2, "Z:\\gone", "b.mp4"),
+        ]);
+
+        assert_eq!(registering_progress(&notifier), vec![(2, Some(2))]);
+    }
+
+    #[test]
+    fn registering_reaches_the_total_even_when_the_last_row_has_a_bad_date() {
+        let notifier = import_rows(vec![
+            named_row(1, "Z:\\gone", "a.mp4"),
+            bad_date_row(2),
+            bad_date_row(3),
+        ]);
+
+        assert_eq!(registering_progress(&notifier), vec![(3, Some(3))]);
+    }
+
+    #[test]
+    fn registering_does_not_repeat_a_count_already_sent_at_the_interval() {
+        let rows: Vec<WbMovieRow> = (1..=PROGRESS_NOTIFY_INTERVAL as i64)
+            .map(|i| named_row(i, "Z:\\gone", &format!("v{i}.mp4")))
+            .collect();
+        let n = rows.len() as u32;
+
+        let notifier = import_rows(rows);
+
+        assert_eq!(registering_progress(&notifier), vec![(n, Some(n))]);
+    }
+
+    #[test]
+    fn registering_throttles_to_the_interval_then_sends_the_final_count() {
+        // Interval + 1 rows, the last one unreportable: 50 is sent by the
+        // interval, 51 only by the final notification.
+        let mut rows: Vec<WbMovieRow> = (1..=PROGRESS_NOTIFY_INTERVAL as i64)
+            .map(|i| named_row(i, "Z:\\gone", &format!("v{i}.mp4")))
+            .collect();
+        rows.push(bad_date_row(1000));
+        let total = rows.len() as u32;
+
+        let notifier = import_rows(rows);
+
+        assert_eq!(
+            registering_progress(&notifier),
+            vec![
+                (PROGRESS_NOTIFY_INTERVAL, Some(total)),
+                (total, Some(total))
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_wb_reports_zero_for_reading_and_registering() {
+        let notifier = import_rows(Vec::new());
+
+        assert_eq!(
+            stage_progress(&notifier, WbImportStage::Reading),
+            vec![(0, Some(0))]
+        );
+        assert_eq!(registering_progress(&notifier), vec![(0, Some(0))]);
+        assert_eq!(
+            stage_progress(&notifier, WbImportStage::Linking),
+            vec![(0, Some(0))]
+        );
+    }
+
+    #[test]
+    fn stages_and_progress_arrive_in_order() {
+        let notifier = import_rows(vec![named_row(1, "Z:\\gone", "a.mp4")]);
+
+        assert_eq!(
+            *notifier.event_order.lock().unwrap(),
+            vec![
+                WbImportEvent::Stage(WbImportStage::Reading),
+                WbImportEvent::Progress(WbImportStage::Reading, 1, Some(1)),
+                WbImportEvent::Stage(WbImportStage::Registering),
+                WbImportEvent::Progress(WbImportStage::Registering, 1, Some(1)),
+                WbImportEvent::Stage(WbImportStage::Linking),
+                WbImportEvent::Progress(WbImportStage::Linking, 0, Some(0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn linking_reports_zero_of_the_matched_count_then_the_final_count() {
+        let h = harness();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("a.mp4.#aaaa1111.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("b.mp4.#bbbb2222.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        // Matches no registered video, so it must not count toward the total.
+        std::fs::write(
+            h.paths.thumbnail_folder.join("c.mp4.#cccc3333.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let rows = vec![
+            row(|r| {
+                r.movie_id = 1;
+                r.movie_name = "a.mp4".to_string();
+                r.movie_path = "Z:\\gone\\a.mp4".to_string();
+                r.hash = "aaaa1111".to_string();
+            }),
+            row(|r| {
+                r.movie_id = 2;
+                r.movie_name = "b.mp4".to_string();
+                r.movie_path = "Z:\\gone\\b.mp4".to_string();
+                r.hash = "bbbb2222".to_string();
+            }),
+        ];
+        let notifier = FakeWbImportNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(rows),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+
+        assert_eq!(
+            stage_progress(&notifier, WbImportStage::Linking),
+            vec![(0, Some(2)), (2, Some(2))]
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary.thumbnails_linked, 2);
+        assert_eq!(summary.thumbnails_unmatched, 1);
+    }
+
+    #[test]
+    fn link_progress_is_throttled_and_ends_at_the_total() {
+        let h = harness();
+        let count = PROGRESS_NOTIFY_INTERVAL * 2 + 1;
+        let movies: Vec<(String, String, String)> = (0..count)
+            .map(|i| {
+                let hash = format!("{i:08x}");
+                std::fs::write(
+                    h.paths
+                        .thumbnail_folder
+                        .join(format!("m{i}.mp4.#{hash}.jpg")),
+                    b"fake jpg",
+                )
+                .unwrap();
+                (format!("video-{i}"), hash, format!("Z:\\gone\\m{i}.mp4"))
+            })
+            .collect();
+        let calls = Mutex::new(Vec::new());
+
+        link_thumbnails(
+            &h.paths.thumbnail_folder,
+            &h.paths.thumbnails_dir,
+            &[],
+            &movies,
+            &[],
+            &HashSet::new(),
+            &HashSet::new(),
+            &no_op_ffmpeg(),
+            None,
+            |processed, total| calls.lock().unwrap().push((processed, total)),
+        );
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                (0, count),
+                (PROGRESS_NOTIFY_INTERVAL, count),
+                (PROGRESS_NOTIFY_INTERVAL * 2, count),
+                (count, count)
+            ]
+        );
+    }
+
+    #[test]
+    fn link_progress_sends_nothing_when_the_folder_cannot_be_listed() {
+        let h = harness();
+        let calls = Mutex::new(Vec::new());
+
+        let outcome = link_thumbnails(
+            &h.paths.thumbnail_folder.join("does-not-exist"),
+            &h.paths.thumbnails_dir,
+            &[],
+            &[],
+            &[],
+            &HashSet::new(),
+            &HashSet::new(),
+            &no_op_ffmpeg(),
+            None,
+            |processed, total| calls.lock().unwrap().push((processed, total)),
+        );
+
+        assert!(outcome.folder_error.is_some());
+        assert!(calls.lock().unwrap().is_empty());
     }
 
     /// Two rows can share a thumbnail hash; if only one of them is refused the
@@ -4174,7 +4504,7 @@ mod tests {
     }
 
     impl WbImportNotifier for OrderRecorder {
-        fn notify_progress(&self, _: u32, _: u32) {}
+        fn notify_progress(&self, _: WbImportStage, _: u32, _: Option<u32>) {}
         fn notify_complete(&self, _: &WbImportSummary) {}
         fn notify_failed(&self, _: &str) {
             self.events.lock().unwrap().push("failed".to_string());
