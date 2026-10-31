@@ -422,3 +422,114 @@ fn rename_of_an_already_empty_folder_is_a_no_op() {
     assert_eq!(outcome.collision_skipped_count, 0);
     assert_eq!(snapshot(&conn, "elsewhere").file_path, r"D:\Other\a.mp4");
 }
+
+// --- skipped_files follow the folder rename ---------------------------------
+
+fn insert_skipped_file(conn: &Connection, file_path: &str) {
+    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
+    conn.execute(
+        "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
+         VALUES (?1, ?2, 'unsupported_char', '①')",
+        params![file_path, file_name],
+    )
+    .unwrap();
+}
+
+fn skipped_paths(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT file_path FROM skipped_files ORDER BY file_path")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+#[test]
+fn rename_rewrites_skipped_files_under_the_folder_including_subfolders() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+    insert_skipped_file(&conn, r"C:\Videos\Sub\Deep\①b.mp4");
+
+    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
+
+    assert_eq!(
+        skipped_paths(&conn),
+        vec![r"C:\Renamed\Sub\Deep\①b.mp4", r"C:\Renamed\①a.mp4"]
+    );
+}
+
+#[test]
+fn rename_keeps_skipped_files_of_a_same_prefix_sibling_and_other_drive() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_skipped_file(&conn, r"C:\Videos2\①b.mp4");
+    insert_skipped_file(&conn, r"D:\Videos\①c.mp4");
+
+    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
+
+    assert_eq!(
+        skipped_paths(&conn),
+        vec![r"C:\Videos2\①b.mp4", r"D:\Videos\①c.mp4"]
+    );
+}
+
+#[test]
+fn rename_deletes_the_old_skipped_row_when_the_new_path_already_has_one() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+    insert_skipped_file(&conn, r"C:\Renamed\①a.mp4");
+    insert_skipped_file(&conn, r"C:\Videos\①other.mp4");
+
+    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
+
+    assert_eq!(
+        skipped_paths(&conn),
+        vec![r"C:\Renamed\①a.mp4", r"C:\Renamed\①other.mp4"]
+    );
+}
+
+#[test]
+fn rename_treats_a_case_differing_skipped_row_at_the_new_path_as_a_collision() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+    insert_skipped_file(&conn, r"C:\RENAMED\①A.mp4");
+
+    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
+
+    assert_eq!(skipped_paths(&conn), vec![r"C:\RENAMED\①A.mp4"]);
+}
+
+#[test]
+fn rename_of_a_folder_with_no_skipped_files_changes_nothing_there() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_skipped_file(&conn, r"D:\Other\①a.mp4");
+
+    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
+
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
+}
+
+#[test]
+fn a_failure_while_rewriting_skipped_files_rolls_back_the_video_rewrite() {
+    let (dir, db) = init_temp_db();
+    let new_folder = dir.path().join("Renamed").to_string_lossy().into_owned();
+    let mut conn = db.writer.lock().unwrap();
+    insert_video(&conn, "v1", r"C:\Videos\a.mp4", "online");
+    insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_skipped_update BEFORE UPDATE ON skipped_files
+         BEGIN SELECT RAISE(ABORT, 'forced'); END;",
+    )
+    .unwrap();
+
+    let result = queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", &new_folder);
+
+    assert!(result.is_err());
+    assert_eq!(snapshot(&conn, "v1").file_path, r"C:\Videos\a.mp4");
+    assert_eq!(skipped_paths(&conn), vec![r"C:\Videos\①a.mp4"]);
+}
