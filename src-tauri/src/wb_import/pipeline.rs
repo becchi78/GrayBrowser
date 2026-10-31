@@ -24,6 +24,7 @@ use gb_core::wb_import::{
 use gb_core::wb_import_log::{
     self as wb_log, Availability, LogSummary, PathRestoration, RowLog, RowOutcome,
 };
+use gb_core::wb_skipped_payload::WbSkippedPayload;
 use gb_core::wb_thumbnail_split::{parse_thum_size, split_plan, ThumbLayout};
 
 use crate::adapters::long_path;
@@ -443,9 +444,12 @@ fn import_all<S, F, N, C, W, D, L>(
                 "wb import: skipped machine-dependent filename: {} (char: {detected_char})",
                 skipped_file.file_name
             );
+            // Kept so the record can later be registered with this row's
+            // rating and tags even after the file itself is gone.
+            let payload = WbSkippedPayload::from_candidate(&candidate).to_json();
             let recorded = {
                 let conn = db.writer.lock().unwrap();
-                queries::upsert_skipped_file(&conn, &skipped_file)
+                queries::upsert_skipped_file_with_wb_payload(&conn, &skipped_file, &payload)
             };
             if let Err(e) = recorded {
                 log::error!(
@@ -3463,6 +3467,16 @@ mod tests {
         assert_eq!(
             skipped_file_paths(&h),
             vec!["Z:\\gone\\off\u{2460}.mp4".to_string()]
+        );
+        let payload: Option<String> =
+            h.db.writer
+                .lock()
+                .unwrap()
+                .query_row("SELECT wb_payload FROM skipped_files", [], |r| r.get(0))
+                .unwrap();
+        assert!(
+            WbSkippedPayload::from_json(&payload.expect("a .wb import keeps the row's data"))
+                .is_some()
         );
     }
 

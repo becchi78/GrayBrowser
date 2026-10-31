@@ -44,6 +44,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "add videos.thumbnail_ready to remove the per-row filesystem stat() call from list_videos's hot path",
         sql: include_str!("../../migrations/0008_add_thumbnail_ready.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 9,
+        description: "add skipped_files.dismissed (hide a missing file's row without a re-import resurrecting it) and skipped_files.wb_payload (.wb data for registering it offline)",
+        sql: include_str!("../../migrations/0009_add_skipped_files_dismissed.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.

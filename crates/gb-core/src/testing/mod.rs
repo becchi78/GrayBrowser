@@ -9,6 +9,7 @@ pub mod fake_ffmpeg;
 pub mod fake_file_rename;
 pub mod fake_folder_probe;
 pub mod fake_log_source;
+pub mod fake_path_existence;
 pub mod fake_player;
 pub mod fake_trash;
 pub mod fake_watcher;

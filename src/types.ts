@@ -25,6 +25,13 @@ export interface SkippedFileDto {
   reason: string;
   detected_char: string | null;
   detected_at: string;
+  /** 元のファイルが確実にないと確認できた行。 */
+  file_missing: boolean;
+}
+
+export interface MissingRegistrationResult {
+  /** `false` のとき、.wbの情報がなくタグ・評価は付いていない。 */
+  carried_wb_data: boolean;
 }
 
 export interface FfmpegStatusDto {

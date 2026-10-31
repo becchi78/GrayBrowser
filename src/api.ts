@@ -10,6 +10,7 @@ import type {
   FfmpegStatusDto,
   GenerationFailuresDto,
   LogChunkDto,
+  MissingRegistrationResult,
   RenameSkippedFileResult,
   RenameWatchFolderResult,
   ScanSummary,
@@ -99,6 +100,9 @@ export const setRating = (videoId: string, rating: number) =>
 export const getVideoProperties = (videoId: string) =>
   invoke<VideoPropertiesDto | null>("get_video_properties", { videoId });
 export const listSkippedFiles = () => invoke<SkippedFileDto[]>("list_skipped_files");
+export const dismissSkippedFile = (id: number) => invoke<void>("dismiss_skipped_file", { id });
+export const registerMissingSkippedFile = (id: number, newName: string) =>
+  invoke<MissingRegistrationResult>("register_missing_skipped_file", { id, newName });
 export const renameSkippedFile = (id: number, newName: string) =>
   invoke<RenameSkippedFileResult>("rename_skipped_file", { id, newName });
 export const getFfmpegStatus = () => invoke<FfmpegStatusDto>("get_ffmpeg_status");

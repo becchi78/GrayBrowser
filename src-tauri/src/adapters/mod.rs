@@ -6,6 +6,7 @@ pub mod file_rename;
 pub mod folder_probe;
 pub mod log_source;
 pub mod long_path;
+pub mod path_existence;
 pub mod player;
 pub mod trash;
 pub mod watcher;
