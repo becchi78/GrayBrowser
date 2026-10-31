@@ -294,6 +294,15 @@ impl WbImportStage {
             WbImportStage::Linking => "linking",
         }
     }
+
+    /// Name shown to the user; the import log's section headings.
+    pub fn label(self) -> &'static str {
+        match self {
+            WbImportStage::Reading => "読み込み",
+            WbImportStage::Registering => "動画の登録",
+            WbImportStage::Linking => "旧サムネイルの紐付け",
+        }
+    }
 }
 
 #[cfg(test)]

@@ -135,6 +135,7 @@ export const startWbImport = (
   thumbnailFolderPath: string,
   registerWatchFolders: boolean,
 ) => invoke<void>("start_wb_import", { wbPath, thumbnailFolderPath, registerWatchFolders });
+export const openWbImportLog = () => invoke<void>("open_wb_import_log");
 export const listDuplicateGroups = () => invoke<DuplicateGroup[]>("list_duplicate_groups");
 export const refreshDuplicateGroups = () => invoke<void>("refresh_duplicate_groups");
 export const deleteDuplicateVideo = (videoId: string) =>

@@ -14,11 +14,15 @@ use std::thread;
 use gb_core::path_restore::{last_segment, restore_path};
 use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
+use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
     count_clamped_scores, count_source_tags, extract_thumbnail_hash, match_thumbnail_files,
     wb_row_to_import_candidate, WbImportStage,
+};
+use gb_core::wb_import_log::{
+    self as wb_log, Availability, LogSummary, PathRestoration, RowLog, RowOutcome,
 };
 use gb_core::wb_thumbnail_split::{parse_thum_size, split_plan, ThumbLayout};
 
@@ -83,7 +87,7 @@ pub struct WbImportPaths {
 // One argument over clippy's limit: each is an independent handle the spawned
 // thread needs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-pub fn run_wb_import<S, F, N, C, W, D>(
+pub fn run_wb_import<S, F, N, C, W, D, L>(
     db: Db,
     paths: WbImportPaths,
     wb_source: S,
@@ -95,6 +99,7 @@ pub fn run_wb_import<S, F, N, C, W, D>(
     register_watch_folders: bool,
     watch_reconfigurer: Arc<W>,
     dir_lister: Arc<D>,
+    import_log: L,
 ) where
     S: WbSourceAdapter + 'static,
     F: FfmpegAdapter + 'static,
@@ -102,6 +107,7 @@ pub fn run_wb_import<S, F, N, C, W, D>(
     C: CatalogNotifier + 'static,
     W: WatchReconfigurer + 'static,
     D: DirLister + 'static,
+    L: WbImportLog + 'static,
 {
     thread::spawn(move || {
         import_all(
@@ -113,6 +119,7 @@ pub fn run_wb_import<S, F, N, C, W, D>(
             catalog_notifier.as_ref(),
             register_watch_folders.then_some(watch_reconfigurer.as_ref()),
             dir_lister.as_ref(),
+            &import_log,
         );
 
         // `db`/`paths.thumbnails_dir`/`ffmpeg`/`catalog_notifier` were only
@@ -262,7 +269,7 @@ impl<D: DirLister> DirLister for CachingDirLister<'_, D> {
 // One argument over clippy's limit, same as `run_wb_import`: each is an
 // independent handle, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-fn import_all<S, F, N, C, W, D>(
+fn import_all<S, F, N, C, W, D, L>(
     db: &Db,
     paths: &WbImportPaths,
     wb_source: &S,
@@ -271,6 +278,7 @@ fn import_all<S, F, N, C, W, D>(
     catalog_notifier: &C,
     watch: Option<&W>,
     dir_lister: &D,
+    import_log: &L,
 ) where
     S: WbSourceAdapter,
     F: FfmpegAdapter,
@@ -278,8 +286,19 @@ fn import_all<S, F, N, C, W, D>(
     C: CatalogNotifier,
     W: WatchReconfigurer,
     D: DirLister,
+    L: WbImportLog,
 {
-    log::info!("wb import started: wb_path={}", paths.wb_path.display());
+    log::info!(
+        "wb import started: wb_path={} import_log={}",
+        paths.wb_path.display(),
+        import_log.location()
+    );
+    import_log.append(&wb_log::format_header(
+        &paths.wb_path.display().to_string(),
+        &paths.thumbnail_folder.display().to_string(),
+        watch.is_some(),
+    ));
+    import_log.append(&wb_log::format_stage_heading(WbImportStage::Reading));
 
     notifier.notify_stage(WbImportStage::Reading);
     let rows = match wb_source.read_movies() {
@@ -297,6 +316,7 @@ fn import_all<S, F, N, C, W, D>(
                 paths.wb_path.display()
             );
             log::error!("wb import: {reason}");
+            import_log.append(&wb_log::format_failure(&reason));
             notifier.notify_failed(&reason);
             return;
         }
@@ -305,6 +325,7 @@ fn import_all<S, F, N, C, W, D>(
     let thumb_layout = read_thumb_layout(wb_source);
 
     let total = rows.len() as u32;
+    import_log.append(&wb_log::format_read_count(total));
     let clamped_scores = count_clamped_scores(&rows) as u32;
     let source_tag_count = count_source_tags(&rows) as u32;
 
@@ -351,9 +372,26 @@ fn import_all<S, F, N, C, W, D>(
     // Shared by every row so a parent folder is listed once per import, even
     // when it cannot be listed at all (see `CachingDirLister`).
     let dir_lister = CachingDirLister::new(dir_lister);
+    // One entry per row, written out after linking so each can state what
+    // became of its legacy thumbnail. Every way out of the row loop pushes
+    // exactly one.
+    let mut row_logs: Vec<RowLog> = Vec::with_capacity(rows.len());
 
     notifier.notify_stage(WbImportStage::Registering);
     for (idx, row) in rows.iter().enumerate() {
+        let mut entry = RowLog {
+            movie_id: row.movie_id,
+            name: row.movie_name.clone(),
+            wb_path: row.movie_path.clone(),
+            restoration: PathRestoration::NotChecked,
+            availability: Availability::NotJudged,
+            tag_count: count_source_tags(std::slice::from_ref(row)),
+            thumbnail_hash: (!row.hash.is_empty()).then(|| row.hash.clone()),
+            outcome: RowOutcome::Failed {
+                reason: String::new(),
+            },
+            video_id: None,
+        };
         let candidate = match wb_row_to_import_candidate(row) {
             Ok(c) => c,
             Err(e) => {
@@ -365,6 +403,10 @@ fn import_all<S, F, N, C, W, D>(
                     row.movie_name
                 );
                 failed_rows += 1;
+                entry.outcome = RowOutcome::Failed {
+                    reason: format!("日付が不正: {e}"),
+                };
+                row_logs.push(entry);
                 continue;
             }
         };
@@ -379,6 +421,10 @@ fn import_all<S, F, N, C, W, D>(
         let file_path = restored_path
             .clone()
             .unwrap_or_else(|| candidate.movie_path.clone());
+        entry.restoration = match &restored_path {
+            Some(p) => PathRestoration::Restored(p.clone()),
+            None => PathRestoration::Unchanged,
+        };
 
         // Checked on the restored name (the stored `?` form has lost the
         // original character) and before any hashing, like a normal scan:
@@ -409,6 +455,8 @@ fn import_all<S, F, N, C, W, D>(
                 );
             }
             skipped_invalid_name += 1;
+            entry.outcome = RowOutcome::InvalidName { detected_char };
+            row_logs.push(entry);
             if let Some(hash) = candidate.thumbnail_hash {
                 invalid_name_hashes.insert(hash);
             }
@@ -417,6 +465,11 @@ fn import_all<S, F, N, C, W, D>(
         }
 
         let file_state = resolve_file_state(&file_path);
+        entry.availability = if file_state.status == "offline" {
+            Availability::Offline
+        } else {
+            Availability::Online
+        };
         let id = uuid::Uuid::new_v4().to_string();
 
         let new_video = NewVideo {
@@ -461,6 +514,10 @@ fn import_all<S, F, N, C, W, D>(
                         row.movie_name
                     );
                     failed_rows += 1;
+                    entry.outcome = RowOutcome::Failed {
+                        reason: format!("データベースへの書き込みに失敗: {e}"),
+                    };
+                    row_logs.push(entry);
                     continue;
                 }
             }
@@ -480,6 +537,8 @@ fn import_all<S, F, N, C, W, D>(
                     ratings_from_star_tags += 1;
                 }
                 registered_movie_paths.push(file_path.clone());
+                entry.outcome = RowOutcome::Registered;
+                entry.video_id = Some(id.clone());
                 // Legacy-JPG thumbnail migration (link_thumbnails, below) is
                 // only for offline rows: their source video isn't available
                 // to generate a fresh thumbnail from, so the old JPG is the
@@ -499,6 +558,7 @@ fn import_all<S, F, N, C, W, D>(
             }
             queries::WbImportOutcome::Skipped => {
                 skipped += 1;
+                entry.outcome = RowOutcome::AlreadyRegistered;
                 // An already-registered online row still owns its legacy
                 // JPG. Without collecting the hash here, a re-import would
                 // report that JPG as unmatched (needs manual attention).
@@ -518,6 +578,7 @@ fn import_all<S, F, N, C, W, D>(
             }
         }
 
+        row_logs.push(entry);
         notify_row_progress(notifier, idx, total);
     }
 
@@ -616,13 +677,22 @@ fn import_all<S, F, N, C, W, D>(
         watch_folders_added,
     };
 
+    write_import_log(
+        import_log,
+        &row_logs,
+        &link_outcome,
+        &summary,
+        &summary.watch_folders_added,
+    );
+
     log::info!(
-        "wb import complete: total={} registered={} registered_online={} \
+        "wb import complete: import_log={} total={} registered={} registered_online={} \
          registered_offline={} skipped={} failed_rows={} skipped_invalid_name={} \
          clamped_scores={} tags_assigned={} \
          source_tag_count={} ratings_from_star_tags={} thumbnails_linked={} \
          thumbnails_failed={} thumbnails_unmatched={} thumbnails_skipped_online={} \
          watch_folders_added={:?}",
+        import_log.location(),
         summary.total,
         summary.registered,
         summary.registered_online,
@@ -650,6 +720,70 @@ fn import_all<S, F, N, C, W, D>(
     if let (Some(watch), Some(change)) = (watch, &watch_change) {
         watch.reconfigure(&change.after);
     }
+}
+
+/// Records an import that failed before `import_all` could start (the `.wb`
+/// could not be opened): the same header and failure text a failed read gets,
+/// so the log has the same shape whichever step failed.
+pub fn record_start_failure<L: WbImportLog>(
+    import_log: &L,
+    paths: &WbImportPaths,
+    register_watch_folders: bool,
+    reason: &str,
+) {
+    import_log.append(&wb_log::format_header(
+        &paths.wb_path.display().to_string(),
+        &paths.thumbnail_folder.display().to_string(),
+        register_watch_folders,
+    ));
+    import_log.append(&wb_log::format_stage_heading(WbImportStage::Reading));
+    import_log.append(&wb_log::format_failure(reason));
+}
+
+/// Writes everything that is only known once linking has finished: the rows
+/// (each with its thumbnail result), the linking notes, the folders added to
+/// the watch list and the closing summary.
+fn write_import_log<L: WbImportLog>(
+    import_log: &L,
+    row_logs: &[RowLog],
+    link_outcome: &LinkOutcome,
+    summary: &WbImportSummary,
+    watch_folders_added: &[String],
+) {
+    let linked: HashSet<String> = link_outcome.linked_video_ids.iter().cloned().collect();
+    let failed: HashMap<String, String> = link_outcome.failed_video_ids.iter().cloned().collect();
+
+    import_log.append(&wb_log::format_stage_heading(WbImportStage::Registering));
+    for row in row_logs {
+        let link = wb_log::resolve_link_status(row, &linked, &failed);
+        import_log.append(&wb_log::format_row(row, &link));
+    }
+
+    import_log.append(&wb_log::format_stage_heading(WbImportStage::Linking));
+    if let Some(reason) = &link_outcome.folder_error {
+        import_log.append(&wb_log::format_thumbnail_folder_error(reason));
+    }
+    import_log.append(&wb_log::format_unmatched_filenames(
+        &link_outcome.unmatched_filenames,
+    ));
+    import_log.append(&wb_log::format_watch_folders(watch_folders_added));
+    import_log.append(&wb_log::format_summary(&LogSummary {
+        total: summary.total,
+        registered: summary.registered,
+        registered_online: summary.registered_online,
+        registered_offline: summary.registered_offline,
+        skipped: summary.skipped,
+        skipped_invalid_name: summary.skipped_invalid_name,
+        failed_rows: summary.failed_rows,
+        clamped_scores: summary.clamped_scores,
+        tags_assigned: summary.tags_assigned,
+        source_tag_count: summary.source_tag_count,
+        ratings_from_star_tags: summary.ratings_from_star_tags,
+        thumbnails_linked: summary.thumbnails_linked,
+        thumbnails_failed: summary.thumbnails_failed,
+        thumbnails_unmatched: summary.thumbnails_unmatched,
+        thumbnails_skipped_online: summary.thumbnails_skipped_online,
+    }));
 }
 
 /// The legacy thumbnail frame grid, when the `.wb` states one unambiguously:
@@ -740,6 +874,15 @@ struct LinkOutcome {
     /// Videos whose slot files were all written; the caller must flag these
     /// ready in the DB.
     linked_video_ids: Vec<String>,
+    /// (video id, reason) for every matched video whose thumbnail could not
+    /// be written; `failed == failed_video_ids.len()`.
+    failed_video_ids: Vec<(String, String)>,
+    /// Legacy JPG files that matched no registered or online video; the
+    /// names behind `unmatched`.
+    unmatched_filenames: Vec<String>,
+    /// Set when the legacy thumbnail folder could not be listed and linking
+    /// was skipped altogether.
+    folder_error: Option<String>,
 }
 
 /// Legacy-thumbnail linking pass (`match_thumbnail_files` +
@@ -812,7 +955,10 @@ fn link_thumbnails<F: FfmpegAdapter>(
                  skipping thumbnail linking entirely",
                 thumbnail_folder.display()
             );
-            return LinkOutcome::default();
+            return LinkOutcome {
+                folder_error: Some(e.to_string()),
+                ..LinkOutcome::default()
+            };
         }
     };
 
@@ -855,7 +1001,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     }
 
     let mut linked_video_ids: Vec<String> = Vec::new();
-    let mut thumbnails_failed = 0u32;
+    let mut failed_video_ids: Vec<(String, String)> = Vec::new();
     let mut split_count = 0u32;
     for (video_id, filename) in plan.matched {
         // Defensive only: every `video_id` here came from `movies_for_matching`,
@@ -866,7 +1012,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                 "wb import: internal inconsistency -- matched video {video_id} has no known \
                  file_path; skipping its legacy thumbnail link"
             );
-            thumbnails_failed += 1;
+            failed_video_ids.push((video_id, "内部の不整合".to_string()));
             continue;
         };
         let video_dir =
@@ -876,7 +1022,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                 "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
                 video_dir.display()
             );
-            thumbnails_failed += 1;
+            failed_video_ids.push((video_id, format!("サムネイルの保存先を作れない: {e}")));
             continue;
         }
 
@@ -894,7 +1040,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                          ({filename}): {e}"
                     );
                     remove_slot_files(&video_dir, &video_id);
-                    thumbnails_failed += 1;
+                    failed_video_ids.push((video_id, format!("分割に失敗: {e}")));
                 }
             }
             continue;
@@ -913,7 +1059,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                  ({filename}): {e}"
             );
             let _ = fs::remove_file(&shared_tmp_path);
-            thumbnails_failed += 1;
+            failed_video_ids.push((video_id, format!("WebPへの変換に失敗: {e}")));
             continue;
         }
 
@@ -941,7 +1087,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
                      ({filename}): {e}"
                 );
                 remove_slot_files(&video_dir, &video_id);
-                thumbnails_failed += 1;
+                failed_video_ids.push((video_id, format!("保存に失敗: {e}")));
             }
         }
     }
@@ -952,10 +1098,13 @@ fn link_thumbnails<F: FfmpegAdapter>(
 
     LinkOutcome {
         linked: linked_video_ids.len() as u32,
-        failed: thumbnails_failed,
+        failed: failed_video_ids.len() as u32,
         unmatched: thumbnails_unmatched,
         skipped_online: thumbnails_skipped_online,
         linked_video_ids,
+        failed_video_ids,
+        unmatched_filenames: plan.unmatched_filenames,
+        folder_error: None,
     }
 }
 
@@ -1026,6 +1175,7 @@ mod tests {
     use gb_core::ports::wb_source::WbMovieRow;
     use gb_core::testing::fake_dir_lister::FakeDirLister;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
+    use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
     use crate::db::test_support::init_temp_db;
@@ -1056,6 +1206,7 @@ mod tests {
             catalog_notifier,
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
+            &FakeWbImportLog::default(),
         );
     }
 
@@ -2168,6 +2319,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             Some(reconfigurer),
             &FakeDirLister::default(),
+            &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
         summary
@@ -2414,6 +2566,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             reconfigurer,
             lister,
+            &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
         summary
@@ -3696,5 +3849,395 @@ mod tests {
         assert_eq!(second.skipped_invalid_name, 1);
         assert_eq!(second.failed_rows, 1);
         assert_counts_add_up(&second);
+    }
+
+    // ---- import log ----
+
+    /// Runs the import against `import_log` and returns the summary, if the
+    /// import got as far as producing one.
+    fn import_with_log(
+        h: &Harness,
+        movies: Result<Vec<WbMovieRow>, gb_core::ports::wb_source::WbSourceError>,
+        ffmpeg: &FakeFfmpegAdapter,
+        lister: &FakeDirLister,
+        import_log: &FakeWbImportLog,
+    ) -> (FakeWbImportNotifier, Option<WbImportSummary>) {
+        let notifier = FakeWbImportNotifier::default();
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies,
+                ..Default::default()
+            },
+            ffmpeg,
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            None::<&FakeWatchReconfigurer>,
+            lister,
+            import_log,
+        );
+        let summary = notifier.complete_calls.lock().unwrap().first().cloned();
+        (notifier, summary)
+    }
+
+    fn lines_starting_with<'a>(text: &'a str, prefix: &str) -> Vec<&'a str> {
+        text.lines().filter(|l| l.starts_with(prefix)).collect()
+    }
+
+    /// One row of every outcome: the log must account for each of them, state
+    /// what happened to its thumbnail, and close with a summary whose
+    /// equations hold.
+    #[test]
+    fn the_log_records_every_kind_of_row_and_the_summary() {
+        let h = harness();
+        let online_dir = tempfile::tempdir().unwrap();
+        let online_path = online_dir.path().join("online.mp4");
+        std::fs::write(&online_path, b"online bytes").unwrap();
+        let online_path = online_path.to_string_lossy().to_string();
+
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Linked.mp4.#1e5e0fbf.jpg"),
+            b"jpg",
+        )
+        .unwrap();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Broken.mp4.#aaaaaaaa.jpg"),
+            b"jpg",
+        )
+        .unwrap();
+        std::fs::write(h.paths.thumbnail_folder.join("stray_file.jpg"), b"jpg").unwrap();
+        {
+            let conn = h.db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER fail_one_insert BEFORE INSERT ON videos \
+                 WHEN NEW.file_path = 'Z:\\db_fail.mp4' \
+                 BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+            )
+            .unwrap();
+        }
+        let ffmpeg = FakeFfmpegAdapter {
+            convert_result: Box::new(|src| {
+                if src.to_string_lossy().contains("aaaaaaaa") {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+        let rows = vec![
+            row(|r| {
+                r.movie_id = 1;
+                r.movie_name = "online.mp4".into();
+                r.movie_path = online_path.clone();
+                r.tag = "a\nb".into();
+            }),
+            row(|r| {
+                r.movie_id = 2;
+                r.movie_name = "linked.mp4".into();
+                r.movie_path = "Z:\\gone\\linked.mp4".into();
+                r.hash = "1e5e0fbf".into();
+            }),
+            row(|r| {
+                r.movie_id = 3;
+                r.movie_name = "broken.mp4".into();
+                r.movie_path = "Z:\\gone\\broken.mp4".into();
+                r.hash = "aaaaaaaa".into();
+            }),
+            row(|r| {
+                r.movie_id = 4;
+                r.movie_name = "bad\u{2460}.mp4".into();
+                r.movie_path = "Z:\\gone\\bad\u{2460}.mp4".into();
+            }),
+            row(|r| {
+                r.movie_id = 5;
+                r.movie_name = "date.mp4".into();
+                r.movie_path = "Z:\\gone\\date.mp4".into();
+                r.last_date = "not-a-date".into();
+            }),
+            row(|r| {
+                r.movie_id = 6;
+                r.movie_name = "db_fail.mp4".into();
+                r.movie_path = "Z:\\db_fail.mp4".into();
+            }),
+            row(|r| {
+                r.movie_id = 7;
+                r.movie_name = "online.mp4".into();
+                r.movie_path = online_path.clone();
+            }),
+            row(|r| {
+                r.movie_id = 8;
+                r.movie_name = "nohash.mp4".into();
+                r.movie_path = "Z:\\gone\\nohash.mp4".into();
+            }),
+        ];
+        let import_log = FakeWbImportLog::default();
+
+        let (_, summary) = import_with_log(
+            &h,
+            Ok(rows),
+            &ffmpeg,
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        let summary = summary.expect("the import completes");
+        assert_eq!(summary.total, 8);
+        let text = import_log.text();
+        let row_lines: Vec<&str> = text.lines().filter(|l| l.contains("movie_id=")).collect();
+        assert_eq!(row_lines.len(), 8, "one line per row:\n{text}");
+        let line = |id: i64| {
+            *row_lines
+                .iter()
+                .find(|l| l.contains(&format!("movie_id={id} ")))
+                .unwrap_or_else(|| panic!("no line for {id}:\n{text}"))
+        };
+
+        assert!(line(1).starts_with("[登録]"));
+        assert!(line(1).contains("状態=オンライン") && line(1).contains("タグ数=2"));
+        assert!(line(1).contains("紐付け=動画から生成"));
+        assert!(line(2).contains("状態=オフライン") && line(2).contains("旧サムネイル=1e5e0fbf"));
+        assert!(line(2).contains("紐付け=紐付け成功"));
+        assert!(line(3).contains("紐付け=変換失敗(WebPへの変換に失敗"));
+        assert!(line(4).starts_with("[未登録]") && line(4).contains("状態=判定前"));
+        assert!(line(4).contains("機種依存文字のため未登録(検出した文字: \u{2460})"));
+        assert!(line(5).starts_with("[失敗]") && line(5).contains("取り込めなかった(日付が不正"));
+        assert!(
+            line(6).starts_with("[失敗]") && line(6).contains("データベースへの書き込みに失敗")
+        );
+        assert!(line(7).starts_with("[スキップ]") && line(7).contains("登録済みのためスキップ"));
+        assert!(line(8).contains("旧サムネイル=なし") && line(8).contains("紐付け=ハッシュなし"));
+
+        assert!(text.contains("stray_file.jpg"), "unmatched JPG is listed");
+        assert!(text.contains("== サマリー =="));
+        assert!(text.contains("総数: 8"));
+        assert!(text.contains("(合計 8: 一致)"), "{text}");
+        assert!(text.contains("監視フォルダへ追加したパス: なし"));
+        let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(
+            at("== 読み込み") < at("== 動画の登録")
+                && at("== 動画の登録") < at("== 旧サムネイルの紐付け")
+        );
+        assert!(at("== 旧サムネイルの紐付け") < at("監視フォルダへ追加したパス"));
+        assert!(at("監視フォルダへ追加したパス") < at("== サマリー =="));
+    }
+
+    #[test]
+    fn the_log_shows_the_restored_path_of_a_question_mark_row() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let dir = OnlineDir::new(&real);
+        let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
+        let import_log = FakeWbImportLog::default();
+
+        import_with_log(
+            &h,
+            Ok(vec![replaced_row(1, &dir.folder(), "a")]),
+            &no_op_ffmpeg(),
+            &lister,
+            &import_log,
+        );
+
+        let text = import_log.text();
+        let line = lines_starting_with(&text, "[登録]")[0].to_string();
+        assert!(line.contains(&format!(".wb内パス=\"{}\\a?.mp4\"", dir.folder())));
+        assert!(line.contains(&format!("復元後パス=\"{}\"", dir.file(&real))));
+        assert!(line.contains("状態=オンライン"));
+    }
+
+    #[test]
+    fn the_log_lists_folders_added_to_the_watch_list() {
+        let h = harness();
+        let dir = OnlineDir::new("w.mp4");
+        let notifier = FakeWbImportNotifier::default();
+        let import_log = FakeWbImportLog::default();
+        let reconfigurer = FakeWatchReconfigurer::default();
+
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![named_row(1, &dir.folder(), "w.mp4")]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            Some(&reconfigurer),
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        let text = import_log.text();
+        assert!(text.contains("監視フォルダへの追加: する"));
+        assert!(text.contains("監視フォルダへ追加したパス: 1 件"), "{text}");
+        assert!(text.contains(&dir.folder()));
+    }
+
+    #[test]
+    fn an_unreadable_thumbnail_folder_is_noted_in_the_log() {
+        let mut h = harness();
+        h.paths.thumbnail_folder = h.paths.thumbnail_folder.join("missing");
+        let import_log = FakeWbImportLog::default();
+
+        import_with_log(
+            &h,
+            Ok(vec![row(|r| {
+                r.movie_path = "Z:\\gone\\x.mp4".into();
+                r.hash = "1e5e0fbf".into();
+            })]),
+            &no_op_ffmpeg(),
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        let text = import_log.text();
+        assert!(
+            text.contains("旧サムネイルフォルダを読めなかった"),
+            "{text}"
+        );
+        assert!(text.contains("紐付け=対応する旧サムネイルなし"));
+    }
+
+    #[test]
+    fn a_failed_read_leaves_a_log_with_the_reason() {
+        let h = harness();
+        let import_log = FakeWbImportLog::default();
+
+        let (notifier, summary) = import_with_log(
+            &h,
+            Err(gb_core::ports::wb_source::WbSourceError::Query(
+                "no such table: movie".into(),
+            )),
+            &no_op_ffmpeg(),
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        assert!(summary.is_none());
+        let failed = notifier.failed_calls.lock().unwrap()[0].clone();
+        let text = import_log.text();
+        assert!(text.contains("取り込みを中止しました"));
+        assert!(text.contains(&failed), "the screen's reason is in the log");
+        assert!(text.contains("no such table: movie"));
+        assert!(text.contains("test.wb"), "header names the .wb");
+        assert!(!text.contains("== サマリー =="));
+    }
+
+    #[test]
+    fn an_import_succeeds_even_when_the_log_cannot_be_written() {
+        let h = harness();
+        let import_log = FakeWbImportLog::failing();
+
+        let (_, summary) = import_with_log(
+            &h,
+            Ok(vec![row(|r| r.movie_path = "Z:\\gone\\ok.mp4".into())]),
+            &no_op_ffmpeg(),
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        assert_eq!(summary.unwrap().registered, 1);
+        assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 1);
+    }
+
+    /// Records the order of log writes relative to the failure notification.
+    struct OrderRecorder {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl WbImportLog for OrderRecorder {
+        fn append(&self, text: &str) {
+            self.events.lock().unwrap().push(format!("log:{text}"));
+        }
+        fn location(&self) -> String {
+            String::new()
+        }
+    }
+
+    impl WbImportNotifier for OrderRecorder {
+        fn notify_progress(&self, _: u32, _: u32) {}
+        fn notify_complete(&self, _: &WbImportSummary) {}
+        fn notify_failed(&self, _: &str) {
+            self.events.lock().unwrap().push("failed".to_string());
+        }
+    }
+
+    #[test]
+    fn the_failure_reason_is_logged_before_the_failure_is_announced() {
+        let h = harness();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorder = OrderRecorder {
+            events: events.clone(),
+        };
+
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter::default(),
+            &no_op_ffmpeg(),
+            &recorder,
+            &FakeCatalogNotifier::default(),
+            None::<&FakeWatchReconfigurer>,
+            &FakeDirLister::default(),
+            &recorder,
+        );
+
+        let events = events.lock().unwrap();
+        let failure_log = events
+            .iter()
+            .position(|e| e.starts_with("log:") && e.contains("取り込みを中止しました"))
+            .expect("failure reason logged");
+        let announced = events.iter().position(|e| e == "failed").unwrap();
+        assert!(failure_log < announced, "{events:?}");
+    }
+
+    #[test]
+    fn the_summary_states_the_thumbnail_counts() {
+        let h = harness();
+        std::fs::write(h.paths.thumbnail_folder.join("A.mp4.#1e5e0fbf.jpg"), b"j").unwrap();
+        std::fs::write(h.paths.thumbnail_folder.join("B.mp4.#aaaaaaaa.jpg"), b"j").unwrap();
+        std::fs::write(h.paths.thumbnail_folder.join("stray.jpg"), b"j").unwrap();
+        let ffmpeg = FakeFfmpegAdapter {
+            convert_result: Box::new(|src| {
+                if src.to_string_lossy().contains("aaaaaaaa") {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+        let import_log = FakeWbImportLog::default();
+
+        import_with_log(
+            &h,
+            Ok(vec![
+                row(|r| {
+                    r.movie_id = 1;
+                    r.movie_path = r"Z:\gone\a.mp4".into();
+                    r.hash = "1e5e0fbf".into();
+                }),
+                row(|r| {
+                    r.movie_id = 2;
+                    r.movie_path = r"Z:\gone\b.mp4".into();
+                    r.hash = "aaaaaaaa".into();
+                }),
+            ]),
+            &ffmpeg,
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        assert!(import_log
+            .text()
+            .contains("旧サムネイル: 紐付け 1 / 失敗 1 / 対応なし 1 / "));
     }
 }

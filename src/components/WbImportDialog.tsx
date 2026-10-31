@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { pickWbFile, pickWbThumbnailFolder, startWbImport } from "../api";
+import { openWbImportLog, pickWbFile, pickWbThumbnailFolder, startWbImport } from "../api";
 import {
   onWbImportComplete,
   onWbImportFailed,
@@ -24,6 +24,38 @@ function PathLabel({ path }: { path: string }) {
     <span className="wb-import-path" title={path}>
       {abbreviatePath(path, PATH_DISPLAY_MAX_CHARS)}
     </span>
+  );
+}
+
+// 完了時・失敗時の両方に置く。ログには実際のファイル名・パスが入るので、
+// 不具合報告に添付する場合の注意を添える。
+function ImportLogLink() {
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  async function handleOpenLog() {
+    setOpenError(null);
+    try {
+      await openWbImportLog();
+    } catch (e) {
+      console.error(e);
+      setOpenError(String(e));
+    }
+  }
+
+  return (
+    <div>
+      <button type="button" data-testid="import-open-log-btn" onClick={handleOpenLog}>
+        ログを確認する
+      </button>
+      <p className="wb-import-result-detail">
+        ログには実際のファイル名・パスが含まれます。不具合報告に添付するときはご注意ください。
+      </p>
+      {openError && (
+        <p className="wb-import-error" data-testid="import-open-log-error">
+          {openError}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -270,10 +302,17 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                 </ul>
               </details>
             )}
+
+            <ImportLogLink />
           </div>
         )}
 
-        {error && <p className="wb-import-error">移行に失敗しました: {error}</p>}
+        {error && (
+          <>
+            <p className="wb-import-error">移行に失敗しました: {error}</p>
+            <ImportLogLink />
+          </>
+        )}
 
         <div className="dialog-footer">
           <button

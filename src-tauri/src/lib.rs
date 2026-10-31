@@ -403,6 +403,7 @@ pub fn run() {
             commands::wb_import_cmds::pick_wb_file,
             commands::wb_import_cmds::pick_wb_thumbnail_folder,
             commands::wb_import_cmds::start_wb_import,
+            commands::wb_import_cmds::open_wb_import_log,
             commands::catalog_cmds::unregister_videos,
             commands::dedup_cmds::list_duplicate_groups,
             commands::dedup_cmds::refresh_duplicate_groups,
