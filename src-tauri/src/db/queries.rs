@@ -1415,6 +1415,16 @@ fn find_colliding_video_id(
 ///   `"offline"` based on a fresh `std::fs` existence check against the new
 ///   path -- no separate rescan is needed to reflect the move.
 ///
+/// `skipped_files` rows under the folder are rewritten the same way (same
+/// prefix match, same `replace_folder_prefix`), so a stale "unregistered" row
+/// pointing at the old path does not linger and then duplicate the row a
+/// rescan creates under the new path. Unlike videos, a row whose new path is
+/// already taken by another `skipped_files` row (compared ASCII-caselessly,
+/// like the prefix match; the `UNIQUE` constraint itself is case-sensitive) is
+/// *deleted* rather than kept: the existing row came from a rescan of the new
+/// location and is the authoritative one. Skipped rows are not counted in the
+/// outcome.
+///
 /// All of the above happens inside a single transaction: either
 /// every non-colliding row is rewritten, or (on an `Err`) none of them are.
 pub fn rename_watch_folder_videos(
@@ -1477,12 +1487,58 @@ pub fn rename_watch_folder_videos(
         });
     }
 
+    rename_skipped_files_under_folder(&tx, &pattern, old_folder_path, new_folder_path)?;
+
     tx.commit()?;
     Ok(RenameWatchFolderOutcome {
         renamed_count,
         collision_skipped_count,
         renamed_videos,
     })
+}
+
+/// Rewrites `skipped_files.file_path` under `old_folder_path` to the new
+/// folder, deleting a row instead when another row already occupies the
+/// rewritten path. `file_path` is the only path-derived column (`file_name`
+/// is unchanged by a folder rename). Runs inside the caller's transaction.
+fn rename_skipped_files_under_folder(
+    tx: &Transaction,
+    pattern: &str,
+    old_folder_path: &str,
+    new_folder_path: &str,
+) -> rusqlite::Result<()> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, file_path FROM skipped_files WHERE file_path LIKE ?1 ESCAPE '\\'",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+
+    for (id, old_path) in rows {
+        let Some(new_path) =
+            gb_core::paths::replace_folder_prefix(&old_path, old_folder_path, new_folder_path)
+        else {
+            continue;
+        };
+        let occupied: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM skipped_files
+             WHERE lower(file_path) = lower(?1) AND id != ?2)",
+            params![new_path, id],
+            |r| r.get(0),
+        )?;
+        if occupied {
+            tx.execute("DELETE FROM skipped_files WHERE id = ?1", params![id])?;
+        } else {
+            tx.execute(
+                "UPDATE skipped_files SET file_path = ?1 WHERE id = ?2",
+                params![new_path, id],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Sets `videos.rating` directly (0 = unrated/cleared, 1-5 = stars).
