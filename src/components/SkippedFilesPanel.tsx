@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listSkippedFiles, renameSkippedFile } from "../api";
+import { splitDirAndFileName } from "../lib/paths";
 import type { SkippedFileDto } from "../types";
 
 // The only reason code emitted today (crates/gb-core/src/scan_pipeline.rs),
@@ -8,6 +9,17 @@ import type { SkippedFileDto } from "../types";
 const REASON_LABELS: Record<string, string> = {
   machine_dependent_char: "機種依存文字を含むファイル名",
 };
+
+// 同名ファイルをフォルダで見分けられるよう、パス全体を1つの連続したテキストとして出す。
+function SkippedFilePath({ filePath }: { filePath: string }) {
+  const { dir, name } = splitDirAndFileName(filePath);
+  return (
+    <>
+      <span className="skipped-file-dir">{dir}</span>
+      <span className="skipped-file-name">{name}</span>
+    </>
+  );
+}
 
 interface Props {
   refreshKey: number;
@@ -139,7 +151,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
                   </div>
                 ) : (
                   <>
-                    <span className="skipped-file-name">{f.file_name}</span>
+                    <SkippedFilePath filePath={f.file_path} />
                     <span className="skipped-file-reason">
                       {REASON_LABELS[f.reason] ?? f.reason}
                       {f.detected_char ? `（検出文字: ${f.detected_char}）` : ""}

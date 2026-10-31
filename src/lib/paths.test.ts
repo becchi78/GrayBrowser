@@ -39,3 +39,21 @@ test("末尾が区切り文字の異常入力は、dirが空でnameに全体が�
   assert.equal(dir, "");
   assert.equal(name, "C:\\Users\\testuser\\Videos\\");
 });
+
+test("ドライブ直下のファイルは、dirがドライブ+区切りになる", () => {
+  const { dir, name } = splitDirAndFileName("C:\\a.mp4");
+  assert.equal(dir, "C:\\");
+  assert.equal(name, "a.mp4");
+});
+
+test("UNCパスはshare配下のフォルダまでがdirになる", () => {
+  const { dir, name } = splitDirAndFileName("\\\\server\\share\\dir\\a.mp4");
+  assert.equal(dir, "\\\\server\\share\\dir\\");
+  assert.equal(name, "a.mp4");
+});
+
+test("機種依存文字・サロゲートペアを含むパスも欠けずに分割される", () => {
+  const { dir, name } = splitDirAndFileName("E:\\動画\\①まとめ\\ｱ㈱𠮷.mp4");
+  assert.equal(dir, "E:\\動画\\①まとめ\\");
+  assert.equal(name, "ｱ㈱𠮷.mp4");
+});
