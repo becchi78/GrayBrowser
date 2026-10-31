@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { listSkippedFiles, renameSkippedFile } from "../api";
+import { abbreviatePath } from "../lib/abbreviatePath";
+import { parentFolder } from "../lib/parentFolder";
 import type { SkippedFileDto } from "../types";
+
+// 表示用に省略するパスの最大文字数。全体は title で見られる。
+const PATH_DISPLAY_MAX_CHARS = 60;
+
+function FolderLabel({ filePath }: { filePath: string }) {
+  const folder = parentFolder(filePath);
+  if (!folder) {
+    return null;
+  }
+  return (
+    <span className="skipped-file-folder" title={folder}>
+      {abbreviatePath(folder, PATH_DISPLAY_MAX_CHARS)}
+    </span>
+  );
+}
 
 // The only reason code emitted today (crates/gb-core/src/scan_pipeline.rs),
 // but kept as a lookup with a fallback so a future reason doesn't render
@@ -140,6 +157,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
                 ) : (
                   <>
                     <span className="skipped-file-name">{f.file_name}</span>
+                    <FolderLabel filePath={f.file_path} />
                     <span className="skipped-file-reason">
                       {REASON_LABELS[f.reason] ?? f.reason}
                       {f.detected_char ? `（検出文字: ${f.detected_char}）` : ""}

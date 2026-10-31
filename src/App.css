@@ -908,6 +908,15 @@ button.search-box-clear {
   margin-right: 0.5em;
 }
 
+.skipped-file-folder {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .skipped-file-reason {
   font-size: 0.85em;
   opacity: 0.8;
