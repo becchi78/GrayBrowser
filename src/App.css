@@ -1717,9 +1717,14 @@ button.link-button:focus-visible {
   opacity: 0.45;
 }
 
+/* 実行中は太字+先頭の▶で、完了(取り消し線)・未着手(薄い)と色に頼らず区別する。 */
 .wb-import-step--active {
   opacity: 1;
-  font-weight: 600;
+  font-weight: 700;
+}
+
+.wb-import-step--active::before {
+  content: "\25B6\00a0";
 }
 
 .wb-import-step--done {

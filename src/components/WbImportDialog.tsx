@@ -1,22 +1,20 @@
 import { useEffect, useState } from "react";
 import { pickWbFile, pickWbThumbnailFolder, startWbImport } from "../api";
-import { onWbImportComplete, onWbImportFailed, onWbImportProgress } from "../events";
+import {
+  onWbImportComplete,
+  onWbImportFailed,
+  onWbImportProgress,
+  onWbImportStage,
+} from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
-import type { WbImportProgress, WbImportSummary } from "../types";
+import { computeWbImportSteps, isWbImportStageId, showsRowProgress } from "../lib/wbImportSteps";
+import type { WbImportProgress, WbImportStageId, WbImportSummary } from "../types";
 
 interface Props {
   onClose: () => void;
   onImportComplete: () => void;
 }
-
-type StepKey = "parse" | "link" | "rebuild";
-
-const STEPS: { key: StepKey; label: string }[] = [
-  { key: "parse", label: "解析" },
-  { key: "link", label: "紐付け" },
-  { key: "rebuild", label: "UUID再構築" },
-];
 
 // 表示用に省略するパスの最大文字数。全体は title で見られる。
 const PATH_DISPLAY_MAX_CHARS = 60;
@@ -37,12 +35,19 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<WbImportProgress | null>(null);
+  const [stage, setStage] = useState<WbImportStageId | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUnmatchedDetail, setShowUnmatchedDetail] = useState(false);
 
   useEffect(() => {
     const unlistenProgress = onWbImportProgress((p) => setProgress(p));
+    const unlistenStage = onWbImportStage((st) => {
+      // 未知の段階名(将来の追加など)は無視し、表示を壊さない。
+      if (isWbImportStageId(st)) {
+        setStage(st);
+      }
+    });
     const unlistenComplete = onWbImportComplete((s) => {
       setSummary(s);
       setImporting(false);
@@ -57,6 +62,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
 
     return () => {
       unlistenProgress();
+      unlistenStage();
       unlistenComplete();
       unlistenFailed();
     };
@@ -107,6 +113,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     }
     setImporting(true);
     setProgress(null);
+    setStage(null);
     setSummary(null);
     setError(null);
     setShowUnmatchedDetail(false);
@@ -119,36 +126,6 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
       setError(String(e));
       setImporting(false);
     }
-  }
-
-  // The 3-step checklist (解析→紐付け→UUID再構築) does not map 1:1 onto the
-  // actual backend pipeline (src-tauri/src/wb_import/pipeline.rs's
-  // `import_all`): UUID assignment happens inline, per row, during the very
-  // same loop that reports wb_import:progress -- there is no distinct
-  // "UUID再構築" phase at all. The only other real phase (`link_thumbnails`,
-  // the legacy-JPG linking pass) runs silently after that loop finishes,
-  // with no progress event of its own. Given only `progress.processed`/
-  // `total` and whether `summary`/`error` has arrived to work with, this is
-  // a simplified, approximate visual only:
-  //  - "解析": active while processed < total.
-  //  - "紐付け"/"UUID再構築" (bundled, since "UUID再構築" has no independent
-  //    signal -- splitting it further would just be inventing data this
-  //    dialog doesn't have): active once processed === total but the final
-  //    summary/error hasn't arrived yet (this is really `link_thumbnails`'s
-  //    window).
-  function stepStatus(step: StepKey): "pending" | "active" | "done" {
-    if (summary || error) {
-      return "done";
-    }
-    if (!importing) {
-      return "pending";
-    }
-    const rowLoopFinished =
-      progress !== null && progress.total > 0 && progress.processed >= progress.total;
-    if (step === "parse") {
-      return rowLoopFinished ? "done" : "active";
-    }
-    return rowLoopFinished ? "active" : "pending";
   }
 
   const resultDisplay = summary ? buildWbImportResultDisplay(summary) : null;
@@ -189,22 +166,26 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
         {importing && (
           <div className="wb-import-steps">
             <ol className="wb-import-steps-list">
-              {STEPS.map((s) => (
-                <li key={s.key} className={`wb-import-step wb-import-step--${stepStatus(s.key)}`}>
+              {computeWbImportSteps(stage, null).map((s) => (
+                <li key={s.key} className={`wb-import-step wb-import-step--${s.status}`}>
                   {s.label}
                 </li>
               ))}
             </ol>
-            <progress
-              data-testid="import-progress-bar"
-              className="wb-import-progress-bar"
-              value={progress?.processed ?? 0}
-              max={progress && progress.total > 0 ? progress.total : 1}
-            />
-            {progress && (
-              <span className="wb-import-progress">
-                {progress.processed} / {progress.total}
-              </span>
+            {showsRowProgress(stage) && (
+              <>
+                <progress
+                  data-testid="import-progress-bar"
+                  className="wb-import-progress-bar"
+                  value={progress?.processed ?? 0}
+                  max={progress && progress.total > 0 ? progress.total : 1}
+                />
+                {progress && (
+                  <span className="wb-import-progress">
+                    {progress.processed} / {progress.total}件
+                  </span>
+                )}
+              </>
             )}
           </div>
         )}

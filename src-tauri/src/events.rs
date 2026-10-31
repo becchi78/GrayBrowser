@@ -33,6 +33,7 @@
 //! but unused-in-production dependency; `graybrowser.exe` gets its manifest
 //! regardless and would work either way.)
 
+use gb_core::wb_import::WbImportStage;
 use tauri::Emitter;
 
 pub trait CatalogNotifier: Send + Sync {
@@ -109,6 +110,10 @@ pub trait WbImportNotifier: Send + Sync {
     /// exactly one call site today and nothing downstream needs to match on
     /// it programmatically.
     fn notify_failed(&self, reason: &str);
+
+    /// Emitted when the import enters a new phase. Does nothing by default so
+    /// implementors that don't show phases need not care.
+    fn notify_stage(&self, _stage: WbImportStage) {}
 }
 
 /// Final tally reported by `wb_import::pipeline::run_wb_import`'s
@@ -221,6 +226,12 @@ impl<R: tauri::Runtime> WbImportNotifier for TauriWbImportNotifier<R> {
     fn notify_failed(&self, reason: &str) {
         if let Err(e) = self.app.emit("wb_import:failed", reason) {
             log::error!("failed to emit wb_import:failed: {e}");
+        }
+    }
+
+    fn notify_stage(&self, stage: WbImportStage) {
+        if let Err(e) = self.app.emit("wb_import:stage", stage.as_str()) {
+            log::error!("failed to emit wb_import:stage: {e}");
         }
     }
 }
@@ -360,7 +371,7 @@ pub use fake::{
 mod fake {
     use super::{
         CatalogNotifier, DedupNotifier, ReachabilityNotifier, WatchReconfigurer, WbImportNotifier,
-        WbImportSummary,
+        WbImportStage, WbImportSummary,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -406,9 +417,14 @@ mod fake {
         pub progress_calls: Mutex<Vec<(u32, u32)>>,
         pub complete_calls: Mutex<Vec<WbImportSummary>>,
         pub failed_calls: Mutex<Vec<String>>,
+        pub stage_calls: Mutex<Vec<WbImportStage>>,
     }
 
     impl WbImportNotifier for FakeWbImportNotifier {
+        fn notify_stage(&self, stage: WbImportStage) {
+            self.stage_calls.lock().unwrap().push(stage);
+        }
+
         fn notify_progress(&self, processed: u32, total: u32) {
             self.progress_calls.lock().unwrap().push((processed, total));
         }

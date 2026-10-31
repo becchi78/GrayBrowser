@@ -107,6 +107,9 @@ export interface WbImportProgress {
   total: number;
 }
 
+// Payload of the wb_import:stage event: gb_core::wb_import::WbImportStage::as_str.
+export type WbImportStageId = "reading" | "registering" | "linking";
+
 // Mirrors src-tauri/src/dedup/mod.rs's DuplicateGroupMember/DuplicateGroupKind/
 // DuplicateGroup. DuplicateGroupKind is #[serde(rename_all = "snake_case")]
 // over its PascalCase Rust variant names.
