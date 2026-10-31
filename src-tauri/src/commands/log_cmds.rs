@@ -52,7 +52,7 @@ fn read_log_impl(
     })
 }
 
-fn logs_dir() -> Result<PathBuf, String> {
+pub(crate) fn logs_dir() -> Result<PathBuf, String> {
     crate::paths::app_data_dir()
         .map(|dir| dir.join("logs"))
         .map_err(|e| e.to_string())

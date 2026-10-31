@@ -1,12 +1,14 @@
 //! `.wb` import commands: file/folder pickers plus the fire-and-forget
 //! import launcher.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gb_core::ports::dialog::FolderPicker;
 use gb_core::ports::wb_file::WbFilePicker;
+use gb_core::ports::wb_import_log::WbImportLog;
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters;
 use crate::db::Db;
@@ -82,8 +84,18 @@ pub async fn start_wb_import(
     thumbnail_folder_path: String,
     register_watch_folders: bool,
 ) -> Result<(), String> {
-    let wb_source = adapters::wb_source::RealWbSourceAdapter::open(&PathBuf::from(&wb_path))
-        .map_err(|e| e.to_string())?;
+    // Created first so that even a `.wb` that cannot be opened leaves a log
+    // for "ログを確認する". Failing to make the log never stops the import.
+    let import_log = match super::log_cmds::logs_dir() {
+        Ok(dir) => adapters::wb_import_log::FileWbImportLog::create(
+            &dir,
+            &adapters::wb_import_log::local_now(),
+        ),
+        Err(e) => {
+            log::warn!("wb import log: no log directory: {e}; importing without a log");
+            adapters::wb_import_log::FileWbImportLog::unavailable()
+        }
+    };
 
     let thumbnails_dir = crate::paths::app_data_dir()
         .map(|dir| dir.join("thumbnails"))
@@ -92,6 +104,15 @@ pub async fn start_wb_import(
     // enqueue_missing_thumbnails -- thumbnail generation below simply
     // produces 0 successes if this directory somehow still doesn't exist.
     let _ = std::fs::create_dir_all(&thumbnails_dir);
+
+    let paths = WbImportPaths {
+        wb_path: PathBuf::from(&wb_path),
+        thumbnail_folder: PathBuf::from(&thumbnail_folder_path),
+        thumbnails_dir,
+    };
+    let wb_source = open_wb_source_logged(&import_log, &paths, register_watch_folders, || {
+        adapters::wb_source::RealWbSourceAdapter::open(&paths.wb_path).map_err(|e| e.to_string())
+    })?;
 
     let notifier = Arc::new(TauriWbImportNotifier::new(app.clone()));
     let watch_reconfigurer = Arc::new(TauriWatchReconfigurer::new(
@@ -104,11 +125,7 @@ pub async fn start_wb_import(
 
     pipeline::run_wb_import(
         db.inner().clone(),
-        WbImportPaths {
-            wb_path: PathBuf::from(wb_path),
-            thumbnail_folder: PathBuf::from(thumbnail_folder_path),
-            thumbnails_dir,
-        },
+        paths,
         wb_source,
         Arc::new(adapters::ffmpeg::RealFfmpegAdapter),
         notifier,
@@ -118,7 +135,129 @@ pub async fn start_wb_import(
         register_watch_folders,
         watch_reconfigurer,
         Arc::new(adapters::dir_lister::RealDirLister),
+        import_log,
     );
 
     Ok(())
+}
+
+/// Opens the `.wb` through `open`; if that fails, the reason is written to the
+/// import log before the error goes back to the caller.
+fn open_wb_source_logged<S, L: WbImportLog>(
+    import_log: &L,
+    paths: &WbImportPaths,
+    register_watch_folders: bool,
+    open: impl FnOnce() -> Result<S, String>,
+) -> Result<S, String> {
+    open().inspect_err(|reason| {
+        pipeline::record_start_failure(import_log, paths, register_watch_folders, reason)
+    })
+}
+
+/// Opens the newest import log in `logs_dir` through `open`. Takes no path
+/// from the caller: the only file this can open is an import log inside the
+/// logs directory.
+fn open_latest_wb_import_log_impl(
+    logs_dir: &Path,
+    open: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let path = adapters::wb_import_log::latest_log_path(logs_dir)
+        .ok_or_else(|| "取り込みログがまだありません。".to_string())?;
+    open(&path).map_err(|e| format!("取り込みログを開けませんでした: {e}"))
+}
+
+/// `async` so it runs on a worker thread rather than the UI thread; the shell
+/// call needs COM set up on that thread first.
+#[tauri::command(async)]
+pub fn open_wb_import_log(app: tauri::AppHandle) -> Result<(), String> {
+    open_latest_wb_import_log_impl(&super::log_cmds::logs_dir()?, |path| {
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))?;
+        adapters::player::init_com_for_shell();
+        app.opener()
+            .open_path(path_str, None::<&str>)
+            .map_err(|e| e.to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
+    use std::cell::RefCell;
+
+    fn paths() -> WbImportPaths {
+        WbImportPaths {
+            wb_path: PathBuf::from(r"C:\data\a.wb"),
+            thumbnail_folder: PathBuf::from(r"C:\thumbs"),
+            thumbnails_dir: PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn an_unopenable_wb_leaves_its_reason_in_the_log_and_still_errs() {
+        let log = FakeWbImportLog::default();
+        let err = open_wb_source_logged(&log, &paths(), true, || -> Result<(), String> {
+            Err("file is not a database".into())
+        })
+        .unwrap_err();
+        assert_eq!(err, "file is not a database");
+        let text = log.text();
+        assert!(text.contains("a.wb"));
+        assert!(text.contains("取り込みを中止しました: file is not a database"));
+    }
+
+    #[test]
+    fn an_openable_wb_writes_nothing_at_this_step() {
+        let log = FakeWbImportLog::default();
+        let v = open_wb_source_logged(&log, &paths(), true, || Ok(5)).unwrap();
+        assert_eq!(v, 5);
+        assert_eq!(log.append_count(), 0);
+    }
+
+    #[test]
+    fn opens_the_newest_import_log_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "app_rCURRENT.log",
+            "wb-import-20261001-000000.log",
+            "wb-import-20261002-000000.log",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let opened = RefCell::new(Vec::new());
+        open_latest_wb_import_log_impl(dir.path(), |p| {
+            opened.borrow_mut().push(p.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            *opened.borrow(),
+            vec![dir.path().join("wb-import-20261002-000000.log")]
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_log_without_trying_to_open() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("app_rCURRENT.log"), "").unwrap();
+        let called = RefCell::new(false);
+        let err = open_latest_wb_import_log_impl(dir.path(), |_| {
+            *called.borrow_mut() = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(err.contains("まだありません"));
+        assert!(!*called.borrow());
+    }
+
+    #[test]
+    fn passes_an_open_failure_on_with_context() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wb-import-20261001-000000.log"), "").unwrap();
+        let err = open_latest_wb_import_log_impl(dir.path(), |_| Err("no association".into()))
+            .unwrap_err();
+        assert!(err.contains("開けませんでした") && err.contains("no association"));
+    }
 }

@@ -27,6 +27,7 @@ pub mod thumbnail_progress;
 pub mod watch_folders;
 pub mod wb_anonymize;
 pub mod wb_import;
+pub mod wb_import_log;
 pub mod wb_sampling;
 pub mod wb_thumbnail_split;
 

@@ -12,4 +12,5 @@ pub mod player;
 pub mod trash;
 pub mod watcher;
 pub mod wb_file;
+pub mod wb_import_log;
 pub mod wb_source;

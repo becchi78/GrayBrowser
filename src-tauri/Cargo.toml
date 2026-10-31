@@ -1,6 +1,6 @@
 [package]
 name = "graybrowser"
-version = "0.9.4"
+version = "0.9.5"
 description = "GrayBrowser - local video cataloging desktop app"
 edition = "2021"
 # Disambiguates `cargo run` (with no `--bin`) in favor of the main app binary
@@ -63,7 +63,7 @@ base64 = "0.22.1"
 flexi_logger = "0.31.9"
 notify = "7"
 trash = "5.2.6"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Console", "Win32_System_Com"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Console", "Win32_System_Com", "Win32_System_SystemInformation"] }
 # zip feature off: we ship the raw NSIS exe (createUpdaterArtifacts), and the zip crate it pulls in carries known advisories.
 tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 

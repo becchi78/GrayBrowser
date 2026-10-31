@@ -24,7 +24,7 @@ use tauri_plugin_opener::OpenerExt;
 /// which is equally usable. The apartment is intentionally never uninitialized
 /// since pool threads are reused.
 #[cfg(windows)]
-fn init_com_for_shell() {
+pub(crate) fn init_com_for_shell() {
     use windows_sys::Win32::System::Com::{
         CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
     };
@@ -38,7 +38,7 @@ fn init_com_for_shell() {
 }
 
 #[cfg(not(windows))]
-fn init_com_for_shell() {}
+pub(crate) fn init_com_for_shell() {}
 
 pub struct RealPlayerLauncher {
     app_handle: tauri::AppHandle,
