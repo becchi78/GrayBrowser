@@ -335,6 +335,11 @@ fn import_all<S, F, N, C, W, D>(
     // nothing to report either: `link_thumbnails` drops these JPGs instead of
     // counting them as needing manual attention.
     let mut invalid_name_hashes: HashSet<String> = HashSet::new();
+    // Thumbnail hashes of already-registered offline rows (re-import). Their
+    // legacy JPG was linked, or deliberately left, when the row was first
+    // registered; it is neither a new link target nor something the user must
+    // handle, so `link_thumbnails` drops it instead of counting it unmatched.
+    let mut already_registered_offline_hashes: HashSet<String> = HashSet::new();
     // Path of every row newly registered by this run, online or offline: the
     // folders to register as watch folders. Offline rows are included so that
     // their folders (e.g. a stopped NAS) can still be reached from the
@@ -495,13 +500,17 @@ fn import_all<S, F, N, C, W, D>(
                 // An already-registered online row still owns its legacy
                 // JPG. Without collecting the hash here, a re-import would
                 // report that JPG as unmatched (needs manual attention).
-                // Offline rows stay out of `registered_movies`: their
-                // thumbnail was settled by whichever import first
-                // registered them. Duplicate hashes are harmless because
-                // matching only tests membership.
+                // An offline row's JPG was settled by whichever import first
+                // registered it, so it is not linked again (a row that has no
+                // thumbnail yet is not retried either), but its hash is still
+                // collected so the JPG is not reported as unmatched.
+                // Duplicate hashes are harmless because matching only tests
+                // membership.
                 if let Some(hash) = candidate.thumbnail_hash {
                     if file_state.status != "offline" {
                         online_hashes.push(hash);
+                    } else {
+                        already_registered_offline_hashes.insert(hash);
                     }
                 }
             }
@@ -562,6 +571,7 @@ fn import_all<S, F, N, C, W, D>(
         &registered_movies,
         &online_hashes,
         &invalid_name_hashes,
+        &already_registered_offline_hashes,
         ffmpeg,
         thumb_layout.as_ref(),
     );
@@ -765,6 +775,12 @@ struct LinkOutcome {
 /// count as neither unmatched nor skipped-online -- unless the same hash also
 /// belongs to a registered video, which still takes it.
 ///
+/// `already_registered_offline_hashes` are the thumbnail hashes of offline rows
+/// that were already in the library (re-import). Their JPGs are dropped the
+/// same way, so a repeat import does not report already-linked thumbnails as
+/// unmatched; a hash shared with a video registered by this run still goes to
+/// that video.
+///
 /// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
 /// `watch_folders` (fetched once by the caller, `import_all`) is used
 /// together with each matched video's own `file_path` (carried in
@@ -781,6 +797,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     registered_movies: &[(String, String, String)],
     online_hashes: &[String],
     invalid_name_hashes: &HashSet<String>,
+    already_registered_offline_hashes: &HashSet<String>,
     ffmpeg: &F,
     layout: Option<&ThumbLayout>,
 ) -> LinkOutcome {
@@ -796,12 +813,14 @@ fn link_thumbnails<F: FfmpegAdapter>(
         }
     };
 
-    if !invalid_name_hashes.is_empty() {
+    if !invalid_name_hashes.is_empty() || !already_registered_offline_hashes.is_empty() {
         filenames.retain(|filename| {
             let Some(hash) = extract_thumbnail_hash(filename) else {
                 return true;
             };
-            if !invalid_name_hashes.contains(&hash) {
+            if !invalid_name_hashes.contains(&hash)
+                && !already_registered_offline_hashes.contains(&hash)
+            {
                 return true;
             }
             // Only a hash shared with a registered video needs the scan.
@@ -1700,6 +1719,7 @@ mod tests {
             )],
             &[],
             &HashSet::new(),
+            &HashSet::new(),
             &ffmpeg,
             None,
         );
@@ -1867,6 +1887,108 @@ mod tests {
             assert_eq!(summary.thumbnails_skipped_online, 1, "pass {pass}");
         }
         assert!(ffmpeg.calls.lock().unwrap().is_empty());
+    }
+
+    fn offline_row(id: i64, name: &str, hash: &str) -> WbMovieRow {
+        row(|r| {
+            r.movie_id = id;
+            r.movie_name = name.to_string();
+            r.movie_path = format!("Z:\\no\\such\\{name}");
+            r.hash = hash.to_string();
+        })
+    }
+
+    fn run_import(
+        h: &Harness,
+        rows: Vec<WbMovieRow>,
+        ffmpeg: &FakeFfmpegAdapter,
+    ) -> WbImportSummary {
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(rows),
+            ..Default::default()
+        };
+        let notifier = FakeWbImportNotifier::default();
+        let catalog_notifier = FakeCatalogNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            ffmpeg,
+            &notifier,
+            &catalog_notifier,
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        summary
+    }
+
+    /// A re-import skips every already-registered offline row; their legacy
+    /// JPGs were linked by the first import and must not be reported as
+    /// needing manual attention, while the first import's result is unchanged.
+    #[test]
+    fn reimport_keeps_registered_offline_thumbnail_out_of_unmatched() {
+        let h = harness();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Off.mp4.#2f6f1cc0.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let ffmpeg = no_op_ffmpeg();
+        let rows = || vec![offline_row(1, "off.mp4", "2f6f1cc0")];
+
+        let first = run_import(&h, rows(), &ffmpeg);
+        assert_eq!(first.registered, 1);
+        assert_eq!(first.thumbnails_linked, 1);
+        assert_eq!(first.thumbnails_unmatched, 0);
+
+        let second = run_import(&h, rows(), &ffmpeg);
+        assert_eq!(second.registered, 0);
+        assert_eq!(second.skipped, 1);
+        assert_eq!(second.thumbnails_linked, 0);
+        assert_eq!(second.thumbnails_failed, 0);
+        assert_eq!(second.thumbnails_unmatched, 0);
+    }
+
+    /// A JPG that belongs to no row is still reported on a re-import.
+    #[test]
+    fn reimport_still_counts_truly_unmatched_thumbnail() {
+        let h = harness();
+        for name in ["Off.mp4.#2f6f1cc0.jpg", "Other.mp4.#deadbeef.jpg"] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+        let ffmpeg = no_op_ffmpeg();
+        let rows = || vec![offline_row(1, "off.mp4", "2f6f1cc0")];
+
+        assert_eq!(run_import(&h, rows(), &ffmpeg).thumbnails_unmatched, 1);
+        let second = run_import(&h, rows(), &ffmpeg);
+        assert_eq!(second.skipped, 1);
+        assert_eq!(second.thumbnails_unmatched, 1);
+    }
+
+    /// A newly registered row that shares its hash with an already-registered
+    /// offline row still takes the JPG.
+    #[test]
+    fn reimport_new_row_sharing_hash_with_registered_offline_row_still_links() {
+        let h = harness();
+        std::fs::write(
+            h.paths.thumbnail_folder.join("Off.mp4.#2f6f1cc0.jpg"),
+            b"fake jpg",
+        )
+        .unwrap();
+        let ffmpeg = no_op_ffmpeg();
+
+        run_import(&h, vec![offline_row(1, "a.mp4", "2f6f1cc0")], &ffmpeg);
+        let second = run_import(
+            &h,
+            vec![
+                offline_row(1, "a.mp4", "2f6f1cc0"),
+                offline_row(2, "b.mp4", "2f6f1cc0"),
+            ],
+            &ffmpeg,
+        );
+        assert_eq!(second.registered, 1);
+        assert_eq!(second.skipped, 1);
+        assert_eq!(second.thumbnails_linked, 1);
+        assert_eq!(second.thumbnails_unmatched, 0);
     }
 
     /// Online, offline and unrelated legacy JPGs in one folder must land in
@@ -3036,6 +3158,7 @@ mod tests {
                 "Z:\\rename-failure.mp4".to_string(),
             )],
             &[],
+            &HashSet::new(),
             &HashSet::new(),
             &ffmpeg,
             Some(&layout),
