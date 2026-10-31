@@ -3,7 +3,13 @@
 // with here.
 
 import { listen } from "@tauri-apps/api/event";
-import type { DuplicateGroup, ThumbnailProgress, WbImportProgress, WbImportSummary } from "./types";
+import type {
+  DuplicateGroup,
+  ThumbnailProgress,
+  WbImportProgress,
+  WbImportStageId,
+  WbImportSummary,
+} from "./types";
 
 /**
  * Subscribes to a Tauri event and returns an unlisten function. Safe to
@@ -58,6 +64,14 @@ export function onThumbnailProgress(cb: (progress: ThumbnailProgress) => void): 
  */
 export function onWbImportProgress(cb: (progress: WbImportProgress) => void): () => void {
   return subscribe<WbImportProgress>("wb_import:progress", cb);
+}
+
+/**
+ * Subscribes to wb_import:stage (the `.wb` import pipeline). Fired when the
+ * import enters a new phase; the payload is the phase's identifier.
+ */
+export function onWbImportStage(cb: (stage: WbImportStageId) => void): () => void {
+  return subscribe<WbImportStageId>("wb_import:stage", cb);
 }
 
 /**

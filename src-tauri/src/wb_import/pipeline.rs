@@ -18,7 +18,7 @@ use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
     count_clamped_scores, count_source_tags, extract_thumbnail_hash, match_thumbnail_files,
-    wb_row_to_import_candidate,
+    wb_row_to_import_candidate, WbImportStage,
 };
 use gb_core::wb_thumbnail_split::{parse_thum_size, split_plan, ThumbLayout};
 
@@ -281,6 +281,7 @@ fn import_all<S, F, N, C, W, D>(
 {
     log::info!("wb import started: wb_path={}", paths.wb_path.display());
 
+    notifier.notify_stage(WbImportStage::Reading);
     let rows = match wb_source.read_movies() {
         Ok(rows) => rows,
         Err(e) => {
@@ -351,6 +352,7 @@ fn import_all<S, F, N, C, W, D>(
     // when it cannot be listed at all (see `CachingDirLister`).
     let dir_lister = CachingDirLister::new(dir_lister);
 
+    notifier.notify_stage(WbImportStage::Registering);
     for (idx, row) in rows.iter().enumerate() {
         let candidate = match wb_row_to_import_candidate(row) {
             Ok(c) => c,
@@ -564,6 +566,7 @@ fn import_all<S, F, N, C, W, D>(
             Vec::new()
         }
     };
+    notifier.notify_stage(WbImportStage::Linking);
     let link_outcome = link_thumbnails(
         &paths.thumbnail_folder,
         &paths.thumbnails_dir,
@@ -2083,6 +2086,44 @@ mod tests {
             "the failure reason should be a non-empty human-readable message"
         );
         assert_eq!(catalog_notifier.calls(), 0);
+        assert_eq!(
+            *notifier.stage_calls.lock().unwrap(),
+            vec![WbImportStage::Reading],
+            "a failed read must not announce the later phases"
+        );
+    }
+
+    #[test]
+    fn stages_are_announced_in_order() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_path = "Z:\\stage\\order.mp4".to_string();
+            })]),
+            ..Default::default()
+        };
+        let ffmpeg = no_op_ffmpeg();
+        let notifier = FakeWbImportNotifier::default();
+        let catalog_notifier = FakeCatalogNotifier::default();
+
+        import_all(
+            &h.db,
+            &h.paths,
+            &wb_source,
+            &ffmpeg,
+            &notifier,
+            &catalog_notifier,
+        );
+
+        assert_eq!(
+            *notifier.stage_calls.lock().unwrap(),
+            vec![
+                WbImportStage::Reading,
+                WbImportStage::Registering,
+                WbImportStage::Linking
+            ]
+        );
+        assert_eq!(notifier.complete_calls.lock().unwrap().len(), 1);
     }
 
     // --- watch-folder registration ------------------------------------------

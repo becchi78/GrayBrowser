@@ -272,9 +272,40 @@ pub fn count_source_tags(rows: &[WbMovieRow]) -> usize {
         .sum()
 }
 
+/// The phases an import passes through, in order. This is the single
+/// definition of their names: the frontend step list and the import log share
+/// `as_str`, so they cannot drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WbImportStage {
+    /// Reading the `.wb` file.
+    Reading,
+    /// Registering each movie row as a video (the only phase with a count).
+    Registering,
+    /// Linking legacy thumbnails to the registered videos.
+    Linking,
+}
+
+impl WbImportStage {
+    /// Stable identifier; also the `wb_import:stage` event payload.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WbImportStage::Reading => "reading",
+            WbImportStage::Registering => "registering",
+            WbImportStage::Linking => "linking",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_names_are_distinct_and_stable() {
+        assert_eq!(WbImportStage::Reading.as_str(), "reading");
+        assert_eq!(WbImportStage::Registering.as_str(), "registering");
+        assert_eq!(WbImportStage::Linking.as_str(), "linking");
+    }
 
     fn row(overrides: impl FnOnce(&mut WbMovieRow)) -> WbMovieRow {
         let mut row = WbMovieRow {
