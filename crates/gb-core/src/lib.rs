@@ -14,6 +14,7 @@ pub mod nas_poll_interval;
 pub mod path_restore;
 pub mod paths;
 pub mod ports;
+pub mod presence;
 pub mod rating;
 pub mod reconcile;
 pub mod rename_validation;
@@ -29,6 +30,7 @@ pub mod wb_anonymize;
 pub mod wb_import;
 pub mod wb_import_log;
 pub mod wb_sampling;
+pub mod wb_skipped_payload;
 pub mod wb_thumbnail_split;
 
 #[cfg(feature = "testing")]

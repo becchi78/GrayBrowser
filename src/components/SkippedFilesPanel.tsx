@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { listSkippedFiles, renameSkippedFile } from "../api";
+import {
+  dismissSkippedFile,
+  listSkippedFiles,
+  registerMissingSkippedFile,
+  renameSkippedFile,
+} from "../api";
+import {
+  MISSING_FILE_GUIDANCE,
+  MISSING_FILE_NOTE,
+  missingRegistrationNotice,
+} from "../lib/skippedFileMissing";
 import { splitDirAndFileName } from "../lib/paths";
 import type { SkippedFileDto } from "../types";
 
@@ -79,16 +89,38 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const result = await renameSkippedFile(f.id, draft);
-      setEditingId(null);
-      setNotice(
-        result.registered
-          ? null
-          : "名前は変更しました。登録は次回のスキャンで行われます。",
-      );
+      if (f.file_missing) {
+        const result = await registerMissingSkippedFile(f.id, draft);
+        setEditingId(null);
+        setNotice(missingRegistrationNotice(result.carried_wb_data));
+      } else {
+        const result = await renameSkippedFile(f.id, draft);
+        setEditingId(null);
+        setNotice(
+          result.registered
+            ? null
+            : "名前は変更しました。登録は次回のスキャンで行われます。",
+        );
+      }
       await reload();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismiss = async (f: SkippedFileDto) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await dismissSkippedFile(f.id);
+      await reload();
+    } catch (e) {
+      // 編集中の行がないので、パネル上部に出す。
+      setNotice(String(e));
     } finally {
       setBusy(false);
     }
@@ -112,6 +144,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
           <p className="skipped-files-guidance">
             「名前を変更」で機種依存文字を取り除いた名前に変えると、そのまま通常の動画として登録されます。
             エクスプローラーで直した場合は、次回のスキャンで登録されます。
+            {files.some((f) => f.file_missing) && ` ${MISSING_FILE_GUIDANCE}`}
           </p>
           <ul className="skipped-files-list">
             {files.map((f) => (
@@ -156,14 +189,27 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
                       {REASON_LABELS[f.reason] ?? f.reason}
                       {f.detected_char ? `（検出文字: ${f.detected_char}）` : ""}
                     </span>
+                    {f.file_missing && (
+                      <span className="skipped-file-reason">{MISSING_FILE_NOTE}</span>
+                    )}
                     <button
                       type="button"
                       className="skipped-file-rename"
                       disabled={busy}
                       onClick={() => startEdit(f)}
                     >
-                      名前を変更
+                      {f.file_missing ? "名前を変更して登録" : "名前を変更"}
                     </button>
+                    {f.file_missing && (
+                      <button
+                        type="button"
+                        className="skipped-file-dismiss"
+                        disabled={busy}
+                        onClick={() => void dismiss(f)}
+                      >
+                        一覧から削除
+                      </button>
+                    )}
                   </>
                 )}
               </li>

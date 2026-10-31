@@ -99,15 +99,15 @@ fn rerunning_migrations_is_a_no_op() {
             .expect("re-running migrations should be a no-op, not an error");
     }
     let conn = db.writer.lock().unwrap();
-    // Eight migrations exist (v1 initial schema, v2
+    // Nine migrations exist (v1 initial schema, v2
     // mtime, v3 kana/roma, v4 video metadata, v5 sort indexes, v6
-    // path_collisions, v7 generation retry columns, v8 thumbnail_ready) -- a
-    // fresh DB should land on all eight, and re-running must not insert
-    // extra schema_version rows for any of them.
+    // path_collisions, v7 generation retry columns, v8 thumbnail_ready,
+    // v9 skipped_files.dismissed) -- a fresh DB should land on all nine, and
+    // re-running must not insert extra schema_version rows for any of them.
     let version_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version_count, 8);
+    assert_eq!(version_count, 9);
 }
 
 /// kana/roma (v3) and the ffprobe metadata columns
@@ -176,7 +176,7 @@ fn migrating_from_a_real_v2_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 
     conn.execute(
         "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
@@ -256,7 +256,7 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8, "should also pick up v8 (thumbnail_ready)");
+    assert_eq!(version, 9, "should also pick up v8 and v9");
 
     let (thumbnail_attempts, metadata_attempts): (i64, i64) = conn
         .query_row(
@@ -331,7 +331,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 
     let thumbnail_ready: i64 = conn
         .query_row(
@@ -350,6 +350,71 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
         [],
     )
     .expect("thumbnail_ready column should be queryable/writable after the upgrade");
+}
+
+/// Upgrading a real v8 database: rows recorded before `dismissed` existed must
+/// stay visible (DEFAULT 0), otherwise the upgrade would silently empty the
+/// user's unregistered-files list.
+#[test]
+fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0003_add_kana_roma.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_add_video_metadata.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0005_add_sort_indexes.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0006_add_path_collisions.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0007_add_generation_retry_columns.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!("../migrations/0008_add_thumbnail_ready.sql"))
+            .unwrap();
+        for version in 1..=8 {
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                [version],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
+             VALUES ('D:\\v\\a\u{2460}.mp4', 'a\u{2460}.mp4', 'machine_dependent_char', '\u{2460}')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let db = db::init(&db_path)
+        .expect("db::init should upgrade a v8-only database to the current version");
+
+    let conn = db.writer.lock().unwrap();
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 9);
+    let dismissed: i64 = conn
+        .query_row("SELECT dismissed FROM skipped_files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(dismissed, 0);
+    let payload: Option<String> = conn
+        .query_row("SELECT wb_payload FROM skipped_files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(payload, None);
+    drop(conn);
+
+    let rows = db::queries::list_skipped_files(&db.read_pool).unwrap();
+    assert_eq!(rows.len(), 1);
 }
 
 #[test]
@@ -404,7 +469,7 @@ fn migrating_from_a_real_v1_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 
     // The column must be usable, not just present in the schema.
     conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])

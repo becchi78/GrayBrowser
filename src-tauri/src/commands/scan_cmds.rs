@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
+use gb_core::ports::path_existence::PathExistence;
+use gb_core::presence::Presence;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use super::skipped_cmds;
 use crate::adapters;
 use crate::db::{queries, Db};
 use crate::dedup::{self, DuplicateGroupsState};
@@ -118,10 +121,13 @@ pub struct SkippedFileDto {
     pub reason: String,
     pub detected_char: Option<String>,
     pub detected_at: String,
+    /// The file is verifiably gone (not merely unreachable), so the row can
+    /// be dismissed but not renamed.
+    pub file_missing: bool,
 }
 
-impl From<queries::SkippedFileRow> for SkippedFileDto {
-    fn from(row: queries::SkippedFileRow) -> Self {
+impl SkippedFileDto {
+    fn from_row(row: queries::SkippedFileRow, file_missing: bool) -> Self {
         Self {
             id: row.id,
             file_path: row.file_path,
@@ -129,6 +135,7 @@ impl From<queries::SkippedFileRow> for SkippedFileDto {
             reason: row.reason,
             detected_char: row.detected_char,
             detected_at: row.detected_at,
+            file_missing,
         }
     }
 }
@@ -252,11 +259,39 @@ pub fn list_videos(
     .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn list_skipped_files(db: State<Db>) -> Result<Vec<SkippedFileDto>, String> {
-    queries::list_skipped_files(&db.read_pool)
-        .map(|rows| rows.into_iter().map(SkippedFileDto::from).collect())
+fn list_skipped_files_impl(
+    db: &Db,
+    reachability: &ReachabilityRegistry,
+    fs: &dyn PathExistence,
+) -> Result<Vec<SkippedFileDto>, String> {
+    let rows = queries::list_skipped_files(&db.read_pool).map_err(|e| e.to_string())?;
+    let watch_folders = db
+        .read_pool
+        .get()
         .map_err(|e| e.to_string())
+        .and_then(|conn| queries::get_watch_folders(&conn).map_err(|e| e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let presence =
+                skipped_cmds::presence_of(&row.file_path, &watch_folders, reachability, fs);
+            SkippedFileDto::from_row(row, presence == Presence::Missing)
+        })
+        .collect())
+}
+
+/// `async` because the per-row existence check touches the file system, which
+/// can stall on a share that has just gone away.
+#[tauri::command(async)]
+pub fn list_skipped_files(
+    db: State<'_, Db>,
+    reachability: State<'_, ReachabilityRegistry>,
+) -> Result<Vec<SkippedFileDto>, String> {
+    list_skipped_files_impl(
+        &db,
+        &reachability,
+        &adapters::path_existence::RealPathExistence,
+    )
 }
 
 #[cfg(test)]
@@ -334,5 +369,55 @@ mod tests {
                 "ready={ready} attempts={attempts}"
             );
         }
+    }
+
+    #[test]
+    fn skipped_list_flags_only_files_verifiably_gone() {
+        use crate::db::test_support::init_temp_db;
+        use crate::events::FakeReachabilityNotifier;
+        use gb_core::scan_pipeline::NewSkippedFile;
+        use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+        use gb_core::testing::fake_path_existence::FakePathExistence;
+
+        let (_d, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, &["C:/a".to_string(), "W:/n".to_string()]).unwrap();
+            for path in [
+                "C:/a/gone\u{2460}.mp4",
+                "C:/a/here\u{2460}.mp4",
+                "W:/n/x\u{2460}.mp4",
+            ] {
+                queries::upsert_skipped_file(
+                    &conn,
+                    &NewSkippedFile {
+                        file_path: path.to_string(),
+                        file_name: path[4..].to_string(),
+                        reason: "machine_dependent_char",
+                        detected_char: '\u{2460}',
+                    },
+                )
+                .unwrap();
+            }
+        }
+        // W:/n is down; its parent "exists" in the fake, so only the
+        // reachability check can keep its row from reading as missing.
+        let registry = ReachabilityRegistry::new(
+            Arc::new(FakeFolderProbe::with_unreachable(&["W:/n"])),
+            Arc::new(FakeReachabilityNotifier::default()),
+        );
+        let fs = FakePathExistence::with_paths(&["C:/a", "C:/a/here\u{2460}.mp4", "W:/n"]);
+
+        let list = list_skipped_files_impl(&db, &registry, &fs).unwrap();
+
+        let missing = |suffix: &str| {
+            list.iter()
+                .find(|d| d.file_path.ends_with(suffix))
+                .unwrap()
+                .file_missing
+        };
+        assert!(missing("gone\u{2460}.mp4"));
+        assert!(!missing("here\u{2460}.mp4"));
+        assert!(!missing("x\u{2460}.mp4"));
     }
 }

@@ -139,7 +139,7 @@ pub fn process_detected_file(
             skipped.file_name
         );
         let conn = db.writer.lock().unwrap();
-        queries::upsert_skipped_file(&conn, &skipped)
+        queries::upsert_skipped_file_found_on_disk(&conn, &skipped)
             .inspect_err(|e| log::error!("failed to record skipped file {file_path}: {e}"))?;
         return Ok(ProcessOutcome::SkippedInvalidName { detected_char });
     }
