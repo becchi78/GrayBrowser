@@ -390,92 +390,6 @@ fn nas_poll_interval_defaults_when_unset_and_round_trips_when_set() {
 }
 
 #[test]
-fn tag_bar_pinned_tag_ids_defaults_to_empty_when_unset() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    assert_eq!(
-        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
-        Vec::<i64>::new()
-    );
-}
-
-#[test]
-fn tag_bar_pinned_tag_ids_round_trips_through_set_and_get() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    queries::set_tag_bar_pinned_tag_ids(&conn, &[3, 1, 2]).unwrap();
-    assert_eq!(
-        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
-        vec![3, 1, 2]
-    );
-}
-
-#[test]
-fn tag_bar_pinned_tag_ids_self_healing_prunes_missing_ids_and_writes_back() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    // Two real tags plus two ids that don't correspond to any `tags` row.
-    conn.execute("INSERT INTO tags (id, name) VALUES (10, 'Action')", [])
-        .unwrap();
-    conn.execute("INSERT INTO tags (id, name) VALUES (20, 'Comedy')", [])
-        .unwrap();
-    queries::set_tag_bar_pinned_tag_ids(&conn, &[999, 10, 888, 20]).unwrap();
-
-    let healed = queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap();
-    assert_eq!(
-        healed,
-        vec![10, 20],
-        "self-healing must drop ids with no matching tags row while preserving order"
-    );
-
-    // The pruned list must have been written back: a plain (non-self-healing)
-    // read afterwards sees the already-pruned list, not the original one.
-    assert_eq!(
-        queries::get_tag_bar_pinned_tag_ids(&conn).unwrap(),
-        vec![10, 20]
-    );
-}
-
-#[test]
-fn tag_bar_pinned_tag_ids_self_healing_keeps_order_when_nothing_is_pruned() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    conn.execute("INSERT INTO tags (id, name) VALUES (5, 'Action')", [])
-        .unwrap();
-    conn.execute("INSERT INTO tags (id, name) VALUES (7, 'Comedy')", [])
-        .unwrap();
-    conn.execute("INSERT INTO tags (id, name) VALUES (9, 'Drama')", [])
-        .unwrap();
-    queries::set_tag_bar_pinned_tag_ids(&conn, &[9, 5, 7]).unwrap();
-
-    assert_eq!(
-        queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap(),
-        vec![9, 5, 7]
-    );
-}
-
-#[test]
-fn tag_bar_pinned_tag_ids_self_healing_skips_the_tags_table_when_persisted_list_is_empty() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    // No pinned list has ever been persisted. Drop the `tags` table entirely
-    // so any query against it fails loudly -- proving the empty-list early
-    // return really does skip the "look up existing tag ids" step rather
-    // than just happening to prune everything away.
-    conn.execute("DROP TABLE tags", []).unwrap();
-
-    assert_eq!(
-        queries::get_tag_bar_pinned_tag_ids_self_healing(&conn).unwrap(),
-        Vec::<i64>::new()
-    );
-}
-
-#[test]
 fn info_pane_collapsed_defaults_to_false_when_unset() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
@@ -570,4 +484,144 @@ fn sidebar_sections_collapsed_treats_missing_keys_as_expanded() {
     .unwrap();
     let got = queries::get_sidebar_sections_collapsed(&conn).unwrap();
     assert!(got.tags && !got.folders && !got.rating);
+}
+
+fn tag_names(db: &db::Db) -> Vec<String> {
+    queries::list_all_tags(&db.read_pool)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect()
+}
+
+fn seed_tags(conn: &Connection, tags: &[(i64, &str)]) {
+    for (id, name) in tags {
+        conn.execute(
+            "INSERT INTO tags (id, name) VALUES (?1, ?2)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+}
+
+fn sort_orders(conn: &Connection) -> Vec<(i64, Option<i64>)> {
+    conn.prepare("SELECT id, sort_order FROM tags ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn list_all_tags_defaults_to_name_order_when_no_order_is_set() {
+    let (_dir, db) = init_temp_db();
+    seed_tags(&db.writer.lock().unwrap(), &[(1, "c"), (2, "a"), (3, "b")]);
+    assert_eq!(tag_names(&db), ["a", "b", "c"]);
+}
+
+#[test]
+fn list_all_tags_puts_ordered_tags_first_then_unordered_by_name() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]);
+    conn.execute("UPDATE tags SET sort_order = 1 WHERE id = 4", [])
+        .unwrap();
+    conn.execute("UPDATE tags SET sort_order = 0 WHERE id = 3", [])
+        .unwrap();
+    drop(conn);
+    assert_eq!(tag_names(&db), ["c", "d", "a", "b"]);
+}
+
+#[test]
+fn newly_created_tag_goes_after_ordered_tags() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "m"), (2, "z")]);
+    queries::set_tag_order(&mut conn, &[2, 1]).unwrap();
+    insert_test_video(
+        &conn,
+        "v",
+        "D:\\v.mp4",
+        "h",
+        1,
+        "available",
+        None,
+        "2024-01-01 00:00:00",
+    );
+    queries::assign_tag_to_video(&mut conn, "v", "a-new").unwrap();
+    drop(conn);
+    assert_eq!(tag_names(&db), ["z", "m", "a-new"]);
+}
+
+#[test]
+fn set_tag_order_follows_input_order() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
+    queries::set_tag_order(&mut conn, &[2, 3, 1]).unwrap();
+    drop(conn);
+    assert_eq!(tag_names(&db), ["b", "c", "a"]);
+}
+
+#[test]
+fn set_tag_order_keeps_first_of_duplicates() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
+    queries::set_tag_order(&mut conn, &[3, 1, 3, 2, 1]).unwrap();
+    assert_eq!(
+        sort_orders(&conn),
+        vec![(1, Some(1)), (2, Some(2)), (3, Some(0))]
+    );
+}
+
+#[test]
+fn set_tag_order_ignores_unknown_ids_without_gaps() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b")]);
+    queries::set_tag_order(&mut conn, &[99, 2, -5, 1]).unwrap();
+    assert_eq!(sort_orders(&conn), vec![(1, Some(1)), (2, Some(0))]);
+}
+
+#[test]
+fn set_tag_order_resets_tags_missing_from_the_list_to_the_end() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]);
+    queries::set_tag_order(&mut conn, &[1, 2, 3, 4]).unwrap();
+    // Tags 1 and 2 are left out. Their old numbers (0, 1) equal the ones the
+    // listed tags receive now, so keeping them would make the order undefined.
+    queries::set_tag_order(&mut conn, &[4, 3]).unwrap();
+    assert_eq!(
+        sort_orders(&conn),
+        vec![(1, None), (2, None), (3, Some(1)), (4, Some(0))]
+    );
+    drop(conn);
+    assert_eq!(tag_names(&db), ["d", "c", "a", "b"]);
+}
+
+#[test]
+fn set_tag_order_with_an_empty_list_clears_every_order() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "b"), (2, "a")]);
+    queries::set_tag_order(&mut conn, &[1, 2]).unwrap();
+    queries::set_tag_order(&mut conn, &[]).unwrap();
+    drop(conn);
+    assert_eq!(tag_names(&db), ["a", "b"]);
+}
+
+#[test]
+fn set_tag_order_is_idempotent() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
+    queries::set_tag_order(&mut conn, &[3, 1]).unwrap();
+    let first = sort_orders(&conn);
+    queries::set_tag_order(&mut conn, &[3, 1]).unwrap();
+    assert_eq!(sort_orders(&conn), first);
+    drop(conn);
+    assert_eq!(tag_names(&db), ["c", "a", "b"]);
 }

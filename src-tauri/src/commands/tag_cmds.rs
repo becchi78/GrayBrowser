@@ -104,3 +104,39 @@ pub fn list_all_tags(db: State<Db>) -> Result<Vec<TagDto>, String> {
         .map(|rows| rows.into_iter().map(TagDto::from).collect())
         .map_err(|e| e.to_string())
 }
+
+fn set_tag_order_impl(db: &Db, tag_ids: &[i64]) -> Result<(), String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::set_tag_order(&mut conn, tag_ids).map_err(|e| e.to_string())
+}
+
+/// Stores the order of all tags as the user arranged them. Not a catalog
+/// change (no video row is touched), so no catalog notification is sent; the
+/// caller reloads the tag list itself.
+#[tauri::command]
+pub fn set_tag_order(db: State<Db>, tag_ids: Vec<i64>) -> Result<(), String> {
+    set_tag_order_impl(&db, &tag_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+
+    #[test]
+    fn set_tag_order_impl_persists_the_order_for_list_all_tags() {
+        let (_dir, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            conn.execute_batch("INSERT INTO tags (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c');")
+                .unwrap();
+        }
+        set_tag_order_impl(&db, &[3, 1, 2]).unwrap();
+        let names: Vec<String> = queries::list_all_tags(&db.read_pool)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, ["c", "a", "b"]);
+    }
+}

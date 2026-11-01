@@ -51,8 +51,8 @@ function App() {
   // TagBarEditDialog is reached only via the native menu ("タグ > タグ
   // バーの編集..." -- its own top-level submenu, not nested under
   // "ファイル", see lib.rs). tagBarRefreshKey mirrors `refreshKey`'s own
-  // role, scoped to just TagBar: bumped once the dialog saves a new pinned
-  // list, so TagBar re-fetches it (via its own `refreshKey` prop) without a
+  // role, scoped to just TagBar: bumped once the dialog saves a new tag
+  // order, so TagBar re-fetches it (via its own `refreshKey` prop) without a
   // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);

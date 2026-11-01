@@ -49,6 +49,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "add skipped_files.dismissed (hide a missing file's row without a re-import resurrecting it) and skipped_files.wb_payload (.wb data for registering it offline)",
         sql: include_str!("../../migrations/0009_add_skipped_files_dismissed.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 10,
+        description: "add tags.sort_order (user-defined tag order, NULL = after placed tags by name) and migrate the pinned-tags setting into it",
+        sql: include_str!("../../migrations/0010_add_tags_sort_order.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.
