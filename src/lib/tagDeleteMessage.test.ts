@@ -6,7 +6,7 @@ describe("buildTagDeleteMessage", () => {
   it("includes the video count when the tag is in use", () => {
     assert.equal(
       buildTagDeleteMessage(3),
-      "このタグを削除します。このタグが付いている 3 件の動画からタグが外れます。元に戻せません。",
+      "このタグが付いている 3 件の動画からタグが外れます。元に戻せません。",
     );
   });
 
@@ -15,6 +15,6 @@ describe("buildTagDeleteMessage", () => {
   });
 
   it("omits the count sentence when no video has the tag", () => {
-    assert.equal(buildTagDeleteMessage(0), "このタグを削除します。元に戻せません。");
+    assert.equal(buildTagDeleteMessage(0), "元に戻せません。");
   });
 });

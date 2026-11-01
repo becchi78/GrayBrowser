@@ -179,12 +179,10 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         onCancel={() => setDeleteTarget(null)}
       >
         {deleteTarget && (
-          <>
-            <p className="tag-delete-target" data-testid="tag-delete-target">
-              {deleteTarget.name}
-            </p>
-            <p>{buildTagDeleteMessage(deleteTarget.video_count)}</p>
-          </>
+          <p>
+            タグ『<strong className="tag-delete-target" data-testid="tag-delete-target">{deleteTarget.name}</strong>』を削除します。
+            {buildTagDeleteMessage(deleteTarget.video_count)}
+          </p>
         )}
       </ConfirmDialog>
     </>
