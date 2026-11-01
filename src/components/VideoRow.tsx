@@ -234,13 +234,20 @@ export function VideoRow({
         >
           {video.file_name}
         </span>
+        {/* 再生開始中/再生失敗の表示は固定高の`.video-row-info`の外に置く。
+            中に置くと行が増えた分だけ縦スクロールバーが出て内容幅が縮み、
+            プロパティ表のラベルが折り返して高さが跳ねるため。 */}
+        {(isStartingPlay || playError) && (
+          <span
+            className={`video-row-play-status${playError ? " video-row-play-status--error" : ""}`}
+            role={playError ? "alert" : "status"}
+          >
+            {playError ?? "再生を開始しています…"}
+          </span>
+        )}
       </div>
 
       <div className="video-row-info">
-        {isStartingPlay && (
-          <span className="duplicate-group-member-play-note">再生を開始しています…</span>
-        )}
-        {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
         <dl className="video-row-properties" data-testid="video-row-properties">
           <dt>再生時間</dt>
           <dd>{formatDuration(video.duration)}</dd>

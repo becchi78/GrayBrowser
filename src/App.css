@@ -562,9 +562,9 @@ button.search-box-clear {
 
 /* This wrap sits one level up from `.video-row-thumbnails` itself, as the
    `position: relative` containing block shared by
-   `.thumbnail-offline-badge--overlay` and the
-   new `.video-row-filename-overlay` below (see VideoRow.tsx's own comment
-   on why both need a non-scrolling anchor). `min-width` (one thumbnail's
+   `.thumbnail-offline-badge--overlay`, the
+   new `.video-row-filename-overlay` and `.video-row-play-status` below (see
+   VideoRow.tsx's own comment on why they need a non-scrolling anchor). `min-width` (one thumbnail's
    width, moved here from `.video-row-thumbnails` below) is what used to
    keep that inner element from shrinking to nothing; it plays the same role
    here now that this wrap is the actual flex item of `.video-row`. */
@@ -754,6 +754,9 @@ button.search-box-clear {
 
 .video-row-properties dt {
   opacity: 0.7;
+  /* ラベルは短い固定の日本語文字列。縦スクロールバー出現などで幅が変わっても
+     1文字ずつ折り返して表の高さが跳ねないよう、`dd`と同じく折り返さない。 */
+  white-space: nowrap;
 }
 
 .video-row-properties dd {
@@ -841,6 +844,37 @@ button.search-box-clear {
   pointer-events: auto;
   user-select: text;
   cursor: text;
+}
+
+/* 再生開始中/再生失敗のステータス。サムネイル領域の下端に重ねる。
+   固定高の`.video-row-info`に入れると縦スクロールバーが出て内容幅が縮み、
+   プロパティ表が崩れるため、ここ(非スクロールのアンカー)に置く。
+   右側はオフラインバッジ(`.thumbnail-offline-badge--overlay`、右下)の分を
+   空け、上端のファイル名ラベルとも重ならない。サムネイルの明暗どちらでも
+   読めるよう半透明の暗背景+白文字にし、ダブルクリック再生/行選択を
+   妨げないようpointer-events: noneにする。 */
+.video-row-play-status {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  padding: 0.2em 8em 0.2em 0.4em;
+  background-color: rgba(0, 0, 0, 0.65);
+  color: #ffffff;
+  font-size: 0.8em;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.video-row-play-status--error {
+  background-color: rgba(120, 0, 0, 0.8);
+  /* pointer-events: none のためtitleで全文を見せられない。エラー文は折り返して
+     全文を出す(下端固定なので、伸びても情報パネルの高さには影響しない)。 */
+  white-space: normal;
 }
 
 .skipped-files-panel {
