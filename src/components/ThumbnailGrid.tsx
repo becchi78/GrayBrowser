@@ -11,6 +11,7 @@ import { listVideos, listWatchFolders, unregisterVideos } from "../api";
 import { onCatalogChanged } from "../events";
 import { jumpTargetIndex } from "../lib/jumpToPercent";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
+import { isTextEntryTarget } from "../lib/textEntryTarget";
 import {
   clearSelection,
   clickSelect,
@@ -58,13 +59,6 @@ interface Props {
   onCountChange: (count: number) => void;
   /** Reports how many rows are currently selected, for the status bar. */
   onSelectionCountChange: (count: number) => void;
-}
-
-// Keys typed into these must keep their native behavior (notably Ctrl+A as
-// "select all text"), so list-level shortcuts ignore them.
-function isTextEntryTarget(target: EventTarget): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
 export function ThumbnailGrid({

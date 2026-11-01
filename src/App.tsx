@@ -25,6 +25,8 @@ import {
   onMenuOpenWbImportDialog,
   onMenuStyleSelected,
 } from "./events";
+import { shouldSuppressNativeContextMenu } from "./lib/contextMenu";
+import { isTextEditTarget } from "./lib/textEntryTarget";
 import type { SortDirection, SortField } from "./types";
 
 // Only "default" exists today. New styles (e.g. "grid") get added here as
@@ -70,6 +72,24 @@ function App() {
     getInfoPaneCollapsed()
       .then(setInfoPaneCollapsed)
       .catch((e) => console.error(e));
+  }, []);
+
+  useEffect(() => {
+    // Registered on document (bubble), so per-row custom menus handled by
+    // React's root listener run first and are unaffected; a second
+    // preventDefault is harmless. Selection and copy are not touched.
+    const handler = (e: MouseEvent) => {
+      if (
+        shouldSuppressNativeContextMenu({
+          isTextEntry: e.target !== null && isTextEditTarget(e.target),
+          isDev: import.meta.env.DEV,
+        })
+      ) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("contextmenu", handler);
+    return () => document.removeEventListener("contextmenu", handler);
   }, []);
 
   const toggleInfoPane = () => {

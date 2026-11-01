@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clampMenuPosition } from "./contextMenu.ts";
+import { clampMenuPosition, shouldSuppressNativeContextMenu } from "./contextMenu.ts";
+
+describe("shouldSuppressNativeContextMenu", () => {
+  it("suppresses on ordinary UI in a production build", () => {
+    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: false, isDev: false }), true);
+  });
+
+  it("keeps the native menu on text entry so cut/copy/paste work", () => {
+    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: true, isDev: false }), false);
+  });
+
+  it("keeps the native menu in dev builds for Inspect", () => {
+    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: false, isDev: true }), false);
+  });
+
+  it("does not suppress in dev even on text entry", () => {
+    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: true, isDev: true }), false);
+  });
+});
 
 const viewport = { width: 1000, height: 600 };
 const menu = { width: 200, height: 40 };

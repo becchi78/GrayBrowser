@@ -7,6 +7,18 @@ export interface MenuPosition {
 }
 
 /**
+ * Whether the WebView's built-in context menu (Back/Reload/Inspect...) should
+ * be blocked. It is meaningless in a desktop app, but text fields need it for
+ * cut/copy/paste, and dev builds keep it so Inspect stays reachable.
+ */
+export function shouldSuppressNativeContextMenu(opts: {
+  isTextEntry: boolean;
+  isDev: boolean;
+}): boolean {
+  return !opts.isDev && !opts.isTextEntry;
+}
+
+/**
  * Keeps a menu of the given size fully inside the viewport. The menu opens at
  * the pointer; when it would overflow the right/bottom edge it is shifted back
  * (not flipped, so it never jumps far from the pointer). A menu larger than
