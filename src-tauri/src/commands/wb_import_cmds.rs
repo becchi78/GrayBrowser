@@ -135,6 +135,7 @@ pub async fn start_wb_import(
         register_watch_folders,
         watch_reconfigurer,
         Arc::new(adapters::dir_lister::RealDirLister),
+        Arc::new(adapters::folder_probe::RealFolderProbe),
         import_log,
     );
 
