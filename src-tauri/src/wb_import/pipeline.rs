@@ -12,8 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use gb_core::path_restore::{last_segment, restore_path};
+use gb_core::paths::extract_drive_root;
 use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
+use gb_core::ports::folder_probe::FolderProbe;
 use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
@@ -88,7 +90,7 @@ pub struct WbImportPaths {
 // One argument over clippy's limit: each is an independent handle the spawned
 // thread needs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-pub fn run_wb_import<S, F, N, C, W, D, L>(
+pub fn run_wb_import<S, F, N, C, W, D, P, L>(
     db: Db,
     paths: WbImportPaths,
     wb_source: S,
@@ -100,6 +102,7 @@ pub fn run_wb_import<S, F, N, C, W, D, L>(
     register_watch_folders: bool,
     watch_reconfigurer: Arc<W>,
     dir_lister: Arc<D>,
+    folder_probe: Arc<P>,
     import_log: L,
 ) where
     S: WbSourceAdapter + 'static,
@@ -108,6 +111,7 @@ pub fn run_wb_import<S, F, N, C, W, D, L>(
     C: CatalogNotifier + 'static,
     W: WatchReconfigurer + 'static,
     D: DirLister + 'static,
+    P: FolderProbe + 'static,
     L: WbImportLog + 'static,
 {
     thread::spawn(move || {
@@ -120,6 +124,7 @@ pub fn run_wb_import<S, F, N, C, W, D, L>(
             catalog_notifier.as_ref(),
             register_watch_folders.then_some(watch_reconfigurer.as_ref()),
             dir_lister.as_ref(),
+            folder_probe.as_ref(),
             &import_log,
         );
 
@@ -167,13 +172,20 @@ struct ResolvedFileState {
 /// path after a drive-letter change cannot work for a row still carrying
 /// this placeholder, since it never had a real quick_hash to match against
 /// in the first place.
-fn resolve_file_state(movie_path: &str) -> ResolvedFileState {
+///
+/// `share_reachable == false` short-circuits to the same placeholder without
+/// touching the filesystem: asking a stopped NAS share costs about 20 seconds
+/// per first access.
+fn resolve_file_state(movie_path: &str, share_reachable: bool) -> ResolvedFileState {
     let offline = || ResolvedFileState {
         status: "offline",
         quick_hash: String::new(),
         mtime: 0,
         file_size: 0,
     };
+    if !share_reachable {
+        return offline();
+    }
 
     let long_movie_path = long_path::to_long_path(Path::new(movie_path));
     let metadata = match fs::metadata(&long_movie_path) {
@@ -207,9 +219,14 @@ fn resolve_file_state(movie_path: &str) -> ResolvedFileState {
 
 /// Restores a stored path containing `?` when -- and only when -- that path
 /// does not exist as written. Rows that exist, or have no `?`, are left
-/// exactly as before (no listing happens for them).
-fn restore_missing_path(movie_path: &str, lister: &impl DirLister) -> Option<String> {
-    if !movie_path.contains('?') {
+/// exactly as before (no listing happens for them). Nothing is restored on an
+/// unreachable share: neither the existence check nor the listing may touch it.
+fn restore_missing_path(
+    movie_path: &str,
+    share_reachable: bool,
+    lister: &impl DirLister,
+) -> Option<String> {
+    if !share_reachable || !movie_path.contains('?') {
         return None;
     }
     if fs::metadata(long_path::to_long_path(Path::new(movie_path))).is_ok() {
@@ -274,6 +291,77 @@ impl<D: DirLister> DirLister for CachingDirLister<'_, D> {
     }
 }
 
+/// Whether each network share / drive that the rows live on can be reached,
+/// decided once per share for one import. Every first access to a stopped NAS
+/// share blocks for about 20 seconds, so without this a library with many rows
+/// there would pay that wait again and again.
+///
+/// Deliberately not `ReachabilityRegistry`: that publishes its answers to the
+/// UI as "unreachable watch folders", which an import's one-off check of
+/// arbitrary share roots must not touch.
+struct ShareReachability {
+    answers: HashMap<String, bool>,
+}
+
+impl ShareReachability {
+    /// Probes every distinct share root among `paths` exactly once, all at the
+    /// same time, so any number of stopped shares costs one wait, not one each.
+    fn probe<'a, P: FolderProbe>(probe: &P, paths: impl Iterator<Item = &'a str>) -> Self {
+        let mut roots: Vec<String> = paths.filter_map(extract_drive_root).collect();
+        roots.sort();
+        roots.dedup();
+        let results: Vec<bool> = thread::scope(|scope| {
+            let handles: Vec<_> = roots
+                .iter()
+                .map(|root| scope.spawn(move || probe.is_reachable(root)))
+                .collect();
+            handles
+                .into_iter()
+                .zip(&roots)
+                .map(|(h, root)| {
+                    // A panicking probe must not take the import thread down
+                    // with it (the UI would never hear the import ended);
+                    // fall back to checking that share's files one by one.
+                    h.join().unwrap_or_else(|_| {
+                        log::warn!(
+                            "wb import: probing share {root} panicked; checking its files as usual"
+                        );
+                        true
+                    })
+                })
+                .collect()
+        });
+        Self {
+            answers: roots.into_iter().zip(results).collect(),
+        }
+    }
+
+    /// A path that is not drive-letter/UNC shaped (e.g. relative) cannot be
+    /// attributed to a share and is treated as reachable, i.e. checked as usual.
+    fn is_reachable_path(&self, path: &str) -> bool {
+        extract_drive_root(path)
+            .and_then(|root| self.answers.get(&root).copied())
+            .unwrap_or(true)
+    }
+
+    /// Share roots found unreachable, in a stable order.
+    fn unreachable_roots(&self) -> Vec<&str> {
+        let mut down: Vec<&str> = self
+            .answers
+            .iter()
+            .filter(|(_, ok)| !**ok)
+            .map(|(root, _)| root.as_str())
+            .collect();
+        down.sort_unstable();
+        down
+    }
+}
+
+/// Import-log line for a share whose rows were registered without touching it.
+fn format_unreachable_share(root: &str) -> String {
+    format!("到達できない共有のため、この共有上の行のファイル確認を飛ばしました: {root}\n")
+}
+
 /// The actual import logic, run synchronously. `run_wb_import` is the only
 /// production caller (from its background thread); tests call this directly
 /// so counts/idempotency can be asserted without any thread-timing
@@ -285,7 +373,7 @@ impl<D: DirLister> DirLister for CachingDirLister<'_, D> {
 // One argument over clippy's limit, same as `run_wb_import`: each is an
 // independent handle, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-fn import_all<S, F, N, C, W, D, L>(
+fn import_all<S, F, N, C, W, D, P, L>(
     db: &Db,
     paths: &WbImportPaths,
     wb_source: &S,
@@ -294,6 +382,7 @@ fn import_all<S, F, N, C, W, D, L>(
     catalog_notifier: &C,
     watch: Option<&W>,
     dir_lister: &D,
+    folder_probe: &P,
     import_log: &L,
 ) where
     S: WbSourceAdapter,
@@ -302,6 +391,7 @@ fn import_all<S, F, N, C, W, D, L>(
     C: CatalogNotifier,
     W: WatchReconfigurer,
     D: DirLister,
+    P: FolderProbe,
     L: WbImportLog,
 {
     log::info!(
@@ -347,6 +437,14 @@ fn import_all<S, F, N, C, W, D, L>(
     import_log.append(&wb_log::format_read_count(total));
     let clamped_scores = count_clamped_scores(&rows) as u32;
     let source_tag_count = count_source_tags(&rows) as u32;
+
+    // Decided up front, before any row touches the filesystem, so a stopped
+    // share is waited for once (and concurrently with other stopped shares).
+    let shares = ShareReachability::probe(folder_probe, rows.iter().map(|r| r.movie_path.as_str()));
+    for root in shares.unreachable_roots() {
+        log::warn!("wb import: share unreachable, registering its rows offline: {root}");
+        import_log.append(&format_unreachable_share(root));
+    }
 
     // Every row ends in exactly one of `registered_*`, `skipped`,
     // `skipped_invalid_name` and `failed_rows`, so the summary's counts add up
@@ -437,7 +535,12 @@ fn import_all<S, F, N, C, W, D, L>(
         // parent folder's contents. Everything downstream (DB row, watch
         // folders, thumbnail location) must use this one, never the stored
         // `?` form.
-        let restored_path = restore_missing_path(&candidate.movie_path, &dir_lister);
+        //
+        // The share is judged on the stored path: a restored path differs only
+        // in the characters that were `?`, so it lives on the same share.
+        let share_reachable = shares.is_reachable_path(&row.movie_path);
+        let restored_path =
+            restore_missing_path(&candidate.movie_path, share_reachable, &dir_lister);
         let file_path = restored_path
             .clone()
             .unwrap_or_else(|| candidate.movie_path.clone());
@@ -487,7 +590,7 @@ fn import_all<S, F, N, C, W, D, L>(
             continue;
         }
 
-        let file_state = resolve_file_state(&file_path);
+        let file_state = resolve_file_state(&file_path, share_reachable);
         entry.availability = if file_state.status == "offline" {
             Availability::Offline
         } else {
@@ -1223,6 +1326,7 @@ mod tests {
     use gb_core::ports::wb_source::WbMovieRow;
     use gb_core::testing::fake_dir_lister::FakeDirLister;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
+    use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
@@ -1256,6 +1360,7 @@ mod tests {
             catalog_notifier,
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
+            &FakeFolderProbe::default(),
             &FakeWbImportLog::default(),
         );
     }
@@ -2370,6 +2475,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             Some(reconfigurer),
             &FakeDirLister::default(),
+            &FakeFolderProbe::default(),
             &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
@@ -2617,6 +2723,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             reconfigurer,
             lister,
+            &FakeFolderProbe::default(),
             &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
@@ -4219,6 +4326,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             None::<&FakeWatchReconfigurer>,
             lister,
+            &FakeFolderProbe::default(),
             import_log,
         );
         let summary = notifier.complete_calls.lock().unwrap().first().cloned();
@@ -4413,6 +4521,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             Some(&reconfigurer),
             &FakeDirLister::default(),
+            &FakeFolderProbe::default(),
             &import_log,
         );
 
@@ -4528,6 +4637,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
+            &FakeFolderProbe::default(),
             &recorder,
         );
 
@@ -4583,5 +4693,290 @@ mod tests {
         assert!(import_log
             .text()
             .contains("旧サムネイル: 紐付け 1 / 失敗 1 / 対応なし 1 / "));
+    }
+
+    // ---- unreachable shares ----
+
+    fn import_with_probe<P: FolderProbe>(
+        h: &Harness,
+        rows: Vec<WbMovieRow>,
+        lister: &FakeDirLister,
+        probe: &P,
+        import_log: &FakeWbImportLog,
+    ) -> WbImportSummary {
+        let notifier = FakeWbImportNotifier::default();
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(rows),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            None::<&FakeWatchReconfigurer>,
+            lister,
+            probe,
+            import_log,
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        summary
+    }
+
+    fn row_at(id: i64, path: &str) -> WbMovieRow {
+        row(|r| {
+            r.movie_id = id;
+            r.movie_name = path.rsplit('\\').next().unwrap().to_string();
+            r.movie_path = path.to_string();
+        })
+    }
+
+    fn status_of(h: &Harness, path: &str) -> (String, String, i64, i64) {
+        h.db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT status, quick_hash, mtime, file_size FROM videos WHERE file_path = ?1",
+                [path],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn rows_on_an_unreachable_share_are_registered_offline_and_the_share_is_probed_once() {
+        let h = harness();
+        let probe = FakeFolderProbe::with_unreachable(&[r"W:\"]);
+        let import_log = FakeWbImportLog::default();
+        let paths: Vec<String> = (0..5).map(|i| format!(r"W:\videos\v{i}.mp4")).collect();
+        let rows = paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| row_at(i as i64 + 1, p))
+            .collect();
+
+        let summary = import_with_probe(&h, rows, &FakeDirLister::default(), &probe, &import_log);
+
+        assert_eq!(summary.registered_offline, 5);
+        assert_eq!(summary.registered_online, 0);
+        assert_eq!(probe.calls(), vec![r"W:\".to_string()]);
+        for p in &paths {
+            assert_eq!(status_of(&h, p), ("offline".into(), String::new(), 0, 0));
+        }
+        let text = import_log.text();
+        assert_eq!(
+            lines_starting_with(&text, "到達できない共有のため").len(),
+            1,
+            "{text}"
+        );
+        assert!(text.contains(r"この共有上の行のファイル確認を飛ばしました: W:\"));
+    }
+
+    #[test]
+    fn a_reachable_share_is_checked_as_before() {
+        let h = harness();
+        let online_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(online_file.path(), b"hello").unwrap();
+        let path = online_file.path().to_string_lossy().to_string();
+        let probe = FakeFolderProbe::default();
+        let import_log = FakeWbImportLog::default();
+
+        let summary = import_with_probe(
+            &h,
+            vec![row_at(1, &path)],
+            &FakeDirLister::default(),
+            &probe,
+            &import_log,
+        );
+
+        assert_eq!(summary.registered_online, 1);
+        assert_eq!(status_of(&h, &path).0, "online");
+        assert_eq!(probe.calls().len(), 1);
+        assert!(!import_log.text().contains("到達できない共有のため"));
+    }
+
+    #[test]
+    fn only_the_rows_of_the_unreachable_share_go_offline() {
+        let h = harness();
+        let online_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(online_file.path(), b"hello").unwrap();
+        let online_path = online_file.path().to_string_lossy().to_string();
+        let down_path = r"W:\videos\a.mp4";
+        let probe = FakeFolderProbe::with_unreachable(&[r"W:\"]);
+
+        let summary = import_with_probe(
+            &h,
+            vec![row_at(1, &online_path), row_at(2, down_path)],
+            &FakeDirLister::default(),
+            &probe,
+            &FakeWbImportLog::default(),
+        );
+
+        assert_eq!(summary.registered_online, 1);
+        assert_eq!(summary.registered_offline, 1);
+        assert_eq!(status_of(&h, &online_path).0, "online");
+        assert_eq!(status_of(&h, down_path).0, "offline");
+        assert_eq!(probe.calls().len(), 2);
+    }
+
+    #[test]
+    fn a_path_that_is_not_on_a_share_is_reachable_without_a_probe() {
+        let probe = FakeFolderProbe::default();
+        let shares = ShareReachability::probe(
+            &probe,
+            ["relative.mp4", r" rel\x.mp4", r"\server"].into_iter(),
+        );
+
+        assert!(shares.is_reachable_path("relative.mp4"));
+        assert!(shares.is_reachable_path(r" rel\x.mp4"));
+        assert!(shares.is_reachable_path(r"\server"));
+        assert!(probe.calls().is_empty());
+    }
+
+    #[test]
+    fn a_missing_relative_path_is_registered_offline_without_a_probe() {
+        let h = harness();
+        let probe = FakeFolderProbe::default();
+
+        let summary = import_with_probe(
+            &h,
+            vec![row_at(1, r"no-such-dir-for-test\relative.mp4")],
+            &FakeDirLister::default(),
+            &probe,
+            &FakeWbImportLog::default(),
+        );
+
+        assert!(probe.calls().is_empty());
+        assert_eq!(summary.registered_offline, 1);
+    }
+
+    #[test]
+    fn case_and_separator_variants_of_a_share_are_probed_once() {
+        let h = harness();
+        let probe = FakeFolderProbe::with_unreachable(&[r"W:\"]);
+
+        let summary = import_with_probe(
+            &h,
+            vec![row_at(1, r"w:\a.mp4"), row_at(2, "W:/b.mp4")],
+            &FakeDirLister::default(),
+            &probe,
+            &FakeWbImportLog::default(),
+        );
+
+        assert_eq!(probe.calls(), vec![r"W:\".to_string()]);
+        assert_eq!(summary.registered_offline, 2);
+    }
+
+    #[test]
+    fn a_panicking_probe_does_not_abort_the_import_and_counts_as_reachable() {
+        struct PanicOnW;
+        impl FolderProbe for PanicOnW {
+            fn is_reachable(&self, folder: &str) -> bool {
+                if folder == r"W:\" {
+                    panic!("probe failure for the test");
+                }
+                false
+            }
+        }
+        let h = harness();
+        let notifier = FakeWbImportNotifier::default();
+
+        // X:\ answers "down" normally; W:\ panics and falls back to the
+        // per-file check (the file is missing, so it still ends up offline).
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![row_at(1, r"W:\a.mp4"), row_at(2, r"X:\b.mp4")]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            None::<&FakeWatchReconfigurer>,
+            &FakeDirLister::default(),
+            &PanicOnW,
+            &FakeWbImportLog::default(),
+        );
+
+        assert_eq!(notifier.complete_calls.lock().unwrap().len(), 1);
+        let shares = ShareReachability::probe(&PanicOnW, [r"W:\a.mp4", r"X:\b.mp4"].into_iter());
+        assert!(shares.is_reachable_path(r"W:\a.mp4"));
+        assert!(!shares.is_reachable_path(r"X:\b.mp4"));
+    }
+
+    #[test]
+    fn a_question_mark_row_on_an_unreachable_share_is_not_listed_or_restored() {
+        let h = harness();
+        let real = format!("a{DASH}.mp4");
+        let probe = FakeFolderProbe::with_unreachable(&[r"W:\"]);
+        // Would restore the row if the folder were listed.
+        let lister = FakeDirLister::default().with_dir(r"W:\gone", &[&real]);
+        let stored = r"W:\gone\a?.mp4";
+
+        let summary = import_with_probe(
+            &h,
+            vec![row_at(1, stored)],
+            &lister,
+            &probe,
+            &FakeWbImportLog::default(),
+        );
+
+        assert_eq!(summary.registered_offline, 1);
+        assert!(lister.calls().is_empty());
+        assert_eq!(status_of(&h, stored).0, "offline");
+    }
+
+    #[test]
+    fn every_share_is_probed_at_the_same_time() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        /// Each probe waits until every other probe is also in flight, so the
+        /// test passes only if the probes overlap. The deadline turns a
+        /// serial implementation into a failure instead of a hang.
+        struct RendezvousProbe {
+            expected: usize,
+            in_flight: AtomicUsize,
+            timed_out: AtomicBool,
+        }
+        impl FolderProbe for RendezvousProbe {
+            fn is_reachable(&self, _folder: &str) -> bool {
+                self.in_flight.fetch_add(1, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while self.in_flight.load(Ordering::SeqCst) < self.expected {
+                    if Instant::now() > deadline {
+                        self.timed_out.store(true, Ordering::SeqCst);
+                        return false;
+                    }
+                    std::thread::yield_now();
+                }
+                true
+            }
+        }
+
+        let h = harness();
+        let probe = RendezvousProbe {
+            expected: 3,
+            in_flight: AtomicUsize::new(0),
+            timed_out: AtomicBool::new(false),
+        };
+
+        import_with_probe(
+            &h,
+            vec![
+                row_at(1, r"W:\a.mp4"),
+                row_at(2, r"X:\b.mp4"),
+                row_at(3, r"\\nas\share\c.mp4"),
+                row_at(4, r"W:\d.mp4"),
+            ],
+            &FakeDirLister::default(),
+            &probe,
+            &FakeWbImportLog::default(),
+        );
+
+        assert!(!probe.timed_out.load(Ordering::SeqCst));
+        assert_eq!(probe.in_flight.load(Ordering::SeqCst), 3);
     }
 }
