@@ -1243,6 +1243,37 @@ pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Resu
     Ok(rows)
 }
 
+pub struct TagWithCountRow {
+    pub id: i64,
+    pub name: String,
+    pub video_count: i64,
+}
+
+/// Same tags and order as `list_all_tags`, plus how many videos carry each
+/// one. LEFT JOIN keeps tags with no videos (count 0), which a plain join
+/// would drop.
+pub fn list_all_tags_with_video_count(
+    pool: &r2d2::Pool<SqliteConnectionManager>,
+) -> anyhow::Result<Vec<TagWithCountRow>> {
+    let conn = pool.get()?;
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name, COUNT(vt.video_id) \
+         FROM tags t LEFT JOIN video_tags vt ON vt.tag_id = t.id \
+         GROUP BY t.id \
+         ORDER BY (t.sort_order IS NULL), t.sort_order, t.name",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TagWithCountRow {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                video_count: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Stores the user's tag order: the first id gets 0, the next 1, and so on.
 /// Ids with no tag are skipped without leaving a gap, and a repeated id keeps
 /// its first position. Every tag not in the list is reset to NULL (placed

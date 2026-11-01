@@ -16,6 +16,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  countTagsByName,
   getTagSortOrders,
   restoreTagSortOrders,
   seedTagOrder,
@@ -211,6 +212,80 @@ test("all tags are listed (ordered ones first), toggle on click, and clear-all d
     );
   } catch (e) {
     await saveFailureScreenshot(browser, "tag-bar-others");
+    throw e;
+  } finally {
+    await browser.deleteSession().catch(() => {});
+    restoreTagSortOrders(originalOrders);
+  }
+});
+
+test("deleting a tag from the tag editor asks for confirmation, then removes it from the library and the bar", async () => {
+  await ensureAppDbExists();
+
+  const token = `e2e${Date.now()}del`;
+  const names = [`${token}_keep`, `${token}_gone`];
+  seedTags(names);
+  const originalOrders = getTagSortOrders();
+
+  const browser = await createSession();
+  try {
+    await browser.setWindowSize(DEFAULT_WINDOW.width, DEFAULT_WINDOW.height);
+    await waitForAppReady(browser);
+    await browser.$(
+      `//button[@data-testid="tag-bar-chip" and text()="${names[1]}"]`,
+    ).then((el) => el.waitForExist({ timeout: 10_000 }));
+
+    // WebDriver cannot click native menus; emit the event the "タグ > タグの
+    // 編集..." item emits (reachable via `window.__TAURI__`).
+    await browser.execute(() =>
+      window.__TAURI__.event.emit("menu:open-tag-bar-dialog"),
+    );
+    const dialog = await browser.$('[data-testid="tag-bar-edit-dialog"]');
+    await dialog.waitForExist({ timeout: 10_000 });
+
+    const deleteButton = await browser.$(
+      `//li[@data-testid="tag-bar-edit-row"][.//span[text()="${names[1]}"]]//button[@data-testid="tag-bar-edit-delete-btn"]`,
+    );
+    await deleteButton.waitForExist({ timeout: 10_000 });
+
+    // Cancelling the confirmation must leave the tag alone.
+    await deleteButton.click();
+    const confirm = await browser.$('[data-testid="confirm-dialog"]');
+    await confirm.waitForExist({ timeout: 5_000 });
+    assert.ok(
+      (await confirm.getText()).includes(names[1]),
+      "the confirmation must name the tag being deleted",
+    );
+    await browser.$('[data-testid="confirm-dialog-cancel-btn"]').then((el) => el.click());
+    await confirm.waitForExist({ timeout: 5_000, reverse: true });
+    assert.equal(countTagsByName(names[1]), 1, "cancel must not delete the tag");
+
+    // Confirming deletes immediately (no "保存" needed).
+    await deleteButton.click();
+    await confirm.waitForExist({ timeout: 5_000 });
+    await browser.$('[data-testid="confirm-dialog-confirm-btn"]').then((el) => el.click());
+    await confirm.waitForExist({ timeout: 5_000, reverse: true });
+
+    await browser.waitUntil(async () => countTagsByName(names[1]) === 0, {
+      timeout: 10_000,
+      timeoutMsg: "the confirmed delete never removed the tag from the library",
+    });
+    assert.equal(countTagsByName(names[0]), 1, "other tags must be untouched");
+    await deleteButton.waitForExist({
+      timeout: 5_000,
+      reverse: true,
+      timeoutMsg: "the deleted tag's row never left the editor list",
+    });
+    await browser.waitUntil(
+      async () =>
+        (await tagBarChipNames(browser, token)).join() === names[0],
+      {
+        timeout: 10_000,
+        timeoutMsg: "the deleted tag's chip never left the left-pane bar",
+      },
+    );
+  } catch (e) {
+    await saveFailureScreenshot(browser, "tag-bar-delete");
     throw e;
   } finally {
     await browser.deleteSession().catch(() => {});

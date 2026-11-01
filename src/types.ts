@@ -45,6 +45,10 @@ export interface TagDto {
   name: string;
 }
 
+export interface TagWithCountDto extends TagDto {
+  video_count: number;
+}
+
 export interface AssignTagResultDto {
   tag: TagDto;
   newly_tagged: number;

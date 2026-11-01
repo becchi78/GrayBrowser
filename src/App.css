@@ -1598,6 +1598,14 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* 削除するタグの名前を、文中で目立たせる。 */
+.confirm-dialog-body .tag-delete-target {
+  font-size: 1.15em;
+  font-weight: bold;
+  color: #b00020;
+  overflow-wrap: anywhere;
+}
+
 .confirm-dialog-confirm--danger {
   color: #ffffff;
   background-color: #b00020;
@@ -1996,6 +2004,10 @@ button.link-button:focus-visible {
   }
 
   .context-menu-item--danger {
+    color: #ff8a80;
+  }
+
+  .confirm-dialog-body .tag-delete-target {
     color: #ff8a80;
   }
 

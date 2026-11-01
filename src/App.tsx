@@ -48,11 +48,11 @@ function App() {
   // onMenuOpen*Dialog subscriptions below).
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
-  // TagBarEditDialog is reached only via the native menu ("タグ > タグ
-  // バーの編集..." -- its own top-level submenu, not nested under
+  // TagBarEditDialog is reached only via the native menu ("タグ > タグの
+  // 編集..." -- its own top-level submenu, not nested under
   // "ファイル", see lib.rs). tagBarRefreshKey mirrors `refreshKey`'s own
   // role, scoped to just TagBar: bumped once the dialog saves a new tag
-  // order, so TagBar re-fetches it (via its own `refreshKey` prop) without a
+  // order or deletes a tag, so TagBar re-fetches it (via its own `refreshKey` prop) without a
   // full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
@@ -222,6 +222,7 @@ function App() {
         open={tagBarDialogOpen}
         onClose={() => setTagBarDialogOpen(false)}
         onChanged={() => setTagBarRefreshKey((k) => k + 1)}
+        onTagDeleted={(tagId) => setTagIds((ids) => ids.filter((id) => id !== tagId))}
       />
       <SettingsDialog open={settingsDialogOpen} onClose={() => setSettingsDialogOpen(false)} />
       <LogViewerDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />

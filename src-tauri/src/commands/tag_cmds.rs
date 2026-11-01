@@ -105,6 +105,45 @@ pub fn list_all_tags(db: State<Db>) -> Result<Vec<TagDto>, String> {
         .map_err(|e| e.to_string())
 }
 
+#[derive(Serialize, Clone)]
+pub struct TagWithCountDto {
+    pub id: i64,
+    pub name: String,
+    pub video_count: i64,
+}
+
+impl From<queries::TagWithCountRow> for TagWithCountDto {
+    fn from(row: queries::TagWithCountRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            video_count: row.video_count,
+        }
+    }
+}
+
+/// Every tag with the number of videos carrying it, in the user's tag order.
+#[tauri::command]
+pub fn list_tags_with_video_count(db: State<Db>) -> Result<Vec<TagWithCountDto>, String> {
+    queries::list_all_tags_with_video_count(&db.read_pool)
+        .map(|rows| rows.into_iter().map(TagWithCountDto::from).collect())
+        .map_err(|e| e.to_string())
+}
+
+fn delete_tag_impl(db: &Db, tag_id: i64) -> Result<(), String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::delete_tag(&mut conn, tag_id).map_err(|e| e.to_string())
+}
+
+/// Deletes a tag and detaches it from every video. Notifies a catalog change
+/// because the video list shows each video's tags.
+#[tauri::command]
+pub fn delete_tag(app: tauri::AppHandle, db: State<Db>, tag_id: i64) -> Result<(), String> {
+    delete_tag_impl(&db, tag_id)?;
+    TauriCatalogNotifier::new(app).notify_changed();
+    Ok(())
+}
+
 fn set_tag_order_impl(db: &Db, tag_ids: &[i64]) -> Result<(), String> {
     let mut conn = db.writer.lock().unwrap();
     queries::set_tag_order(&mut conn, tag_ids).map_err(|e| e.to_string())
@@ -138,5 +177,46 @@ mod tests {
             .map(|t| t.name)
             .collect();
         assert_eq!(names, ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn delete_tag_impl_removes_the_tag_and_its_video_tags_only() {
+        let (_dir, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO tags (id, name, sort_order) VALUES (1, 'a', 0), (2, 'b', 1), (3, 'c', 2);
+                 INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
+                   VALUES ('v1', 'D:\\a.mp4', 'a.mp4', 1024, 'h1', 'online'),
+                          ('v2', 'D:\\b.mp4', 'b.mp4', 1024, 'h2', 'online');
+                 INSERT INTO video_tags (video_id, tag_id)
+                   VALUES ('v1', 1), ('v2', 1), ('v1', 2), ('v2', 3);",
+            )
+            .unwrap();
+        }
+        delete_tag_impl(&db, 1).unwrap();
+
+        let tags = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
+        let summary: Vec<(i64, i64)> = tags.iter().map(|t| (t.id, t.video_count)).collect();
+        assert_eq!(summary, [(2, 1), (3, 1)]);
+        let conn = db.writer.lock().unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM video_tags", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 2);
+        let on_deleted: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM video_tags WHERE tag_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(on_deleted, 0);
+    }
+
+    #[test]
+    fn delete_tag_impl_succeeds_for_an_unknown_tag() {
+        let (_dir, db) = init_temp_db();
+        delete_tag_impl(&db, 999).unwrap();
     }
 }

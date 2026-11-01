@@ -110,3 +110,13 @@ export function seedTagOrder(tagIds) {
     db.close();
   }
 }
+
+// How many `tags` rows carry this exact name (0 once a delete went through).
+export function countTagsByName(name) {
+  const db = new DatabaseSync(appDbPath());
+  try {
+    return db.prepare("SELECT COUNT(*) AS n FROM tags WHERE name = ?").get(name).n;
+  } finally {
+    db.close();
+  }
+}

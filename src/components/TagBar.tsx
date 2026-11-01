@@ -13,7 +13,7 @@ interface Props {
 // 左ペイン用のタグ絞り込み(複数選択)。全タグをフォルダ一覧と同じ縦のボタン
 // リストで出す。順序は [すべて解除] の後に、編集画面で決めた並び
 // (list_all_tags の順そのまま)。
-// 並びの編集はネイティブメニュー「タグ > タグバーの編集...」からのみ開く
+// 並びの編集はネイティブメニュー「タグ > タグの編集...」からのみ開く
 // (src-tauri/src/lib.rsのMENU_ITEM_TAG_BAR_MANAGE参照) -- この部品自体には
 // 編集への導線は置かない。
 export function TagBar({ selected, onChange, refreshKey }: Props) {
