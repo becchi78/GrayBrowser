@@ -315,7 +315,10 @@ button.search-box-clear {
 }
 
 .sidebar-section-toggle {
-  display: block;
+  /* 開閉の目印・アイコン・文字を1行に並べる。 */
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
   width: 100%;
   text-align: left;
   border: none;
@@ -325,6 +328,26 @@ button.search-box-clear {
   padding: 0.5em 0.75em;
   font-size: 0.85em;
   font-weight: 600;
+}
+
+.sidebar-section-icon {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+/* 色はテーマに依存させない固定色。ライト/ダークどちらの背景でも沈まない
+   中間の明度(アンバー600・青500・赤500相当)を選ぶ。 */
+.sidebar-section-icon--folder {
+  color: #d9a010;
+}
+
+.sidebar-section-icon--rating {
+  color: #3b82f6;
+}
+
+.sidebar-section-icon--tag {
+  color: #ef4444;
 }
 
 .sidebar-section-body {
@@ -1494,6 +1517,12 @@ button.search-box-clear {
   display: flex;
   align-items: center;
   gap: 0.75em;
+}
+
+.folder-dialog-scan-note {
+  margin: 0.25em 0 0;
+  font-size: 0.8em;
+  opacity: 0.75;
 }
 
 .folder-delete-confirm-path {
