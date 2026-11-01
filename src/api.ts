@@ -18,6 +18,7 @@ import type {
   SortDirection,
   SortField,
   TagDto,
+  TagWithCountDto,
   AssignTagResultDto,
   ThumbnailProgress,
   VideoDto,
@@ -69,6 +70,9 @@ export const removeTag = (videoId: string, tagId: number) =>
 export const listTagsForVideo = (videoId: string) =>
   invoke<TagDto[]>("list_tags_for_video", { videoId });
 export const listAllTags = () => invoke<TagDto[]>("list_all_tags");
+export const listTagsWithVideoCount = () =>
+  invoke<TagWithCountDto[]>("list_tags_with_video_count");
+export const deleteTag = (tagId: number) => invoke<void>("delete_tag", { tagId });
 export const setTagOrder = (tagIds: number[]) => invoke<void>("set_tag_order", { tagIds });
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>

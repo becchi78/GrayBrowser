@@ -538,6 +538,64 @@ fn list_all_tags_returns_every_tag_regardless_of_assignment() {
 }
 
 #[test]
+fn list_all_tags_with_video_count_counts_videos_and_keeps_empty_tags() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        seed_videos(&conn, &["a", "b", "c"]);
+    }
+    {
+        let mut conn = db.writer.lock().unwrap();
+        for v in ["a", "b", "c"] {
+            queries::assign_tag_to_video(&mut conn, v, "popular").unwrap();
+        }
+        queries::assign_tag_to_video(&mut conn, "a", "rare").unwrap();
+        let empty = queries::assign_tag_to_video(&mut conn, "a", "empty").unwrap();
+        queries::remove_tag_from_video(&conn, "a", empty.id).unwrap();
+    }
+    let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
+    let got: Vec<(&str, i64)> = rows
+        .iter()
+        .map(|t| (t.name.as_str(), t.video_count))
+        .collect();
+    // No sort_order set yet, so name order.
+    assert_eq!(got, [("empty", 0), ("popular", 3), ("rare", 1)]);
+}
+
+#[test]
+fn list_all_tags_with_video_count_follows_sort_order_then_name() {
+    let (_dir, db) = init_temp_db();
+    let ids: Vec<i64> = {
+        let mut conn = db.writer.lock().unwrap();
+        for n in ["alpha", "beta", "gamma", "delta"] {
+            conn.execute("INSERT INTO tags (name) VALUES (?1)", params![n])
+                .unwrap();
+        }
+        let ids = conn
+            .prepare("SELECT id FROM tags ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<i64>, _>>()
+            .unwrap();
+        // ids by name: alpha, beta, delta, gamma
+        queries::set_tag_order(&mut conn, &[ids[3], ids[0]]).unwrap();
+        ids
+    };
+    let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
+    let names: Vec<&str> = rows.iter().map(|t| t.name.as_str()).collect();
+    // Ordered tags first (gamma, alpha), then the rest by name.
+    assert_eq!(names, ["gamma", "alpha", "beta", "delta"]);
+    let listed: Vec<i64> = queries::list_all_tags(&db.read_pool)
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(listed, rows.iter().map(|t| t.id).collect::<Vec<_>>());
+    assert_eq!(rows[0].id, ids[3]);
+}
+
+#[test]
 fn set_rating_round_trips_and_clears_to_zero() {
     let (_dir, db) = init_temp_db();
     {

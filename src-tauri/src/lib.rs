@@ -271,12 +271,11 @@ pub fn run() {
 
             // "タグ" -- its own top-level submenu (not nested under
             // "ファイル") since it's not a file-management action; only one
-            // item exists today (the pinned-tags editor), but this gives
+            // item exists today (the tag editor: reorder and delete), but this gives
             // future tag-related menu entries a home without further
             // reshuffling "ファイル".
             let tag_bar_manage_item =
-                MenuItemBuilder::with_id(MENU_ITEM_TAG_BAR_MANAGE, "タグバーの編集...")
-                    .build(app)?;
+                MenuItemBuilder::with_id(MENU_ITEM_TAG_BAR_MANAGE, "タグの編集...").build(app)?;
             let tag_menu = SubmenuBuilder::new(app, "タグ")
                 .item(&tag_bar_manage_item)
                 .build()?;
@@ -399,6 +398,8 @@ pub fn run() {
             commands::sidebar_cmds::get_sidebar_sections_collapsed,
             commands::sidebar_cmds::set_sidebar_sections_collapsed,
             commands::tag_cmds::set_tag_order,
+            commands::tag_cmds::list_tags_with_video_count,
+            commands::tag_cmds::delete_tag,
             commands::rating_cmds::set_rating,
             commands::properties_cmds::get_video_properties,
             commands::wb_import_cmds::pick_wb_file,
