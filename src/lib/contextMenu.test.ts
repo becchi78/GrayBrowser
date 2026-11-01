@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clampMenuPosition } from "./contextMenu.ts";
+import { clampMenuPosition, contextMenuAction } from "./contextMenu.ts";
+
+describe("contextMenuAction", () => {
+  it("suppresses on ordinary UI in a production build", () => {
+    assert.equal(contextMenuAction({ isTextEdit: false, isDev: false }), "suppress");
+  });
+
+  it("shows the app edit menu on text fields in a production build", () => {
+    assert.equal(contextMenuAction({ isTextEdit: true, isDev: false }), "edit-menu");
+  });
+
+  it("keeps the native menu in dev builds for Inspect", () => {
+    assert.equal(contextMenuAction({ isTextEdit: false, isDev: true }), "native");
+  });
+
+  it("keeps the native menu in dev even on text fields", () => {
+    assert.equal(contextMenuAction({ isTextEdit: true, isDev: true }), "native");
+  });
+});
 
 const viewport = { width: 1000, height: 600 };
 const menu = { width: 200, height: 40 };

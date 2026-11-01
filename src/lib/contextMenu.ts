@@ -6,6 +6,22 @@ export interface MenuPosition {
   y: number;
 }
 
+export type ContextMenuAction = "native" | "edit-menu" | "suppress";
+
+/**
+ * What a right-click should do. The WebView's built-in menu (Back/Reload,
+ * and in text fields extras like password/emoji entries) is meaningless in a
+ * desktop app, so text fields get the app's own cut/copy/paste menu instead.
+ * Dev builds keep the native menu so Inspect stays reachable.
+ */
+export function contextMenuAction(opts: {
+  isTextEdit: boolean;
+  isDev: boolean;
+}): ContextMenuAction {
+  if (opts.isDev) return "native";
+  return opts.isTextEdit ? "edit-menu" : "suppress";
+}
+
 /**
  * Keeps a menu of the given size fully inside the viewport. The menu opens at
  * the pointer; when it would overflow the right/bottom edge it is shifted back
