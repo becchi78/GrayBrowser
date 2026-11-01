@@ -351,6 +351,16 @@ button.search-box-clear {
   text-overflow: ellipsis;
 }
 
+/* 到達できない監視フォルダの印。パスより前に置くので、長いパスが省略表示
+   されても見える。色は .thumbnail-offline-badge に揃えた琥珀色。 */
+.folder-sidebar-badge {
+  margin-right: 0.4em;
+  color: #7a3b00;
+  background-color: #ffe0b2;
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
 /* The always-visible status bar (badges row). `flex-shrink: 0` + fixed
    `height: 26px` are the same guarantee the header rows above rely on --
    this row must never compete for `.video-list`'s `flex: 1` shrink-share.
@@ -1913,7 +1923,8 @@ button.link-button:focus-visible {
     box-shadow: inset 4px 0 0 #7aa7ff;
   }
 
-  .thumbnail-offline-badge {
+  .thumbnail-offline-badge,
+  .folder-sidebar-badge {
     color: #f8d7a3;
     background-color: #5a3d00;
   }
