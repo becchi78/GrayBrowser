@@ -55,6 +55,11 @@ pub struct ScanSummary {
     /// collision's occurrence is visible from the summary itself, not only
     /// from the WARN log.
     pub collisions: u32,
+    /// Watch folders a manual scan did not walk because they were known to be
+    /// unreachable. `scan_folders` itself never fills this (it does not know
+    /// about reachability); the caller that filtered them out does, so the
+    /// screen can say why fewer folders were scanned than are registered.
+    pub unreachable_folders: Vec<String>,
 }
 
 /// The outcome of processing one already-detected file. Shared by all three

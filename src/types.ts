@@ -197,6 +197,8 @@ export interface ScanSummary {
   reactivated: number;
   /** A path-follow candidate existed but its target path collided with an online row; registered as a new row instead. */
   collisions: number;
+  /** Watch folders skipped because they could not be reached; they are neither scanned nor marked offline. */
+  unreachable_folders: string[];
 }
 
 /** `total === 0` means no thumbnail generation is in progress. */
