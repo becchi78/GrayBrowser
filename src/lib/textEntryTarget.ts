@@ -9,11 +9,16 @@ export function isTextEntryTarget(target: EventTarget): boolean {
   return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
-// Narrower than isTextEntryTarget: only elements whose native context menu
-// offers cut/copy/paste. A SELECT has none of those, so it gets no exemption
-// from the app-wide menu suppression. Read-only/disabled inputs stay exempt
-// because Copy still works there.
+const TEXT_LIKE_INPUT_TYPES = ["text", "search", "url", "tel", "email", "password", "number"];
+
+// Narrower than isTextEntryTarget: only elements where cut/copy/paste is
+// meaningful, i.e. the ones that get the app's edit menu. Checkboxes, buttons,
+// range inputs and SELECT have nothing to cut or paste. Read-only/disabled
+// fields stay included because Copy still works there.
 export function isTextEditTarget(target: EventTarget): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ["INPUT", "TEXTAREA"].includes(target.tagName);
+  if (target.isContentEditable || target.tagName === "TEXTAREA") return true;
+  if (target.tagName !== "INPUT") return false;
+  // The `type` property normalizes a missing/unknown attribute to "text".
+  return TEXT_LIKE_INPUT_TYPES.includes((target as HTMLInputElement).type);
 }

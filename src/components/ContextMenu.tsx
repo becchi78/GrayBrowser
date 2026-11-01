@@ -5,6 +5,8 @@ import { clampMenuPosition, type MenuPosition } from "../lib/contextMenu";
 export interface ContextMenuItem {
   label: string;
   danger?: boolean;
+  /** true なら押せず、矢印キーの移動対象からも外れる。 */
+  disabled?: boolean;
   onSelect: () => void;
 }
 
@@ -14,6 +16,9 @@ interface Props {
   items: ContextMenuItem[];
   onClose: () => void;
 }
+
+// 無効な項目はフォーカスできないので、キー移動と初期フォーカスの対象から除く。
+const ENABLED_ITEM_SELECTOR = '[role="menuitem"]:not(:disabled)';
 
 // 一覧のスクロール領域や重複パネルなど position / overflow の効く祖先の
 // 影響を受けないよう、ConfirmDialog と同じく document.body へ portal で描画する。
@@ -40,7 +45,7 @@ export function ContextMenu({ position, items, onClose }: Props) {
   // visibility: hidden の要素にはフォーカスできないので、位置が確定してから。
   const isPlaced = placed !== null;
   useEffect(() => {
-    if (isPlaced) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    if (isPlaced) menuRef.current?.querySelector<HTMLElement>(ENABLED_ITEM_SELECTOR)?.focus();
   }, [isPlaced]);
 
   useEffect(() => {
@@ -51,13 +56,16 @@ export function ContextMenu({ position, items, onClose }: Props) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" || e.key === "Tab") {
         e.preventDefault();
+        // ダイアログ内の入力欄から開いたとき、同じEscapeでダイアログまで
+        // 閉じないよう、背後のdocumentのkeydownリスナーへ伝えない。
+        e.stopPropagation();
         onClose();
         return;
       }
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const entries = Array.from(
-          menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+          menuRef.current?.querySelectorAll<HTMLElement>(ENABLED_ITEM_SELECTOR) ?? [],
         );
         if (entries.length === 0) return;
         const current = entries.indexOf(document.activeElement as HTMLElement);
@@ -105,6 +113,8 @@ export function ContextMenu({ position, items, onClose }: Props) {
           className={
             item.danger ? "context-menu-item context-menu-item--danger" : "context-menu-item"
           }
+          disabled={item.disabled}
+          aria-disabled={item.disabled || undefined}
           onClick={() => {
             onClose();
             item.onSelect();

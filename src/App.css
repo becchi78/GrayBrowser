@@ -1691,6 +1691,15 @@ button.link-button:focus-visible {
   color: #b00020;
 }
 
+.context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu-item:disabled:hover {
+  background-color: transparent;
+}
+
 /* Wider than the base .dialog so a long .wb / folder path sits beside its
    button; 92vw keeps it inside narrow windows. */
 .wb-import-dialog {

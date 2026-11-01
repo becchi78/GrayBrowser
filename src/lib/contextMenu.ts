@@ -6,16 +6,20 @@ export interface MenuPosition {
   y: number;
 }
 
+export type ContextMenuAction = "native" | "edit-menu" | "suppress";
+
 /**
- * Whether the WebView's built-in context menu (Back/Reload/Inspect...) should
- * be blocked. It is meaningless in a desktop app, but text fields need it for
- * cut/copy/paste, and dev builds keep it so Inspect stays reachable.
+ * What a right-click should do. The WebView's built-in menu (Back/Reload,
+ * and in text fields extras like password/emoji entries) is meaningless in a
+ * desktop app, so text fields get the app's own cut/copy/paste menu instead.
+ * Dev builds keep the native menu so Inspect stays reachable.
  */
-export function shouldSuppressNativeContextMenu(opts: {
-  isTextEntry: boolean;
+export function contextMenuAction(opts: {
+  isTextEdit: boolean;
   isDev: boolean;
-}): boolean {
-  return !opts.isDev && !opts.isTextEntry;
+}): ContextMenuAction {
+  if (opts.isDev) return "native";
+  return opts.isTextEdit ? "edit-menu" : "suppress";
 }
 
 /**

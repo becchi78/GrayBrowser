@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
@@ -25,7 +25,8 @@ import {
   onMenuOpenWbImportDialog,
   onMenuStyleSelected,
 } from "./events";
-import { shouldSuppressNativeContextMenu } from "./lib/contextMenu";
+import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
+import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
 import type { SortDirection, SortField } from "./types";
 
@@ -66,6 +67,9 @@ function App() {
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
   const [videoCount, setVideoCount] = useState(0);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [editMenu, setEditMenu] = useState<{ target: EditTarget; position: MenuPosition } | null>(
+    null,
+  );
   const [jumpRequest, setJumpRequest] = useState<{ percent: number; seq: number } | null>(null);
 
   useEffect(() => {
@@ -79,18 +83,28 @@ function App() {
     // React's root listener run first and are unaffected; a second
     // preventDefault is harmless. Selection and copy are not touched.
     const handler = (e: MouseEvent) => {
-      if (
-        shouldSuppressNativeContextMenu({
-          isTextEntry: e.target !== null && isTextEditTarget(e.target),
-          isDev: import.meta.env.DEV,
-        })
-      ) {
-        e.preventDefault();
+      const target = e.target;
+      const action = contextMenuAction({
+        isTextEdit: target !== null && isTextEditTarget(target),
+        isDev: import.meta.env.DEV,
+      });
+      if (action === "native") return;
+      e.preventDefault();
+      if (action !== "edit-menu" || !(target instanceof HTMLElement)) return;
+      // Keyboard invocation (menu key / Shift+F10) reports 0,0; anchor to the
+      // field instead so the menu does not appear in the window corner.
+      let position: MenuPosition = { x: e.clientX, y: e.clientY };
+      if (e.clientX === 0 && e.clientY === 0) {
+        const rect = target.getBoundingClientRect();
+        position = { x: rect.left, y: rect.bottom };
       }
+      setEditMenu({ target, position });
     };
     document.addEventListener("contextmenu", handler);
     return () => document.removeEventListener("contextmenu", handler);
   }, []);
+
+  const closeEditMenu = useCallback(() => setEditMenu(null), []);
 
   const toggleInfoPane = () => {
     const next = !infoPaneCollapsed;
@@ -248,6 +262,13 @@ function App() {
       <LogViewerDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />
       <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
       <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
+      {editMenu && (
+        <EditContextMenu
+          target={editMenu.target}
+          position={editMenu.position}
+          onClose={closeEditMenu}
+        />
+      )}
     </div>
   );
 }

@@ -1,22 +1,22 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clampMenuPosition, shouldSuppressNativeContextMenu } from "./contextMenu.ts";
+import { clampMenuPosition, contextMenuAction } from "./contextMenu.ts";
 
-describe("shouldSuppressNativeContextMenu", () => {
+describe("contextMenuAction", () => {
   it("suppresses on ordinary UI in a production build", () => {
-    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: false, isDev: false }), true);
+    assert.equal(contextMenuAction({ isTextEdit: false, isDev: false }), "suppress");
   });
 
-  it("keeps the native menu on text entry so cut/copy/paste work", () => {
-    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: true, isDev: false }), false);
+  it("shows the app edit menu on text fields in a production build", () => {
+    assert.equal(contextMenuAction({ isTextEdit: true, isDev: false }), "edit-menu");
   });
 
   it("keeps the native menu in dev builds for Inspect", () => {
-    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: false, isDev: true }), false);
+    assert.equal(contextMenuAction({ isTextEdit: false, isDev: true }), "native");
   });
 
-  it("does not suppress in dev even on text entry", () => {
-    assert.equal(shouldSuppressNativeContextMenu({ isTextEntry: true, isDev: true }), false);
+  it("keeps the native menu in dev even on text fields", () => {
+    assert.equal(contextMenuAction({ isTextEdit: true, isDev: true }), "native");
   });
 });
 

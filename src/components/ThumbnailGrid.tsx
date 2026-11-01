@@ -266,7 +266,8 @@ export function ThumbnailGrid({
   }
 
   function handleContextMenu(video: VideoDto, e: MouseEvent) {
-    // 行内の入力欄(タグ入力など)では、標準の切り取り/貼り付けメニューを残す。
+    // 行内の入力欄(タグ入力など)は行メニューを出さず、document 側の
+    // 入力欄用メニュー(または抑止)に任せる。
     if (isTextEntryTarget(e.target)) return;
     e.preventDefault();
     const next = selectionForContextMenu(selection, video.id);
