@@ -11,6 +11,7 @@ import {
   startScan,
 } from "../api";
 import { moveDown, moveUp } from "../lib/reorderablePinnedTags";
+import { buildScanSummaryMessage } from "../lib/scanSummaryMessage";
 
 interface Props {
   open: boolean;
@@ -111,11 +112,7 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
     setLastScanSummary(null);
     try {
       const summary = await startScan();
-      setLastScanSummary(
-        `検出: ${summary.scanned} / 登録: ${summary.registered} / 更新: ${summary.reconciled} / ` +
-          `変化なし: ${summary.unchanged} / スキップ: ${summary.skipped} / ` +
-          `オフライン化: ${summary.went_offline} / 復帰: ${summary.reactivated}`,
-      );
+      setLastScanSummary(buildScanSummaryMessage(summary));
       onChanged();
     } catch (e) {
       console.error(e);
