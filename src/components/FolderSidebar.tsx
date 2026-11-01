@@ -77,7 +77,7 @@ function FolderSidebarItem({ folder, active, onSelect }: ItemProps) {
         active ? "folder-sidebar-item folder-sidebar-item--active" : "folder-sidebar-item"
       }
       data-testid="folder-sidebar-item"
-      title={unreachable ? `到達できません(オフライン): ${folder}` : folder}
+      title={unreachable ? "到達できません(オフライン)" : folder}
       onClick={() => {
         onSelect(folder);
         // Not awaited: the answer arrives as a reachability event, and a
