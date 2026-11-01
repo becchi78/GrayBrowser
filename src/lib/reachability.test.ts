@@ -3,7 +3,7 @@
 // src/lib/paths.test.ts と同じパターン（package.jsonのtest:unit参照）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isPathUnreachable, isUnderFolder } from "./reachability.ts";
+import { isFolderUnreachable, isPathUnreachable, isUnderFolder } from "./reachability.ts";
 
 test("フォルダ配下のパスは、大文字小文字を区別せず一致する", () => {
   assert.equal(isUnderFolder("W:\\video\\a.mp4", "W:\\video"), true);
@@ -44,4 +44,27 @@ test("isPathUnreachable はどれかの到達不能フォルダ配下なら真�
   assert.equal(isPathUnreachable("W:\\video2\\a.mp4", folders), false);
   assert.equal(isPathUnreachable("C:\\a.mp4", folders), false);
   assert.equal(isPathUnreachable("W:\\video\\a.mp4", []), false);
+});
+
+test("isFolderUnreachable は同じフォルダなら真、大文字小文字・区切り・末尾の区切りは無視する", () => {
+  const folders = ["W:\\video", "\\\\NAS\\share\\"];
+  assert.equal(isFolderUnreachable("W:\\video", folders), true);
+  assert.equal(isFolderUnreachable("w:\\VIDEO", folders), true);
+  assert.equal(isFolderUnreachable("W:/video", folders), true);
+  assert.equal(isFolderUnreachable("W:\\video\\", folders), true);
+  assert.equal(isFolderUnreachable("\\\\nas\\share", folders), true);
+});
+
+test("isFolderUnreachable は別のフォルダ・配下・名前が前方一致するだけのフォルダには偽", () => {
+  assert.equal(isFolderUnreachable("C:\\video", ["W:\\video"]), false);
+  assert.equal(isFolderUnreachable("W:\\video2", ["W:\\video"]), false);
+  assert.equal(isFolderUnreachable("W:\\video", ["W:\\video2"]), false);
+  assert.equal(isFolderUnreachable("W:\\video\\sub", ["W:\\video"]), false);
+});
+
+test("isFolderUnreachable は空の一覧・空のフォルダでは偽", () => {
+  assert.equal(isFolderUnreachable("W:\\video", []), false);
+  assert.equal(isFolderUnreachable("", ["W:\\video"]), false);
+  assert.equal(isFolderUnreachable("  ", ["W:\\video", ""]), false);
+  assert.equal(isFolderUnreachable("\\", ["\\"]), false);
 });
