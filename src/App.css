@@ -1598,6 +1598,18 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* 削除するタグを、本文の文章に埋もれないよう目立たせる。 */
+.confirm-dialog-body p.tag-delete-target {
+  margin: 0 0 0.75em;
+  padding: 0.5em 0.75em;
+  font-size: 1.15em;
+  font-weight: bold;
+  color: #8a1f1f;
+  background-color: #fdecea;
+  border-left: 4px solid #b00020;
+  overflow-wrap: anywhere;
+}
+
 .confirm-dialog-confirm--danger {
   color: #ffffff;
   background-color: #b00020;
@@ -1997,6 +2009,12 @@ button.link-button:focus-visible {
 
   .context-menu-item--danger {
     color: #ff8a80;
+  }
+
+  .confirm-dialog-body p.tag-delete-target {
+    color: #ff8a80;
+    background-color: #3a1f1f;
+    border-left-color: #c0392b;
   }
 
   .confirm-dialog-confirm--danger {
