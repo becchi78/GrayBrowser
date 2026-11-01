@@ -9,6 +9,7 @@ import {
 import { FolderSidebar } from "./FolderSidebar";
 import { RatingBar } from "./RatingBar";
 import { SidebarSection } from "./SidebarSection";
+import { FolderIcon, StarIcon, TagIcon } from "./SidebarIcons";
 import { TagBar } from "./TagBar";
 
 // User-resizable pane width (200px〜500px). No persistence across restarts --
@@ -110,6 +111,7 @@ export function LeftPane({
       <nav className="left-pane-scroll" data-testid="left-pane-scroll">
         <SidebarSection
           id="folders"
+          icon={<FolderIcon className="sidebar-section-icon sidebar-section-icon--folder" />}
           title="フォルダ"
           collapsed={collapsed.folders}
           onToggle={() => handleToggle("folders")}
@@ -122,6 +124,7 @@ export function LeftPane({
         </SidebarSection>
         <SidebarSection
           id="rating"
+          icon={<StarIcon className="sidebar-section-icon sidebar-section-icon--rating" />}
           title="評価"
           collapsed={collapsed.rating}
           onToggle={() => handleToggle("rating")}
@@ -130,6 +133,7 @@ export function LeftPane({
         </SidebarSection>
         <SidebarSection
           id="tags"
+          icon={<TagIcon className="sidebar-section-icon sidebar-section-icon--tag" />}
           title="タグ"
           collapsed={collapsed.tags}
           onToggle={() => handleToggle("tags")}
