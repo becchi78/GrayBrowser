@@ -141,7 +141,7 @@ export function VideoRow({
 
   // 再生の開始は外部プレーヤーの起動待ち（ネットワーク先では数十秒）になりうる。
   // 開始中の二重ダブルクリックでバックグラウンドの起動処理を積み上げないよう
-  // 無視し、結果が出るまでの状態と失敗理由を行内に表示する。
+  // 無視し、失敗したときだけ理由を行内に表示する。
   async function handleDoubleClick() {
     if (isOffline || isStartingPlay) return;
     setPlayError(null);
@@ -234,13 +234,18 @@ export function VideoRow({
         >
           {video.file_name}
         </span>
+        {/* 再生失敗の表示は固定高の`.video-row-info`の外に置く。中に置くと
+            行が増えた分だけ縦スクロールバーが出て内容幅が縮み、プロパティ表の
+            ラベルが折り返して高さが跳ねるため。再生開始中の表示は、一瞬で消えて
+            読めないので出さない。 */}
+        {playError && (
+          <span className="video-row-play-status video-row-play-status--error" role="alert">
+            {playError}
+          </span>
+        )}
       </div>
 
       <div className="video-row-info">
-        {isStartingPlay && (
-          <span className="duplicate-group-member-play-note">再生を開始しています…</span>
-        )}
-        {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
         <dl className="video-row-properties" data-testid="video-row-properties">
           <dt>再生時間</dt>
           <dd>{formatDuration(video.duration)}</dd>
