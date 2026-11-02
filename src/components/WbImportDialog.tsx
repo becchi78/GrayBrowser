@@ -76,7 +76,8 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [stage, setStage] = useState<WbImportStageId | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showUnmatchedDetail, setShowUnmatchedDetail] = useState(false);
+  // 開いている「確認する」の項目。原因別に2項目あるため、キーで区別する。
+  const [openDetailKey, setOpenDetailKey] = useState<string | null>(null);
 
   useEffect(() => {
     const unlistenProgress = onWbImportProgress((p) => {
@@ -157,7 +158,7 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     setStage(null);
     setSummary(null);
     setError(null);
-    setShowUnmatchedDetail(false);
+    setOpenDetailKey(null);
     try {
       // Always register the imported videos' folders: without them in the
       // sidebar the migration is left half-done.
@@ -262,7 +263,9 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
               const testId =
                 item.key === "unmatched"
                   ? "import-result-needs-review"
-                  : item.key === "invalid-name"
+                  : item.key === "unmatched-empty-hash"
+                    ? "import-result-empty-hash"
+                    : item.key === "invalid-name"
                     ? "import-result-skipped-invalid-name"
                     : item.key === "failed-rows"
                       ? "import-result-failed-rows"
@@ -276,10 +279,10 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                   <p className="wb-import-result-line">{item.text}</p>
                   {item.expandable && (
                     <>
-                      <button type="button" onClick={() => setShowUnmatchedDetail((v) => !v)}>
+                      <button type="button" onClick={() => setOpenDetailKey((k) => (k === item.key ? null : item.key))}>
                         確認する
                       </button>
-                      {showUnmatchedDetail && (
+                      {openDetailKey === item.key && (
                         // A real per-file list/manual-relink UI is out of scope
                         // here. This only surfaces where the unmatched files
                         // still are.

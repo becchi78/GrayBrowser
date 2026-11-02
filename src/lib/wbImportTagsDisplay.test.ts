@@ -24,6 +24,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_linked: 0,
     thumbnails_failed: 0,
     thumbnails_unmatched: 0,
+    thumbnails_unmatched_empty_hash: 0,
     thumbnails_skipped_online: 0,
     watch_folders_added: [],
     ...overrides,

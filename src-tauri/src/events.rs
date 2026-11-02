@@ -184,6 +184,11 @@ pub struct WbImportSummary {
     /// hash belongs to an *online* row are NOT counted here; see
     /// `thumbnails_skipped_online`.
     pub thumbnails_unmatched: u32,
+    /// Part of `thumbnails_unmatched` whose file name carries an empty hash
+    /// (`<name>.#.jpg`), which cannot be tied to a video by name. The rest,
+    /// `thumbnails_unmatched - thumbnails_unmatched_empty_hash`, has no video
+    /// behind it.
+    pub thumbnails_unmatched_empty_hash: u32,
     /// Legacy JPG files whose hash belongs to an *online* row. Not migrated
     /// on purpose (the thumbnail is generated from the video itself), so
     /// they are excluded from `thumbnails_unmatched`.

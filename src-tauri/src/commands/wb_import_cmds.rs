@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use gb_core::ports::dialog::FolderPicker;
 use gb_core::ports::wb_file::WbFilePicker;
+use gb_core::ports::wb_import_clock::WbImportClock;
 use gb_core::ports::wb_import_log::WbImportLog;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
@@ -86,6 +87,7 @@ pub async fn start_wb_import(
 ) -> Result<(), String> {
     // Created first so that even a `.wb` that cannot be opened leaves a log
     // for "ログを確認する". Failing to make the log never stops the import.
+    let clock = Arc::new(adapters::wb_import_clock::RealWbImportClock::new());
     let import_log = match super::log_cmds::logs_dir() {
         Ok(dir) => adapters::wb_import_log::FileWbImportLog::create(
             &dir,
@@ -110,9 +112,16 @@ pub async fn start_wb_import(
         thumbnail_folder: PathBuf::from(&thumbnail_folder_path),
         thumbnails_dir,
     };
-    let wb_source = open_wb_source_logged(&import_log, &paths, register_watch_folders, || {
-        adapters::wb_source::RealWbSourceAdapter::open(&paths.wb_path).map_err(|e| e.to_string())
-    })?;
+    let wb_source = open_wb_source_logged(
+        &import_log,
+        clock.as_ref(),
+        &paths,
+        register_watch_folders,
+        || {
+            adapters::wb_source::RealWbSourceAdapter::open(&paths.wb_path)
+                .map_err(|e| e.to_string())
+        },
+    )?;
 
     let notifier = Arc::new(TauriWbImportNotifier::new(app.clone()));
     let watch_reconfigurer = Arc::new(TauriWatchReconfigurer::new(
@@ -136,6 +145,7 @@ pub async fn start_wb_import(
         watch_reconfigurer,
         Arc::new(adapters::dir_lister::RealDirLister),
         Arc::new(adapters::folder_probe::RealFolderProbe),
+        clock,
         import_log,
     );
 
@@ -144,14 +154,15 @@ pub async fn start_wb_import(
 
 /// Opens the `.wb` through `open`; if that fails, the reason is written to the
 /// import log before the error goes back to the caller.
-fn open_wb_source_logged<S, L: WbImportLog>(
+fn open_wb_source_logged<S, L: WbImportLog, K: WbImportClock>(
     import_log: &L,
+    clock: &K,
     paths: &WbImportPaths,
     register_watch_folders: bool,
     open: impl FnOnce() -> Result<S, String>,
 ) -> Result<S, String> {
     open().inspect_err(|reason| {
-        pipeline::record_start_failure(import_log, paths, register_watch_folders, reason)
+        pipeline::record_start_failure(import_log, clock, paths, register_watch_folders, reason)
     })
 }
 
@@ -185,6 +196,7 @@ pub fn open_wb_import_log(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gb_core::testing::fake_wb_import_clock::FakeWbImportClock;
     use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
     use std::cell::RefCell;
 
@@ -199,9 +211,13 @@ mod tests {
     #[test]
     fn an_unopenable_wb_leaves_its_reason_in_the_log_and_still_errs() {
         let log = FakeWbImportLog::default();
-        let err = open_wb_source_logged(&log, &paths(), true, || -> Result<(), String> {
-            Err("file is not a database".into())
-        })
+        let err = open_wb_source_logged(
+            &log,
+            &FakeWbImportClock::default(),
+            &paths(),
+            true,
+            || -> Result<(), String> { Err("file is not a database".into()) },
+        )
         .unwrap_err();
         assert_eq!(err, "file is not a database");
         let text = log.text();
@@ -212,7 +228,10 @@ mod tests {
     #[test]
     fn an_openable_wb_writes_nothing_at_this_step() {
         let log = FakeWbImportLog::default();
-        let v = open_wb_source_logged(&log, &paths(), true, || Ok(5)).unwrap();
+        let v = open_wb_source_logged(&log, &FakeWbImportClock::default(), &paths(), true, || {
+            Ok(5)
+        })
+        .unwrap();
         assert_eq!(v, 5);
         assert_eq!(log.append_count(), 0);
     }

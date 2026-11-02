@@ -21,6 +21,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_linked: 0,
     thumbnails_failed: 0,
     thumbnails_unmatched: 0,
+    thumbnails_unmatched_empty_hash: 0,
     thumbnails_skipped_online: 0,
     watch_folders_added: [],
     ...overrides,
@@ -196,4 +197,43 @@ test("詳細は0件の項目を出さず、非0なら決まった順で並ぶ", 
 
   const partial = buildWbImportResultDisplay(makeSummary({ registered: 1, clamped_scores: 2 }));
   assert.deepEqual(keys(partial.details), ["clamped"]);
+});
+
+test("自動対応できなかった旧サムネイルは、ハッシュが空と対応する動画なしに分かれ、件数の合計は変わらない", () => {
+  const d = buildWbImportResultDisplay(
+    makeSummary({ total: 99, thumbnails_unmatched: 99, thumbnails_unmatched_empty_hash: 97 }),
+  );
+  assert.deepEqual(keys(d.attention), ["unmatched-empty-hash", "unmatched"]);
+  assert.equal(
+    d.attention[0].text,
+    "旧サムネイルのハッシュが空のため自動では紐付けられません: 97件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。",
+  );
+  assert.equal(
+    d.attention[1].text,
+    "対応する動画がない旧サムネイル: 2件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。",
+  );
+  assert.deepEqual(
+    d.attention.map((a) => a.expandable),
+    [true, true],
+  );
+});
+
+test("原因の片方が0件なら、その項目は出さない", () => {
+  const onlyEmpty = buildWbImportResultDisplay(
+    makeSummary({ thumbnails_unmatched: 5, thumbnails_unmatched_empty_hash: 5 }),
+  );
+  assert.deepEqual(keys(onlyEmpty.attention), ["unmatched-empty-hash"]);
+  const onlyNoVideo = buildWbImportResultDisplay(
+    makeSummary({ thumbnails_unmatched: 4, thumbnails_unmatched_empty_hash: 0 }),
+  );
+  assert.deepEqual(keys(onlyNoVideo.attention), ["unmatched"]);
+  assert.match(onlyNoVideo.attention[0].text, /^対応する動画がない旧サムネイル: 4件/);
+});
+
+test("ハッシュが空の件数が合計を超えても、動画なしが負にならない", () => {
+  const d = buildWbImportResultDisplay(
+    makeSummary({ thumbnails_unmatched: 2, thumbnails_unmatched_empty_hash: 7 }),
+  );
+  assert.deepEqual(keys(d.attention), ["unmatched-empty-hash"]);
+  assert.match(d.attention[0].text, /: 2件/);
 });

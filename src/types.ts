@@ -106,6 +106,8 @@ export interface WbImportSummary {
   thumbnails_linked: number;
   thumbnails_failed: number;
   thumbnails_unmatched: number;
+  /** thumbnails_unmatched のうち、ファイル名のハッシュが空のもの。 */
+  thumbnails_unmatched_empty_hash: number;
   thumbnails_skipped_online: number;
   /** Folders this import newly added to the watch-folder list. */
   watch_folders_added: string[];
