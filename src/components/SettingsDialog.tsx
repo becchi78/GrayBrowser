@@ -3,8 +3,10 @@ import type { FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   getNasPollIntervalMinutes,
+  getRestoreViewStateEnabled,
   getUpdateCheckOnStartup,
   setNasPollIntervalMinutes,
+  setRestoreViewStateEnabled,
   setUpdateCheckOnStartup,
 } from "../api";
 import { DEFAULT_MINUTES, MAX_MINUTES, MIN_MINUTES, parseIntervalMinutes } from "../lib/nasInterval";
@@ -30,6 +32,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [updateCheck, setUpdateCheck] = useState(true);
+  const [restoreView, setRestoreView] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,11 +49,16 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     // 閉じた後に取得結果が遅れて反映されないようにする。
     let cancelled = false;
-    Promise.all([getNasPollIntervalMinutes(), getUpdateCheckOnStartup()])
-      .then(([minutes, updateCheckOnStartup]) => {
+    Promise.all([
+      getNasPollIntervalMinutes(),
+      getUpdateCheckOnStartup(),
+      getRestoreViewStateEnabled(),
+    ])
+      .then(([minutes, updateCheckOnStartup, restoreViewState]) => {
         if (!cancelled) {
           setText(String(minutes));
           setUpdateCheck(updateCheckOnStartup);
+          setRestoreView(restoreViewState);
           setLoading(false);
         }
       })
@@ -104,6 +112,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
     try {
       await setNasPollIntervalMinutes(parsed.minutes);
       await setUpdateCheckOnStartup(updateCheck);
+      await setRestoreViewStateEnabled(restoreView);
       if (mountedRef.current) {
         onClose();
       }
@@ -165,6 +174,21 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             オフにしても、「ヘルプ &gt; 更新の確認...」からいつでも確認できます。
           </p>
         </div>
+        <div className="settings-dialog-field">
+          <label className="settings-dialog-check">
+            <input
+              type="checkbox"
+              checked={restoreView}
+              disabled={busy}
+              data-testid="settings-restore-view-input"
+              onChange={(e) => setRestoreView(e.target.checked)}
+            />
+            前回終了時の検索・フォルダなどの状態を、起動時に復元する
+          </label>
+          <p className="settings-dialog-hint">
+            検索語、フォルダ、並び順、タグ、評価の絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
+          </p>
+        </div>
         {error !== null && (
           <p className="settings-dialog-error" role="alert" data-testid="settings-dialog-error">
             {error}
@@ -178,6 +202,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             onClick={() => {
               setText(String(DEFAULT_MINUTES));
               setUpdateCheck(true);
+              setRestoreView(true);
               setError(null);
             }}
           >

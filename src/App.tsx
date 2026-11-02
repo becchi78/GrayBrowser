@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
@@ -14,7 +14,12 @@ import { UpdateNotice } from "./components/UpdateNotice";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
-import { getInfoPaneCollapsed, setInfoPaneCollapsed as saveInfoPaneCollapsed } from "./api";
+import {
+  getInfoPaneCollapsed,
+  loadViewState,
+  saveViewState,
+  setInfoPaneCollapsed as saveInfoPaneCollapsed,
+} from "./api";
 import {
   onMenuAbout,
   onMenuCheckUpdate,
@@ -28,24 +33,47 @@ import {
 import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
 import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
-import type { SortDirection, SortField } from "./types";
+import { INITIAL_VIEW_STATE, fromSaved, isSameViewState, toSaved, type ViewState } from "./lib/viewState";
 
 // Only "default" exists today. New styles (e.g. "grid") get added here as
 // additional literal values, plus one entry in the viewStyle -> component
 // mapping below -- no other App.tsx changes.
 type ViewStyle = "default";
 
+// Wait this long after the last change before saving, so typing in the search
+// box does not write on every keystroke.
+const VIEW_STATE_SAVE_DELAY_MS = 500;
+
 function App() {
+  // The grid is not rendered until the saved state is known: mounting it with
+  // the initial state first would run a query for a view the user is about to
+  // leave. A failed load just continues with the initial state.
+  const [initialView, setInitialView] = useState<ViewState | null>(null);
+  useEffect(() => {
+    loadViewState()
+      .then((saved) => setInitialView(saved === null ? INITIAL_VIEW_STATE : fromSaved(saved)))
+      .catch((e) => {
+        console.error(e);
+        setInitialView(INITIAL_VIEW_STATE);
+      });
+  }, []);
+  if (initialView === null) {
+    return <div className="app" data-testid="app-loading" />;
+  }
+  return <AppContent initialView={initialView} />;
+}
+
+function AppContent({ initialView }: { initialView: ViewState }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("created_at");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
-  const [tagIds, setTagIds] = useState<number[]>([]);
+  const [search, setSearch] = useState(initialView.search);
+  const [sortField, setSortField] = useState(initialView.sortField);
+  const [sortDirection, setSortDirection] = useState(initialView.sortDirection);
+  const [tagIds, setTagIds] = useState(initialView.tagIds);
   // `null` = "すべて" (no folder filter).
-  const [folderPath, setFolderPath] = useState<string | null>(null);
+  const [folderPath, setFolderPath] = useState(initialView.folderPath);
   // Empty = "ALL" (no rating filter). Independent filter axis from
   // tagIds -- see RatingBar's own comment.
-  const [ratings, setRatings] = useState<number[]>([]);
+  const [ratings, setRatings] = useState(initialView.ratings);
   // FolderDialog/WbImportDialog are reached only via the native menu
   // ("ファイル > フォルダ管理.../.wbインポート..." -- see the two
   // onMenuOpen*Dialog subscriptions below).
@@ -71,6 +99,20 @@ function App() {
     null,
   );
   const [jumpRequest, setJumpRequest] = useState<{ percent: number; seq: number } | null>(null);
+
+  // What the backend already holds, so an unchanged state is never rewritten.
+  const lastSavedRef = useRef(initialView);
+  useEffect(() => {
+    const current: ViewState = { search, folderPath, sortField, sortDirection, tagIds, ratings };
+    if (isSameViewState(current, lastSavedRef.current)) return;
+    const timer = setTimeout(() => {
+      lastSavedRef.current = current;
+      // A failed save only costs restoring this state next launch, so it is
+      // logged rather than surfaced.
+      saveViewState(toSaved(current)).catch((e) => console.error(e));
+    }, VIEW_STATE_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [search, folderPath, sortField, sortDirection, tagIds, ratings]);
 
   useEffect(() => {
     getInfoPaneCollapsed()
