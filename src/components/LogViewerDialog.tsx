@@ -154,9 +154,10 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
   }
 
   return createPortal(
-    <div className="dialog-overlay">
+    <div className="dialog-overlay" onClick={onClose}>
       <div
         className="dialog log-viewer-dialog"
+        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="動作ログ"

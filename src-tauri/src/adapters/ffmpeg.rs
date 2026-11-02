@@ -8,6 +8,7 @@ use std::process::Command;
 use gb_core::ports::ffmpeg::{
     CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
 };
+use gb_core::stderr_tail::{tail_lines, STDERR_TAIL_LINES};
 
 use crate::adapters::long_path;
 
@@ -230,9 +231,11 @@ fn crop_filter(crop: CropRect) -> String {
 }
 
 /// Argument list for turning a still image into WebP, optionally through a
-/// `-vf` filter. Input is always `.jpg` (legacy WhiteBrowser thumbnail
-/// naming), so ffmpeg can infer the demuxer from the extension -- no input
-/// `-f` needed. The output, like `extract_thumbnail`'s, is a
+/// `-vf` filter. The input is forced to the plain `image2` demuxer with
+/// `-pattern_type none`: otherwise ffmpeg reads a `%` in the file name
+/// (e.g. `120%` or `%03d`) as a printf-style sequence pattern and reports
+/// "No such file" for a file that exists. These flags go before `-i` because
+/// they are input options. The output, like `extract_thumbnail`'s, is a
 /// `[id].webp.tmp` path (atomic write scheme), so its extension can't tell
 /// ffmpeg the muxer; it is forced explicitly for the same reason documented
 /// there.
@@ -242,7 +245,10 @@ fn image_to_webp_args(
     video_filter: Option<&str>,
     quality: u8,
 ) -> Vec<String> {
-    let mut args = vec!["-i".to_string(), input.to_string()];
+    let mut args = ["-f", "image2", "-pattern_type", "none", "-i"]
+        .map(String::from)
+        .to_vec();
+    args.push(input.to_string());
     if let Some(filter) = video_filter {
         args.push("-vf".to_string());
         args.push(filter.to_string());
@@ -285,9 +291,11 @@ fn run_image_to_webp(
         .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
     if !output.status.success() {
+        // Only the tail: the full stderr is ~100 lines of banner that would
+        // flood the import log and the per-row error text.
         return Err(FfmpegError::NonZeroExit {
             status: output.status.code().unwrap_or(-1),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stderr: tail_lines(&String::from_utf8_lossy(&output.stderr), STDERR_TAIL_LINES),
         });
     }
     Ok(())
@@ -346,6 +354,10 @@ mod tests {
         assert_eq!(
             args,
             [
+                "-f",
+                "image2",
+                "-pattern_type",
+                "none",
                 "-i",
                 "in.jpg",
                 "-quality",
@@ -366,6 +378,10 @@ mod tests {
         assert_eq!(
             args,
             [
+                "-f",
+                "image2",
+                "-pattern_type",
+                "none",
                 "-i",
                 "in.jpg",
                 "-vf",
@@ -380,6 +396,14 @@ mod tests {
                 "out.webp.tmp"
             ]
         );
+    }
+
+    #[test]
+    fn image_to_webp_args_passes_a_percent_path_as_one_literal_input() {
+        let args = image_to_webp_args("a 120% max %03d.jpg", "out.webp.tmp", None, 55);
+        let i = args.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(args[i + 1], "a 120% max %03d.jpg");
+        assert_eq!(&args[..i], ["-f", "image2", "-pattern_type", "none"]);
     }
 
     #[test]

@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { moveDown, moveUp } from "../lib/reorderablePinnedTags";
 import { buildScanSummaryMessage } from "../lib/scanSummaryMessage";
+import { rescanState } from "../lib/scanTargets";
 
 interface Props {
   open: boolean;
@@ -75,6 +76,8 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
     return null;
   }
 
+  const rescan = rescanState(folders, checkDisabled);
+
   // The backend rewrites the check-disabled list on rename/remove/add, so the
   // dialog refetches it rather than mirroring the change. A failed refetch
   // must not block the other updates.
@@ -97,16 +100,9 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
     }
   }
 
-  // FolderDialog's footer doesn't list a scan-trigger button in the design
-  // spec (only "+ フォルダを追加" / "閉じる"). But `pick_watch_folders`
-  // (handleAdd above) only persists the folder and reconfigures the
-  // realtime watcher/NAS poller -- `RealtimeWatchManager::reconfigure`
-  // starts watching for *future* filesystem events, it does not enumerate a
-  // newly added folder's *existing* files. `start_scan` is the only thing
-  // that does (`gb_core`'s full walk + register pipeline), and there is no
-  // other entry point anywhere in the app that calls it. Dropping this
-  // button with no replacement would silently remove the app's only way to
-  // populate a folder's pre-existing videos.
+  // Folders are registered automatically when added (watcher start / diff
+  // scan), so this is a manual full re-check, not a required first step. The
+  // backend skips folders whose update check is off.
   async function handleScan() {
     setScanning(true);
     setLastScanSummary(null);
@@ -371,22 +367,29 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
               {renameSummary}
             </p>
           )}
-          {/* See handleScan's own comment: not in the design spec's listed
-              footer elements, kept as a conservative safety addition --
-              start_scan has no other entry point anywhere in the app. */}
           <div className="folder-dialog-scan-row">
             <button
               type="button"
               data-testid="folder-dialog-scan-btn"
               onClick={handleScan}
-              disabled={scanning || folders.length === 0}
+              disabled={scanning || !rescan.enabled}
             >
-              {scanning ? "スキャン中..." : "スキャン開始"}
+              {scanning ? "スキャン中..." : "再スキャン"}
             </button>
             {lastScanSummary && (
               <span className="scan-summary">{lastScanSummary}</span>
             )}
           </div>
+          <p
+            className="folder-dialog-scan-note"
+            data-testid="folder-dialog-scan-note"
+          >
+            {rescan.enabled
+              ? "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。"
+              : rescan.reason === "all-check-off"
+                ? "すべてのフォルダで「更新チェック」が外れているため、再スキャンできません。"
+                : "フォルダが登録されていないため、再スキャンできません。"}
+          </p>
           <div className="dialog-footer">
             <button
               type="button"

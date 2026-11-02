@@ -22,6 +22,7 @@ pub mod retry;
 pub mod scan_pipeline;
 pub mod search;
 pub mod sort;
+pub mod stderr_tail;
 pub mod tags;
 pub mod thumbnail_policy;
 pub mod thumbnail_progress;

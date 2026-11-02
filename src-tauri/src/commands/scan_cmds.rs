@@ -200,6 +200,16 @@ fn scan_reachable_folders(
     Ok(summary)
 }
 
+/// Watch folders a manual scan covers: those whose update check is on. A
+/// folder with the check off is meant to stay frozen, so a manual scan must
+/// not touch it either; re-enabling the check is how its newer files get
+/// picked up.
+fn load_scan_target_folders(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
+    let folders = queries::get_watch_folders(conn)?;
+    let disabled = queries::get_watch_check_disabled(conn)?;
+    Ok(gb_core::watch_folders::filter_checked(&folders, &disabled))
+}
+
 /// `async` so the (blocking) walk+hash+DB work runs off Tauri's main event
 /// loop thread and doesn't freeze the UI while a scan is in progress.
 #[tauri::command]
@@ -212,7 +222,7 @@ pub async fn start_scan(
 ) -> Result<scan::ScanSummary, String> {
     let folders = {
         let conn = db.writer.lock().unwrap();
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
+        load_scan_target_folders(&conn).map_err(|e| e.to_string())?
     };
     let thumbnails_root = crate::paths::app_data_dir()
         .map(|dir| crate::thumbnail::paths::thumbnails_root(&dir))
@@ -358,6 +368,36 @@ pub fn list_skipped_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn scan_targets_exclude_folders_with_the_update_check_off() {
+        let (_d, db) = crate::db::test_support::init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        queries::set_watch_folders(&conn, &v(&["A", "B", "C"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &v(&["B"])).unwrap();
+        assert_eq!(load_scan_target_folders(&conn).unwrap(), v(&["A", "C"]));
+    }
+
+    #[test]
+    fn scan_targets_are_empty_when_every_folder_is_unchecked() {
+        let (_d, db) = crate::db::test_support::init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        queries::set_watch_folders(&conn, &v(&["A", "B"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &v(&["A", "B"])).unwrap();
+        assert!(load_scan_target_folders(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn scan_targets_include_everything_when_nothing_is_unchecked() {
+        let (_d, db) = crate::db::test_support::init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        queries::set_watch_folders(&conn, &v(&["A", "B"])).unwrap();
+        assert_eq!(load_scan_target_folders(&conn).unwrap(), v(&["A", "B"]));
+    }
 
     fn video_row(thumbnail_ready: bool) -> queries::VideoRow {
         queries::VideoRow {

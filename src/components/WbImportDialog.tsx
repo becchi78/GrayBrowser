@@ -173,10 +173,14 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const resultDisplay = summary ? buildWbImportResultDisplay(summary) : null;
 
   return (
-    // No overlay click-to-close: a stray click outside would throw away the
-    // result or a half-made selection; only the close button closes.
-    <div className="dialog-overlay">
-      <div className="dialog wb-import-dialog" data-testid="import-dialog">
+    // Overlay click closes like every other dialog; requestClose keeps it shut
+    // while an import is running, so the outcome can't be lost by a stray click.
+    <div className="dialog-overlay" onClick={requestClose}>
+      <div
+        className="dialog wb-import-dialog"
+        data-testid="import-dialog"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>.wbインポート</h2>
 
         {!summary && !error && (
