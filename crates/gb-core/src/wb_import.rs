@@ -66,6 +66,48 @@ pub fn extract_thumbnail_hash(filename: &str) -> Option<String> {
     is_lowercase_hex_8.then(|| hash.to_string())
 }
 
+/// Why a legacy thumbnail file could not be linked automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmatchedReason {
+    /// The name is `<video name>.#.jpg`: the `.wb` row carried an empty hash,
+    /// so the file cannot be tied to a video by name.
+    EmptyHash,
+    /// Everything else: a hash with no video behind it (an orphan, or the
+    /// target of a duplicate-path row that was skipped), or a name that does
+    /// not carry a hash at all. Kept as one group because the cases are rare
+    /// and a user can do the same about each of them.
+    NoMatchingVideo,
+}
+
+/// Classifies a file that [`match_thumbnail_files`] left unmatched. An empty
+/// hash needs a non-empty video name before `.#`: a bare `.#.jpg` belongs to no
+/// video and is an orphan.
+pub fn classify_unmatched_filename(filename: &str) -> UnmatchedReason {
+    match filename.strip_suffix(".#.jpg") {
+        Some(stem) if !stem.is_empty() => UnmatchedReason::EmptyHash,
+        _ => UnmatchedReason::NoMatchingVideo,
+    }
+}
+
+/// Unmatched file names split by [`UnmatchedReason`], each group keeping the
+/// input order. Together the groups hold exactly the input.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnmatchedBreakdown {
+    pub empty_hash: Vec<String>,
+    pub no_matching_video: Vec<String>,
+}
+
+pub fn partition_unmatched(filenames: &[String]) -> UnmatchedBreakdown {
+    let mut out = UnmatchedBreakdown::default();
+    for name in filenames {
+        match classify_unmatched_filename(name) {
+            UnmatchedReason::EmptyHash => out.empty_hash.push(name.clone()),
+            UnmatchedReason::NoMatchingVideo => out.no_matching_video.push(name.clone()),
+        }
+    }
+    out
+}
+
 /// Folds full-width (Zenkaku) ASCII-range characters (U+FF01-U+FF5E) and the
 /// full-width space (U+3000) to their half-width equivalents. Mirrors
 /// `tags::fold_width` (kept private there); duplicated here rather than
@@ -389,6 +431,49 @@ mod tests {
     #[test]
     fn extract_thumbnail_hash_rejects_missing_marker() {
         assert_eq!(extract_thumbnail_hash("MyVideo.mp4.jpg"), None);
+    }
+
+    #[test]
+    fn classifies_an_empty_hash_file_name() {
+        assert_eq!(
+            classify_unmatched_filename("MyVideo.mp4.#.jpg"),
+            UnmatchedReason::EmptyHash
+        );
+        assert_eq!(
+            classify_unmatched_filename("a～b.avi.#.jpg"),
+            UnmatchedReason::EmptyHash
+        );
+    }
+
+    #[test]
+    fn classifies_orphans_and_unparseable_names_as_no_matching_video() {
+        for name in [
+            ".#.jpg",
+            "MyVideo.mp4.#1e5e0fbf.jpg",
+            "MyVideo.mp4.#1E5E0FBF.jpg",
+            "MyVideo.mp4.#.png",
+            "MyVideo.mp4.jpg",
+            "stray_file.jpg",
+            "",
+        ] {
+            assert_eq!(
+                classify_unmatched_filename(name),
+                UnmatchedReason::NoMatchingVideo,
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn partition_keeps_order_and_loses_nothing() {
+        let input: Vec<String> = ["b.#.jpg", "x.#abcdef01.jpg", ".#.jpg", "a.#.jpg"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let parts = partition_unmatched(&input);
+        assert_eq!(parts.empty_hash, vec!["b.#.jpg", "a.#.jpg"]);
+        assert_eq!(parts.no_matching_video, vec!["x.#abcdef01.jpg", ".#.jpg"]);
+        assert_eq!(partition_unmatched(&[]), UnmatchedBreakdown::default());
     }
 
     #[test]

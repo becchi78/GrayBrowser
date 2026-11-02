@@ -20,12 +20,13 @@ use gb_core::paths::extract_drive_root;
 use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
 use gb_core::ports::folder_probe::FolderProbe;
+use gb_core::ports::wb_import_clock::{ClockReading, WbImportClock};
 use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
     count_clamped_scores, count_source_tags, extract_thumbnail_hash, match_thumbnail_files,
-    wb_row_to_import_candidate, WbImportStage,
+    partition_unmatched, wb_row_to_import_candidate, WbImportStage,
 };
 use gb_core::wb_import_log::{
     self as wb_log, Availability, LogSummary, PathRestoration, RowLog, RowOutcome,
@@ -94,7 +95,7 @@ pub struct WbImportPaths {
 // One argument over clippy's limit: each is an independent handle the spawned
 // thread needs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-pub fn run_wb_import<S, F, N, C, W, D, P, L>(
+pub fn run_wb_import<S, F, N, C, W, D, P, K, L>(
     db: Db,
     paths: WbImportPaths,
     wb_source: S,
@@ -107,6 +108,7 @@ pub fn run_wb_import<S, F, N, C, W, D, P, L>(
     watch_reconfigurer: Arc<W>,
     dir_lister: Arc<D>,
     folder_probe: Arc<P>,
+    clock: Arc<K>,
     import_log: L,
 ) where
     S: WbSourceAdapter + 'static,
@@ -116,6 +118,7 @@ pub fn run_wb_import<S, F, N, C, W, D, P, L>(
     W: WatchReconfigurer + 'static,
     D: DirLister + 'static,
     P: FolderProbe + 'static,
+    K: WbImportClock + 'static,
     L: WbImportLog + 'static,
 {
     thread::spawn(move || {
@@ -129,6 +132,7 @@ pub fn run_wb_import<S, F, N, C, W, D, P, L>(
             register_watch_folders.then_some(watch_reconfigurer.as_ref()),
             dir_lister.as_ref(),
             folder_probe.as_ref(),
+            clock.as_ref(),
             &import_log,
         );
 
@@ -377,7 +381,7 @@ fn format_unreachable_share(root: &str) -> String {
 // One argument over clippy's limit, same as `run_wb_import`: each is an
 // independent handle, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]
-fn import_all<S, F, N, C, W, D, P, L>(
+fn import_all<S, F, N, C, W, D, P, K, L>(
     db: &Db,
     paths: &WbImportPaths,
     wb_source: &S,
@@ -387,6 +391,7 @@ fn import_all<S, F, N, C, W, D, P, L>(
     watch: Option<&W>,
     dir_lister: &D,
     folder_probe: &P,
+    clock: &K,
     import_log: &L,
 ) where
     S: WbSourceAdapter,
@@ -396,6 +401,7 @@ fn import_all<S, F, N, C, W, D, P, L>(
     W: WatchReconfigurer,
     D: DirLister,
     P: FolderProbe,
+    K: WbImportClock,
     L: WbImportLog,
 {
     log::info!(
@@ -403,12 +409,19 @@ fn import_all<S, F, N, C, W, D, P, L>(
         paths.wb_path.display(),
         import_log.location()
     );
+    // One reading serves as the import's start, the header time and the start
+    // of the first stage, so the three can never differ.
+    let started = clock.now();
     import_log.append(&wb_log::format_header(
+        &started.local,
         &paths.wb_path.display().to_string(),
         &paths.thumbnail_folder.display().to_string(),
         watch.is_some(),
     ));
-    import_log.append(&wb_log::format_stage_heading(WbImportStage::Reading));
+    import_log.append(&wb_log::format_stage_heading(
+        WbImportStage::Reading,
+        &started.local,
+    ));
 
     notifier.notify_stage(WbImportStage::Reading);
     let rows = match wb_source.read_movies() {
@@ -427,6 +440,12 @@ fn import_all<S, F, N, C, W, D, P, L>(
             );
             log::error!("wb import: {reason}");
             import_log.append(&wb_log::format_failure(&reason));
+            // The time up to the failure is still worth knowing, e.g. a read
+            // that hangs on a network drive before it errors.
+            import_log.append(&format_finish_text(
+                &[(WbImportStage::Reading, started.elapsed_ms)],
+                &clock.now(),
+            ));
             notifier.notify_failed(&reason);
             return;
         }
@@ -498,6 +517,7 @@ fn import_all<S, F, N, C, W, D, P, L>(
     // exactly one.
     let mut row_logs: Vec<RowLog> = Vec::with_capacity(rows.len());
 
+    let registering_started = clock.now();
     notifier.notify_stage(WbImportStage::Registering);
     let mut reported_rows: Option<u32> = None;
     for (idx, row) in rows.iter().enumerate() {
@@ -762,6 +782,7 @@ fn import_all<S, F, N, C, W, D, P, L>(
             Vec::new()
         }
     };
+    let linking_started = clock.now();
     notifier.notify_stage(WbImportStage::Linking);
     let link_outcome = link_thumbnails(
         &paths.thumbnail_folder,
@@ -794,6 +815,7 @@ fn import_all<S, F, N, C, W, D, P, L>(
     let thumbnails_linked = link_outcome.linked;
     let thumbnails_failed = link_outcome.failed;
     let thumbnails_unmatched = link_outcome.unmatched;
+    let thumbnails_unmatched_empty_hash = link_outcome.unmatched_empty_hash;
     let thumbnails_skipped_online = link_outcome.skipped_online;
 
     let summary = WbImportSummary {
@@ -811,16 +833,24 @@ fn import_all<S, F, N, C, W, D, P, L>(
         thumbnails_linked,
         thumbnails_failed,
         thumbnails_unmatched,
+        thumbnails_unmatched_empty_hash,
         thumbnails_skipped_online,
         watch_folders_added,
     };
 
+    let stage_starts = StageStarts {
+        reading: started,
+        registering: registering_started,
+        linking: linking_started,
+    };
     write_import_log(
         import_log,
         &row_logs,
         &link_outcome,
         &summary,
         &summary.watch_folders_added,
+        &stage_starts,
+        &clock.now(),
     );
 
     log::info!(
@@ -863,19 +893,43 @@ fn import_all<S, F, N, C, W, D, P, L>(
 /// Records an import that failed before `import_all` could start (the `.wb`
 /// could not be opened): the same header and failure text a failed read gets,
 /// so the log has the same shape whichever step failed.
-pub fn record_start_failure<L: WbImportLog>(
+pub fn record_start_failure<L: WbImportLog, K: WbImportClock>(
     import_log: &L,
+    clock: &K,
     paths: &WbImportPaths,
     register_watch_folders: bool,
     reason: &str,
 ) {
+    let started = clock.now();
     import_log.append(&wb_log::format_header(
+        &started.local,
         &paths.wb_path.display().to_string(),
         &paths.thumbnail_folder.display().to_string(),
         register_watch_folders,
     ));
-    import_log.append(&wb_log::format_stage_heading(WbImportStage::Reading));
+    import_log.append(&wb_log::format_stage_heading(
+        WbImportStage::Reading,
+        &started.local,
+    ));
     import_log.append(&wb_log::format_failure(reason));
+    import_log.append(&format_finish_text(
+        &[(WbImportStage::Reading, started.elapsed_ms)],
+        &clock.now(),
+    ));
+}
+
+/// When each stage began, as read from the clock.
+struct StageStarts {
+    reading: ClockReading,
+    registering: ClockReading,
+    linking: ClockReading,
+}
+
+/// The closing lines (end time and durations) of an import whose stages began
+/// at the given monotonic times and which ended at `finished`.
+fn format_finish_text(starts: &[(WbImportStage, u64)], finished: &ClockReading) -> String {
+    let (stages, total) = wb_log::stage_durations(starts, finished.elapsed_ms);
+    wb_log::format_finish(&finished.local, &stages, total)
 }
 
 /// Writes everything that is only known once linking has finished: the rows
@@ -887,17 +941,25 @@ fn write_import_log<L: WbImportLog>(
     link_outcome: &LinkOutcome,
     summary: &WbImportSummary,
     watch_folders_added: &[String],
+    starts: &StageStarts,
+    finished: &ClockReading,
 ) {
     let linked: HashSet<String> = link_outcome.linked_video_ids.iter().cloned().collect();
     let failed: HashMap<String, String> = link_outcome.failed_video_ids.iter().cloned().collect();
 
-    import_log.append(&wb_log::format_stage_heading(WbImportStage::Registering));
+    import_log.append(&wb_log::format_stage_heading(
+        WbImportStage::Registering,
+        &starts.registering.local,
+    ));
     for row in row_logs {
         let link = wb_log::resolve_link_status(row, &linked, &failed);
         import_log.append(&wb_log::format_row(row, &link));
     }
 
-    import_log.append(&wb_log::format_stage_heading(WbImportStage::Linking));
+    import_log.append(&wb_log::format_stage_heading(
+        WbImportStage::Linking,
+        &starts.linking.local,
+    ));
     if let Some(reason) = &link_outcome.folder_error {
         import_log.append(&wb_log::format_thumbnail_folder_error(reason));
     }
@@ -920,8 +982,17 @@ fn write_import_log<L: WbImportLog>(
         thumbnails_linked: summary.thumbnails_linked,
         thumbnails_failed: summary.thumbnails_failed,
         thumbnails_unmatched: summary.thumbnails_unmatched,
+        thumbnails_unmatched_empty_hash: summary.thumbnails_unmatched_empty_hash,
         thumbnails_skipped_online: summary.thumbnails_skipped_online,
     }));
+    import_log.append(&format_finish_text(
+        &[
+            (WbImportStage::Reading, starts.reading.elapsed_ms),
+            (WbImportStage::Registering, starts.registering.elapsed_ms),
+            (WbImportStage::Linking, starts.linking.elapsed_ms),
+        ],
+        finished,
+    ));
 }
 
 /// The legacy thumbnail frame grid, when the `.wb` states one unambiguously:
@@ -1008,6 +1079,9 @@ struct LinkOutcome {
     linked: u32,
     failed: u32,
     unmatched: u32,
+    /// Part of `unmatched` whose file name carries an empty hash
+    /// (`unmatched - unmatched_empty_hash` is the rest).
+    unmatched_empty_hash: u32,
     skipped_online: u32,
     /// Videos whose slot files were all written; the caller must flag these
     /// ready in the DB.
@@ -1188,6 +1262,9 @@ fn link_thumbnails<F: FfmpegAdapter>(
         linked: linked_video_ids.len() as u32,
         failed: failed_video_ids.len() as u32,
         unmatched: thumbnails_unmatched,
+        unmatched_empty_hash: partition_unmatched(&plan.unmatched_filenames)
+            .empty_hash
+            .len() as u32,
         skipped_online: thumbnails_skipped_online,
         linked_video_ids,
         failed_video_ids,
@@ -1496,6 +1573,7 @@ mod tests {
     use gb_core::testing::fake_dir_lister::FakeDirLister;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+    use gb_core::testing::fake_wb_import_clock::FakeWbImportClock;
     use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
     use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 
@@ -1530,6 +1608,7 @@ mod tests {
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             &FakeWbImportLog::default(),
         );
     }
@@ -2645,6 +2724,7 @@ mod tests {
             Some(reconfigurer),
             &FakeDirLister::default(),
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
@@ -2893,6 +2973,7 @@ mod tests {
             reconfigurer,
             lister,
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             &FakeWbImportLog::default(),
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
@@ -4944,6 +5025,7 @@ mod tests {
             None::<&FakeWatchReconfigurer>,
             lister,
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             import_log,
         );
         let summary = notifier.complete_calls.lock().unwrap().first().cloned();
@@ -5139,6 +5221,7 @@ mod tests {
             Some(&reconfigurer),
             &FakeDirLister::default(),
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             &import_log,
         );
 
@@ -5255,6 +5338,7 @@ mod tests {
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
             &FakeFolderProbe::default(),
+            &FakeWbImportClock::default(),
             &recorder,
         );
 
@@ -5307,9 +5391,147 @@ mod tests {
             &import_log,
         );
 
-        assert!(import_log
-            .text()
-            .contains("旧サムネイル: 紐付け 1 / 失敗 1 / 対応なし 1 / "));
+        assert!(import_log.text().contains(
+            "旧サムネイル: 紐付け 1 / 失敗 1 / 対応なし 1 (ハッシュが空 0 / 対応する動画なし 1) / "
+        ));
+    }
+
+    fn run_with_clock(
+        h: &Harness,
+        movies: Result<Vec<WbMovieRow>, gb_core::ports::wb_source::WbSourceError>,
+        clock: &FakeWbImportClock,
+        import_log: &FakeWbImportLog,
+    ) -> Option<WbImportSummary> {
+        let notifier = FakeWbImportNotifier::default();
+        super::import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies,
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+            None::<&FakeWatchReconfigurer>,
+            &FakeDirLister::default(),
+            &FakeFolderProbe::default(),
+            clock,
+            import_log,
+        );
+        let summary = notifier.complete_calls.lock().unwrap().first().cloned();
+        summary
+    }
+
+    #[test]
+    fn the_log_stamps_each_stage_and_ends_with_the_durations() {
+        let h = harness();
+        let import_log = FakeWbImportLog::default();
+        // Start, registering begins, linking begins, import ends.
+        let clock = FakeWbImportClock::at_offsets(&[0, 2, 5, 70]);
+
+        run_with_clock(&h, Ok(vec![row(|_| {})]), &clock, &import_log).expect("completes");
+
+        let text = import_log.text();
+        assert!(text.contains("\n開始時刻: 2026-11-02 12:00:00\n"), "{text}");
+        for heading in [
+            "== 読み込み (reading) == 2026-11-02 12:00:00\n",
+            "== 動画の登録 (registering) == 2026-11-02 12:00:02\n",
+            "== 旧サムネイルの紐付け (linking) == 2026-11-02 12:00:05\n",
+        ] {
+            assert!(text.contains(heading), "{heading}\n{text}");
+        }
+        assert!(
+            text.ends_with(
+                "\n終了時刻: 2026-11-02 12:01:10\n\
+                 所要時間: 全体 1分10秒 / 読み込み 2秒 / 動画の登録 3秒 / 旧サムネイルの紐付け 1分5秒\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(clock.calls(), 4);
+        let at = |needle: &str| text.find(needle).unwrap();
+        assert!(at("== サマリー ==") < at("終了時刻:"));
+    }
+
+    #[test]
+    fn a_failed_read_still_reports_the_time_it_took() {
+        let h = harness();
+        let import_log = FakeWbImportLog::default();
+        let clock = FakeWbImportClock::at_offsets(&[0, 3]);
+
+        let summary = run_with_clock(
+            &h,
+            Err(gb_core::ports::wb_source::WbSourceError::Query(
+                "boom".into(),
+            )),
+            &clock,
+            &import_log,
+        );
+
+        assert!(summary.is_none());
+        let text = import_log.text();
+        assert!(text.contains("== 読み込み (reading) == 2026-11-02 12:00:00\n"));
+        assert!(!text.contains("== 動画の登録"));
+        assert!(
+            text.ends_with("\n終了時刻: 2026-11-02 12:00:03\n所要時間: 全体 3秒 / 読み込み 3秒\n")
+        );
+    }
+
+    #[test]
+    fn an_unopenable_wb_logs_times_too() {
+        let import_log = FakeWbImportLog::default();
+        let clock = FakeWbImportClock::at_offsets(&[0, 1]);
+        let paths = WbImportPaths {
+            wb_path: PathBuf::from("test.wb"),
+            thumbnail_folder: PathBuf::from("thumbs"),
+            thumbnails_dir: PathBuf::new(),
+        };
+
+        record_start_failure(&import_log, &clock, &paths, true, "not a database");
+
+        let text = import_log.text();
+        assert!(text.contains("開始時刻: 2026-11-02 12:00:00"));
+        assert!(text.contains("== 読み込み (reading) == 2026-11-02 12:00:00"));
+        assert!(text.contains("取り込みを中止しました: not a database"));
+        assert!(
+            text.ends_with("終了時刻: 2026-11-02 12:00:01\n所要時間: 全体 1秒 / 読み込み 1秒\n")
+        );
+    }
+
+    #[test]
+    fn unmatched_thumbnails_are_split_into_empty_hash_and_no_matching_video() {
+        let h = harness();
+        for name in [
+            "Gone1.mp4.#.jpg",
+            "Gone2.mp4.#.jpg",
+            ".#.jpg",
+            "Orphan.mp4.#abcdef01.jpg",
+        ] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"jpg").unwrap();
+        }
+        let import_log = FakeWbImportLog::default();
+
+        let (_, summary) = import_with_log(
+            &h,
+            Ok(vec![row(|r| r.hash = String::new())]),
+            &no_op_ffmpeg(),
+            &FakeDirLister::default(),
+            &import_log,
+        );
+
+        let summary = summary.expect("completes");
+        assert_eq!(summary.thumbnails_unmatched, 4);
+        assert_eq!(summary.thumbnails_unmatched_empty_hash, 2);
+        let text = import_log.text();
+        assert!(
+            text.contains("自動対応できなかった旧サムネイル: 4 件"),
+            "{text}"
+        );
+        assert!(text.contains(
+            "ハッシュが空(自動では紐付けられない): 2 件\n  \"Gone1.mp4.#.jpg\"\n  \"Gone2.mp4.#.jpg\"\n"
+        ));
+        assert!(text.contains("対応する動画なし: 2 件\n"));
+        assert!(text.contains("対応なし 4 (ハッシュが空 2 / 対応する動画なし 2)"));
     }
 
     // ---- unreachable shares ----
@@ -5335,6 +5557,7 @@ mod tests {
             None::<&FakeWatchReconfigurer>,
             lister,
             probe,
+            &FakeWbImportClock::default(),
             import_log,
         );
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
@@ -5514,6 +5737,7 @@ mod tests {
             None::<&FakeWatchReconfigurer>,
             &FakeDirLister::default(),
             &PanicOnW,
+            &FakeWbImportClock::default(),
             &FakeWbImportLog::default(),
         );
 

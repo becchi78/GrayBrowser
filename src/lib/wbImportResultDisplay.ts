@@ -22,7 +22,7 @@ import { classifyTagsAssigned } from "./wbImportTagsDisplay.ts";
 export type AttentionTone = "amber" | "failed";
 
 export interface AttentionItem {
-  key: "unmatched" | "failed" | "invalid-name" | "failed-rows" | "tags";
+  key: "unmatched-empty-hash" | "unmatched" | "failed" | "invalid-name" | "failed-rows" | "tags";
   tone: AttentionTone;
   text: string;
   /** 「確認する」ボタンで補足を開ける項目。 */
@@ -53,11 +53,23 @@ export interface WbImportResultDisplay {
 
 export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDisplay {
   const attention: AttentionItem[] = [];
-  if (s.thumbnails_unmatched > 0) {
+  // 「自動対応できなかった」の合計（thumbnails_unmatched）を原因別に分けて出す。
+  // 2つの件数を足すと、従来の合計とちょうど一致する。
+  const emptyHash = Math.min(s.thumbnails_unmatched_empty_hash, s.thumbnails_unmatched);
+  const noMatchingVideo = s.thumbnails_unmatched - emptyHash;
+  if (emptyHash > 0) {
+    attention.push({
+      key: "unmatched-empty-hash",
+      tone: "amber",
+      text: `旧サムネイルのハッシュが空のため自動では紐付けられません: ${emptyHash}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
+      expandable: true,
+    });
+  }
+  if (noMatchingVideo > 0) {
     attention.push({
       key: "unmatched",
       tone: "amber",
-      text: `自動対応できなかった旧サムネイル: ${s.thumbnails_unmatched}件 — エラーではありません。手動で紐付けてください。`,
+      text: `対応する動画がない旧サムネイル: ${noMatchingVideo}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
       expandable: true,
     });
   }
