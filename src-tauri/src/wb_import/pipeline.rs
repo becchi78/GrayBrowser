@@ -7,10 +7,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
+use gb_core::image_size::jpeg_dimensions;
 use gb_core::path_restore::{last_segment, restore_path};
 use gb_core::paths::extract_drive_root;
 use gb_core::ports::dir_lister::DirLister;
@@ -1085,7 +1089,7 @@ fn link_thumbnails<F: FfmpegAdapter>(
     already_registered_offline_hashes: &HashSet<String>,
     ffmpeg: &F,
     layout: Option<&ThumbLayout>,
-    on_progress: impl Fn(u32, u32),
+    on_progress: impl Fn(u32, u32) + Sync,
 ) -> LinkOutcome {
     let mut filenames = match thumbnail_scan::list_filenames(thumbnail_folder) {
         Ok(names) => names,
@@ -1140,107 +1144,40 @@ fn link_thumbnails<F: FfmpegAdapter>(
         );
     }
 
+    let matched_total = plan.matched.len() as u32;
+    on_progress(0, matched_total);
+    let context = LinkContext {
+        thumbnail_folder,
+        thumbnails_root,
+        watch_folders,
+        layout,
+        ffmpeg,
+    };
+    let results = link_in_parallel(
+        &plan.matched,
+        matched_total,
+        &on_progress,
+        |video_id, filename| {
+            context.link_one(video_id, filename, file_path_by_id.get(video_id).copied())
+        },
+    );
+    if matched_total > 0 {
+        on_progress(matched_total, matched_total);
+    }
+
+    // Folded in `plan.matched` order, so the id lists read exactly as they did
+    // when the items were handled one after another.
     let mut linked_video_ids: Vec<String> = Vec::new();
     let mut failed_video_ids: Vec<(String, String)> = Vec::new();
     let mut split_count = 0u32;
-    let matched_total = plan.matched.len() as u32;
-    on_progress(0, matched_total);
-    for (done, (video_id, filename)) in plan.matched.into_iter().enumerate() {
-        // Reported at the top of the iteration, as the count already finished,
-        // because the body leaves through many `continue`s.
-        let done = done as u32;
-        if done > 0 && is_progress_tick(done, matched_total) {
-            on_progress(done, matched_total);
-        }
-        // Defensive only: every `video_id` here came from `movies_for_matching`,
-        // which is derived from the very same `registered_movies` this map
-        // was built from, so a miss should never actually occur.
-        let Some(&file_path) = file_path_by_id.get(video_id.as_str()) else {
-            log::warn!(
-                "wb import: internal inconsistency -- matched video {video_id} has no known \
-                 file_path; skipping its legacy thumbnail link"
-            );
-            failed_video_ids.push((video_id, "内部の不整合".to_string()));
-            continue;
-        };
-        let video_dir =
-            crate::thumbnail::paths::video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
-        if let Err(e) = fs::create_dir_all(&video_dir) {
-            log::warn!(
-                "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
-                video_dir.display()
-            );
-            failed_video_ids.push((video_id, format!("サムネイルの保存先を作れない: {e}")));
-            continue;
-        }
-
-        let src_path = thumbnail_folder.join(&filename);
-
-        if let Some(rects) = layout.and_then(|l| split_rects(l, &src_path, &filename, ffmpeg)) {
-            match write_split_slots(ffmpeg, &src_path, &video_dir, &video_id, &rects) {
-                Ok(()) => {
-                    split_count += 1;
-                    linked_video_ids.push(video_id);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "wb import: failed to split thumbnail for video {video_id} \
-                         ({filename}): {e}"
-                    );
-                    remove_slot_files(&video_dir, &video_id);
-                    failed_video_ids.push((video_id, format!("分割に失敗: {e}")));
-                }
+    for ((video_id, _), result) in plan.matched.iter().zip(results) {
+        match result {
+            ItemResult::Linked { split } => {
+                split_count += u32::from(split);
+                linked_video_ids.push(video_id.clone());
             }
-            continue;
+            ItemResult::Failed(reason) => failed_video_ids.push((video_id.clone(), reason)),
         }
-        // Shared scratch file for the single conversion pass below; distinct
-        // from the per-slot `{video_id}_{i}.webp.tmp` names used by
-        // `thumbnail::worker` so the two pipelines can never collide on a
-        // tmp path.
-        let shared_tmp_path = video_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
-
-        if let Err(e) =
-            ffmpeg.convert_image_to_webp(&src_path, &shared_tmp_path, WB_THUMBNAIL_QUALITY)
-        {
-            log::warn!(
-                "wb import: thumbnail conversion failed for video {video_id} \
-                 ({filename}): {e}"
-            );
-            let _ = fs::remove_file(&shared_tmp_path);
-            failed_video_ids.push((video_id, format!("WebPへの変換に失敗: {e}")));
-            continue;
-        }
-
-        // Duplicate the converted image into every slot. Fail-fast on the
-        // first copy error (same rationale as
-        // `thumbnail::worker::generate_thumbnail_for_video`'s slot
-        // extraction loop): don't leave a partially populated set of slot
-        // files behind, since `get_thumbnails` / `list_videos_missing_thumbnails`
-        // treat "all slots present" as the only valid state.
-        let mut copy_err: Option<std::io::Error> = None;
-        for i in 0..THUMBNAILS_PER_VIDEO {
-            let final_path = crate::thumbnail::paths::slot_path(&video_dir, &video_id, i);
-            if let Err(e) = fs::copy(&shared_tmp_path, &final_path) {
-                copy_err = Some(e);
-                break;
-            }
-        }
-        let _ = fs::remove_file(&shared_tmp_path);
-
-        match copy_err {
-            None => linked_video_ids.push(video_id),
-            Some(e) => {
-                log::warn!(
-                    "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
-                     ({filename}): {e}"
-                );
-                remove_slot_files(&video_dir, &video_id);
-                failed_video_ids.push((video_id, format!("保存に失敗: {e}")));
-            }
-        }
-    }
-    if matched_total > 0 {
-        on_progress(matched_total, matched_total);
     }
 
     if split_count > 0 {
@@ -1259,24 +1196,256 @@ fn link_thumbnails<F: FfmpegAdapter>(
     }
 }
 
+/// Fewest and most legacy thumbnails linked at once.
+const LINK_MIN_WORKERS: usize = 2;
+const LINK_MAX_WORKERS: usize = 8;
+
+/// How many legacy thumbnails to link at once on a machine with `cores`
+/// logical cores. Each one is dominated by short ffmpeg process launches, so
+/// several in flight hide the launch latency; but ffmpeg is itself
+/// multi-threaded and the disk and antivirus are shared, so only half the
+/// cores are used and the count is capped, which also leaves the UI room.
+/// Measured on 16 cores: going from 8 to 16 workers gained about 20% while
+/// every ffmpeg call got about 60% slower.
+fn link_worker_count(cores: usize) -> usize {
+    (cores / 2).clamp(LINK_MIN_WORKERS, LINK_MAX_WORKERS)
+}
+
+/// What became of one matched thumbnail.
+enum ItemResult {
+    Linked { split: bool },
+    Failed(String),
+}
+
+/// Everything linking one thumbnail needs, shared by all workers.
+struct LinkContext<'a, F: FfmpegAdapter> {
+    thumbnail_folder: &'a Path,
+    thumbnails_root: &'a Path,
+    watch_folders: &'a [String],
+    layout: Option<&'a ThumbLayout>,
+    ffmpeg: &'a F,
+}
+
+impl<F: FfmpegAdapter> LinkContext<'_, F> {
+    /// Links one legacy thumbnail to its video: creates the video's thumbnail
+    /// directory, then writes either its frames or the whole image into every
+    /// slot. A failure removes whatever slot files were written.
+    fn link_one(&self, video_id: &str, filename: &str, file_path: Option<&str>) -> ItemResult {
+        // Defensive only: every `video_id` here came from `movies_for_matching`,
+        // which is derived from the very same `registered_movies` the lookup
+        // was built from, so a miss should never actually occur.
+        let Some(file_path) = file_path else {
+            log::warn!(
+                "wb import: internal inconsistency -- matched video {video_id} has no known \
+                 file_path; skipping its legacy thumbnail link"
+            );
+            return ItemResult::Failed("内部の不整合".to_string());
+        };
+        let video_dir = crate::thumbnail::paths::video_thumbnail_dir(
+            self.thumbnails_root,
+            self.watch_folders,
+            file_path,
+        );
+        if let Err(e) = fs::create_dir_all(&video_dir) {
+            log::warn!(
+                "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
+                video_dir.display()
+            );
+            return ItemResult::Failed(format!("サムネイルの保存先を作れない: {e}"));
+        }
+
+        let src_path = self.thumbnail_folder.join(filename);
+
+        if let Some(rects) = self
+            .layout
+            .and_then(|l| split_rects(l, &src_path, filename, self.ffmpeg))
+        {
+            return match write_split_slots(self.ffmpeg, &src_path, &video_dir, video_id, &rects) {
+                Ok(()) => ItemResult::Linked { split: true },
+                Err(e) => {
+                    log::warn!(
+                        "wb import: failed to split thumbnail for video {video_id} \
+                         ({filename}): {e}"
+                    );
+                    remove_slot_files(&video_dir, video_id);
+                    ItemResult::Failed(format!("分割に失敗: {e}"))
+                }
+            };
+        }
+        // Shared scratch file for the single conversion pass below; distinct
+        // from the per-slot `{video_id}_{i}.webp.tmp` names used by
+        // `thumbnail::worker` so the two pipelines can never collide on a
+        // tmp path.
+        let shared_tmp_path = video_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
+
+        if let Err(e) =
+            self.ffmpeg
+                .convert_image_to_webp(&src_path, &shared_tmp_path, WB_THUMBNAIL_QUALITY)
+        {
+            log::warn!(
+                "wb import: thumbnail conversion failed for video {video_id} \
+                 ({filename}): {e}"
+            );
+            let _ = fs::remove_file(&shared_tmp_path);
+            return ItemResult::Failed(format!("WebPへの変換に失敗: {e}"));
+        }
+
+        // Duplicate the converted image into every slot. Fail-fast on the
+        // first copy error (same rationale as
+        // `thumbnail::worker::generate_thumbnail_for_video`'s slot
+        // extraction loop): don't leave a partially populated set of slot
+        // files behind, since `get_thumbnails` / `list_videos_missing_thumbnails`
+        // treat "all slots present" as the only valid state.
+        let mut copy_err: Option<std::io::Error> = None;
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            let final_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
+            if let Err(e) = fs::copy(&shared_tmp_path, &final_path) {
+                copy_err = Some(e);
+                break;
+            }
+        }
+        let _ = fs::remove_file(&shared_tmp_path);
+
+        match copy_err {
+            None => ItemResult::Linked { split: false },
+            Some(e) => {
+                log::warn!(
+                    "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
+                     ({filename}): {e}"
+                );
+                remove_slot_files(&video_dir, video_id);
+                ItemResult::Failed(format!("保存に失敗: {e}"))
+            }
+        }
+    }
+}
+
+/// Runs `link` for every matched item on up to [`link_worker_count`] threads
+/// and returns the results in the order of `matched`. Items of the same video
+/// are handled one after another by a single worker, in `matched` order.
+///
+/// Progress is counted by items finished and reported under one lock, so the
+/// counts handed to `on_progress` only ever rise, at the
+/// [`is_progress_tick`] cadence. The final `(total, total)` is left to the
+/// caller.
+///
+/// A panic while linking one item fails that item only, and the import thread
+/// survives -- as with a panicking share probe, otherwise the UI would never
+/// hear the import ended. An item that no worker got to also counts as failed.
+fn link_in_parallel(
+    matched: &[(String, String)],
+    total: u32,
+    on_progress: &(impl Fn(u32, u32) + Sync),
+    link: impl Fn(&str, &str) -> ItemResult + Sync,
+) -> Vec<ItemResult> {
+    let slots: Vec<Mutex<Option<ItemResult>>> = matched.iter().map(|_| Mutex::new(None)).collect();
+    // Items of one video share their slot and scratch file names, so they go
+    // to one worker together, in `matched` order -- as in a serial run, the
+    // later one wins. Groups are queued in order of first appearance.
+    let mut group_of: HashMap<&str, usize> = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (idx, (video_id, _)) in matched.iter().enumerate() {
+        let group = *group_of.entry(video_id.as_str()).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[group].push(idx);
+    }
+    let next = AtomicUsize::new(0);
+    let finished = Mutex::new(0u32);
+    let cores = thread::available_parallelism().map_or(1, |n| n.get());
+    let worker_count = link_worker_count(cores).min(groups.len());
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..worker_count)
+            .map(|_| {
+                scope.spawn(|| {
+                    while let Some(group) = groups.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        for &idx in group {
+                            let (video_id, filename) = &matched[idx];
+                            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                link(video_id, filename)
+                            }))
+                            .unwrap_or_else(|_| {
+                                log::warn!(
+                                    "wb import: linking the thumbnail of {video_id} \
+                                         panicked; counting it as failed"
+                                );
+                                ItemResult::Failed("内部エラー".to_string())
+                            });
+                            *slots[idx].lock().unwrap_or_else(PoisonError::into_inner) =
+                                Some(result);
+
+                            let mut finished =
+                                finished.lock().unwrap_or_else(PoisonError::into_inner);
+                            *finished += 1;
+                            if *finished < total && is_progress_tick(*finished, total) {
+                                on_progress(*finished, total);
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            if handle.join().is_err() {
+                log::warn!("wb import: a thumbnail linking worker stopped unexpectedly");
+            }
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(PoisonError::into_inner)
+                .unwrap_or_else(|| ItemResult::Failed("処理されなかった".to_string()))
+        })
+        .collect()
+}
+
+/// Bytes of an image file's start that are read to find its size: enough for
+/// a JPEG header even behind a large EXIF block.
+const IMAGE_HEADER_READ_LIMIT: u64 = 256 * 1024;
+
+/// Width and height of a JPEG read from the file's first bytes, or `None` if
+/// the file is unreadable or not a JPEG that can be sized that way.
+fn read_jpeg_size(path: &Path) -> Option<(u32, u32)> {
+    let file = fs::File::open(long_path::to_long_path(path)).ok()?;
+    let mut head = Vec::new();
+    file.take(IMAGE_HEADER_READ_LIMIT)
+        .read_to_end(&mut head)
+        .ok()?;
+    jpeg_dimensions(&head)
+}
+
 /// Crop rectangles for `src_path`, or `None` (with a log line) when the JPG
 /// has to be imported whole.
+///
+/// The size comes from the JPEG header, which costs no process launch. Only
+/// when that cannot be read (not a JPEG, damaged) is ffprobe asked.
 fn split_rects<F: FfmpegAdapter>(
     layout: &ThumbLayout,
     src_path: &Path,
     filename: &str,
     ffmpeg: &F,
 ) -> Option<Vec<CropRect>> {
-    let metadata = match ffmpeg.probe_metadata(src_path) {
-        Ok(m) => m,
-        Err(e) => {
-            log::warn!("wb import: could not read the size of {filename}: {e}; importing it whole");
-            return None;
+    let (w, h) = match read_jpeg_size(src_path) {
+        Some(size) => size,
+        None => {
+            let metadata = match ffmpeg.probe_metadata(src_path) {
+                Ok(m) => m,
+                Err(e) => {
+                    log::warn!(
+                        "wb import: could not read the size of {filename}: {e}; importing it whole"
+                    );
+                    return None;
+                }
+            };
+            let (Some(w), Some(h)) = (metadata.width, metadata.height) else {
+                log::warn!("wb import: {filename} reports no size; importing it whole");
+                return None;
+            };
+            (w, h)
         }
-    };
-    let (Some(w), Some(h)) = (metadata.width, metadata.height) else {
-        log::warn!("wb import: {filename} reports no size; importing it whole");
-        return None;
     };
     let rects = split_plan(layout, w, h, THUMBNAILS_PER_VIDEO as u32);
     if rects.is_none() {
@@ -4059,6 +4228,454 @@ mod tests {
                 (count, count)
             ]
         );
+    }
+
+    /// Minimal JPEG bytes: SOI, a long EXIF-like block, then a frame header.
+    /// Enough for `jpeg_dimensions`; not decodable, which the fakes never need.
+    fn jpeg_bytes(w: u16, h: u16) -> Vec<u8> {
+        let mut v = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        v.extend_from_slice(&(10_002u16).to_be_bytes());
+        v.extend(std::iter::repeat_n(0u8, 10_000));
+        v.extend_from_slice(&[0xFF, 0xC0, 0, 11, 8]);
+        v.extend_from_slice(&h.to_be_bytes());
+        v.extend_from_slice(&w.to_be_bytes());
+        v.extend_from_slice(&[1, 1, 0x11, 0]);
+        v
+    }
+
+    /// Writes one legacy JPG per video with `content(i)` as its bytes and
+    /// returns the matching `registered_movies` rows. File names are
+    /// zero-padded so they sort like the indexes.
+    fn legacy_movies(
+        h: &Harness,
+        count: usize,
+        content: impl Fn(usize) -> Vec<u8>,
+    ) -> Vec<(String, String, String)> {
+        (0..count)
+            .map(|i| {
+                let hash = format!("{i:08x}");
+                std::fs::write(
+                    h.paths
+                        .thumbnail_folder
+                        .join(format!("m{i:04}.mp4.#{hash}.jpg")),
+                    content(i),
+                )
+                .unwrap();
+                (format!("video-{i}"), hash, format!("Z:\\gone\\m{i}.mp4"))
+            })
+            .collect()
+    }
+
+    fn six_by_one_layout() -> ThumbLayout {
+        ThumbLayout {
+            tile_w: 200,
+            tile_h: 150,
+            cols: 6,
+            rows: 1,
+        }
+    }
+
+    fn probes(ffmpeg: &FakeFfmpegAdapter) -> usize {
+        ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| matches!(c, FakeCall::ProbeMetadata(_)))
+            .count()
+    }
+
+    fn link_with_layout(
+        h: &Harness,
+        movies: &[(String, String, String)],
+        ffmpeg: &FakeFfmpegAdapter,
+        layout: Option<&ThumbLayout>,
+    ) -> LinkOutcome {
+        link_thumbnails(
+            &h.paths.thumbnail_folder,
+            &h.paths.thumbnails_dir,
+            &[],
+            movies,
+            &[],
+            &HashSet::new(),
+            &HashSet::new(),
+            ffmpeg,
+            layout,
+            |_, _| {},
+        )
+    }
+
+    #[test]
+    fn a_readable_jpeg_header_splits_without_asking_ffprobe() {
+        let h = harness();
+        let movies = legacy_movies(&h, 3, |_| jpeg_bytes(1200, 150));
+        // A probe would fail, so success proves the size came from the header.
+        let ffmpeg = split_ffmpeg(
+            Err(FfmpegError::NonZeroExit {
+                status: 1,
+                stderr: "must not be probed".into(),
+            }),
+            None,
+        );
+
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
+
+        assert_eq!((outcome.linked, outcome.failed), (3, 0));
+        assert_eq!(probes(&ffmpeg), 0);
+        assert_eq!(crops(&ffmpeg).len(), 3 * THUMBNAILS_PER_VIDEO);
+        assert_eq!(converts(&ffmpeg), 0);
+    }
+
+    #[test]
+    fn a_jpeg_header_of_another_size_imports_whole_without_asking_ffprobe() {
+        let h = harness();
+        let movies = legacy_movies(&h, 1, |_| jpeg_bytes(1200, 151));
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
+
+        assert_eq!(outcome.linked, 1);
+        assert_eq!(probes(&ffmpeg), 0);
+        assert_eq!(crops(&ffmpeg).len(), 0);
+        assert_eq!(converts(&ffmpeg), 1);
+    }
+
+    #[test]
+    fn a_non_jpeg_or_damaged_file_falls_back_to_ffprobe() {
+        let h = harness();
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13].to_vec();
+        let mut truncated = jpeg_bytes(1200, 150);
+        truncated.truncate(100);
+        let movies = legacy_movies(&h, 3, |i| match i {
+            0 => png.clone(),
+            1 => truncated.clone(),
+            _ => b"fake jpg".to_vec(),
+        });
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
+
+        assert_eq!((outcome.linked, outcome.failed), (3, 0));
+        assert_eq!(probes(&ffmpeg), 3);
+        assert_eq!(crops(&ffmpeg).len(), 3 * THUMBNAILS_PER_VIDEO);
+    }
+
+    #[test]
+    fn an_unreadable_size_imports_whole_as_before() {
+        let h = harness();
+        let movies = legacy_movies(&h, 2, |_| b"fake jpg".to_vec());
+        let ffmpeg = split_ffmpeg(
+            Err(FfmpegError::NonZeroExit {
+                status: 1,
+                stderr: "bad jpg".into(),
+            }),
+            None,
+        );
+
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
+
+        assert_eq!((outcome.linked, outcome.failed), (2, 0));
+        assert_eq!(probes(&ffmpeg), 2);
+        assert_eq!(crops(&ffmpeg).len(), 0);
+        assert_eq!(converts(&ffmpeg), 2);
+    }
+
+    #[test]
+    fn parallel_linking_keeps_the_order_counts_and_progress_of_a_serial_run() {
+        let h = harness();
+        let count = PROGRESS_NOTIFY_INTERVAL as usize * 3 + 7;
+        let movies = legacy_movies(&h, count, |_| b"fake jpg".to_vec());
+        // Every third JPG fails to convert.
+        let ffmpeg = FakeFfmpegAdapter {
+            convert_result: Box::new(|src| {
+                let name = src.file_name().unwrap().to_string_lossy().into_owned();
+                let index: usize = name[1..5].parse().unwrap();
+                if index.is_multiple_of(3) {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+        let progress = Mutex::new(Vec::new());
+
+        let outcome = link_thumbnails(
+            &h.paths.thumbnail_folder,
+            &h.paths.thumbnails_dir,
+            &[],
+            &movies,
+            &[],
+            &HashSet::new(),
+            &HashSet::new(),
+            &ffmpeg,
+            None,
+            |processed, total| progress.lock().unwrap().push((processed, total)),
+        );
+
+        // What a one-at-a-time run would have produced, in matching order.
+        let hash_to_index: HashMap<&str, usize> = movies
+            .iter()
+            .enumerate()
+            .map(|(i, (_, hash, _))| (hash.as_str(), i))
+            .collect();
+        let movie_pairs: Vec<(String, String)> = movies
+            .iter()
+            .map(|(id, hash, _)| (id.clone(), hash.clone()))
+            .collect();
+        let filenames = thumbnail_scan::list_filenames(&h.paths.thumbnail_folder).unwrap();
+        let plan = match_thumbnail_files(&movie_pairs, &[], &filenames);
+        let mut expected_linked = Vec::new();
+        let mut expected_failed = Vec::new();
+        for (video_id, filename) in &plan.matched {
+            let hash = extract_thumbnail_hash(filename).unwrap();
+            if hash_to_index[hash.as_str()].is_multiple_of(3) {
+                expected_failed.push(video_id.clone());
+            } else {
+                expected_linked.push(video_id.clone());
+            }
+        }
+        assert_eq!(outcome.linked_video_ids, expected_linked);
+        let failed_ids: Vec<String> = outcome
+            .failed_video_ids
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(failed_ids, expected_failed);
+        assert_eq!(outcome.linked as usize, expected_linked.len());
+        assert_eq!(outcome.failed as usize, expected_failed.len());
+        assert!(outcome
+            .failed_video_ids
+            .iter()
+            .all(|(_, reason)| reason.starts_with("WebPへの変換に失敗")));
+
+        let total = count as u32;
+        let progress = progress.lock().unwrap().clone();
+        let expected_progress: Vec<(u32, u32)> =
+            [0, 50, 100, 150, total].map(|n| (n, total)).to_vec();
+        assert_eq!(progress, expected_progress);
+
+        // A failed video leaves no slot file, a linked one has all of them.
+        let dir = unassigned_dir(&h.paths.thumbnails_dir);
+        for (i, (video_id, _, _)) in movies.iter().enumerate() {
+            for slot in 0..THUMBNAILS_PER_VIDEO {
+                let exists = crate::thumbnail::paths::slot_path(&dir, video_id, slot).exists();
+                assert_eq!(exists, !i.is_multiple_of(3), "video {i} slot {slot}");
+            }
+            assert!(!dir.join(format!("{video_id}.wb_legacy.webp.tmp")).exists());
+        }
+    }
+
+    #[test]
+    fn a_failing_frame_cut_leaves_no_slot_files_and_stops_no_other_video() {
+        let h = harness();
+        let movies = legacy_movies(&h, 12, |_| jpeg_bytes(1200, 150));
+        // The fourth frame of every video fails.
+        let ffmpeg = split_ffmpeg(image_size(1200, 150), Some(600));
+
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
+
+        assert_eq!((outcome.linked, outcome.failed), (0, 12));
+        let dir = unassigned_dir(&h.paths.thumbnails_dir);
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+    }
+
+    #[test]
+    fn a_panic_in_one_link_fails_only_that_item() {
+        let matched: Vec<(String, String)> = (0..20)
+            .map(|i| (format!("video-{i}"), format!("f{i}.jpg")))
+            .collect();
+        let progress = Mutex::new(Vec::new());
+
+        let results = link_in_parallel(
+            &matched,
+            20,
+            &|processed, total| progress.lock().unwrap().push((processed, total)),
+            |video_id, _| {
+                if video_id == "video-7" {
+                    panic!("simulated");
+                }
+                ItemResult::Linked { split: false }
+            },
+        );
+
+        assert_eq!(results.len(), 20);
+        for (i, result) in results.iter().enumerate() {
+            match (i, result) {
+                (7, ItemResult::Failed(_)) => {}
+                (7, _) => panic!("the panicking item must be failed"),
+                (_, ItemResult::Linked { split: false }) => {}
+                _ => panic!("item {i} must be linked"),
+            }
+        }
+        // 20 items stay below the first progress tick; the caller sends the
+        // final count.
+        assert!(progress.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn items_of_one_video_are_linked_in_order_and_never_at_the_same_time() {
+        // Three videos, each matched by several files, interleaved.
+        let matched: Vec<(String, String)> = (0..30)
+            .map(|i| (format!("video-{}", i % 3), format!("f{i}.jpg")))
+            .collect();
+        let active: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+        let order: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+        let results = link_in_parallel(&matched, 30, &|_, _| {}, |video_id, filename| {
+            assert!(
+                active.lock().unwrap().insert(video_id.to_string()),
+                "{video_id} linked by two workers at once"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            order
+                .lock()
+                .unwrap()
+                .push((video_id.to_string(), filename.to_string()));
+            active.lock().unwrap().remove(video_id);
+            ItemResult::Linked { split: false }
+        });
+
+        assert_eq!(results.len(), 30);
+        let order = order.lock().unwrap();
+        for video in ["video-0", "video-1", "video-2"] {
+            let seen: Vec<&String> = order
+                .iter()
+                .filter(|(v, _)| v == video)
+                .map(|(_, f)| f)
+                .collect();
+            let expected: Vec<String> = matched
+                .iter()
+                .filter(|(v, _)| v == video)
+                .map(|(_, f)| f.clone())
+                .collect();
+            assert_eq!(seen, expected.iter().collect::<Vec<_>>(), "{video}");
+        }
+    }
+
+    /// Two legacy JPGs with the same hash both match one video; with many
+    /// other videos around so several workers run, the outcome must be what a
+    /// serial run gives: the later file decides the slots.
+    fn duplicate_hash_run(first_fails: bool, check: impl FnOnce(&LinkOutcome, &Path)) {
+        let h = harness();
+        let movies = legacy_movies(&h, 20, |_| b"fake jpg".to_vec());
+        let dup_hash = movies[5].1.clone();
+        // Only the two `dup_` files match video-5.
+        std::fs::remove_file(
+            h.paths
+                .thumbnail_folder
+                .join(format!("m0005.mp4.#{dup_hash}.jpg")),
+        )
+        .unwrap();
+        // `a`/`b` sort in this order and both carry the hash of video-5.
+        std::fs::write(
+            h.paths
+                .thumbnail_folder
+                .join(format!("dup_a.mp4.#{dup_hash}.jpg")),
+            b"fake jpg",
+        )
+        .unwrap();
+        std::fs::write(
+            h.paths
+                .thumbnail_folder
+                .join(format!("dup_b.mp4.#{dup_hash}.jpg")),
+            b"fake jpg",
+        )
+        .unwrap();
+        let ffmpeg = FakeFfmpegAdapter {
+            convert_result: Box::new(move |src| {
+                let name = src.file_name().unwrap().to_string_lossy().into_owned();
+                let fails = if name.starts_with("dup_a") {
+                    first_fails
+                } else {
+                    name.starts_with("dup_b") && !first_fails
+                };
+                if fails {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, None);
+        let dir = unassigned_dir(&h.paths.thumbnails_dir);
+        check(&outcome, &dir);
+    }
+
+    #[test]
+    fn a_later_file_of_the_same_video_wins_as_in_a_serial_run() {
+        let slots_exist = |dir: &Path| {
+            (0..THUMBNAILS_PER_VIDEO)
+                .map(|slot| crate::thumbnail::paths::slot_path(dir, "video-5", slot).exists())
+                .collect::<Vec<_>>()
+        };
+
+        // a fails, b succeeds: the video ends up linked, with its slots.
+        duplicate_hash_run(true, |outcome, dir| {
+            assert_eq!((outcome.linked, outcome.failed), (20, 1));
+            assert_eq!(slots_exist(dir), [true; THUMBNAILS_PER_VIDEO]);
+        });
+
+        // a succeeds, b fails to convert: as in a serial run, a's slots stay
+        // (a failed conversion removes only its own scratch file), and the
+        // video is counted once as linked (a) and once as failed (b).
+        duplicate_hash_run(false, |outcome, dir| {
+            assert_eq!((outcome.linked, outcome.failed), (20, 1));
+            assert_eq!(slots_exist(dir), [true; THUMBNAILS_PER_VIDEO]);
+            assert!(crate::thumbnail::paths::slot_path(dir, "video-6", 0).exists());
+        });
+    }
+
+    #[test]
+    fn items_no_worker_reached_after_a_panicking_progress_callback_count_as_failed() {
+        // One video, so one group and one worker: when its progress callback
+        // panics at the first tick, the rest of the group is never reached.
+        let matched: Vec<(String, String)> = (0..120)
+            .map(|i| ("video".to_string(), format!("f{i}.jpg")))
+            .collect();
+
+        let results = link_in_parallel(
+            &matched,
+            120,
+            &|processed, _| {
+                if processed == 50 {
+                    panic!("simulated progress failure");
+                }
+            },
+            |_, _| ItemResult::Linked { split: false },
+        );
+
+        assert_eq!(results.len(), 120);
+        for (i, result) in results.iter().enumerate() {
+            match result {
+                ItemResult::Linked { .. } => assert!(i < 50, "item {i}"),
+                ItemResult::Failed(reason) => {
+                    assert!(i >= 50, "item {i}");
+                    assert_eq!(reason, "処理されなかった");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn link_worker_count_scales_with_cores_within_bounds() {
+        assert_eq!(link_worker_count(0), LINK_MIN_WORKERS);
+        assert_eq!(link_worker_count(1), LINK_MIN_WORKERS);
+        assert_eq!(link_worker_count(4), 2);
+        assert_eq!(link_worker_count(8), 4);
+        assert_eq!(link_worker_count(16), LINK_MAX_WORKERS);
+        assert_eq!(link_worker_count(128), LINK_MAX_WORKERS);
     }
 
     #[test]
