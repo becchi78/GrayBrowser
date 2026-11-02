@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::ports::ffmpeg::{
-    CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
+    CropOutput, CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
 };
 
 /// Closure type backing `FakeFfmpegAdapter::convert_result`, factored out to
@@ -26,16 +26,15 @@ pub enum FakeCall {
         output_tmp_path: PathBuf,
         quality: u8,
     },
-    CropImageToWebp {
+    SplitImageToWebp {
         src_path: PathBuf,
-        output_tmp_path: PathBuf,
-        crop: CropRect,
+        outputs: Vec<CropOutput>,
         quality: u8,
     },
 }
 
-/// Closure type backing `FakeFfmpegAdapter::crop_result`.
-type CropResultFn = Box<dyn Fn(&Path, CropRect) -> Result<(), FfmpegError> + Send + Sync>;
+/// Closure type backing `FakeFfmpegAdapter::split_result`.
+type SplitResultFn = Box<dyn Fn(&Path, &[CropRect]) -> Result<(), FfmpegError> + Send + Sync>;
 
 /// Closure type backing `FakeFfmpegAdapter::metadata_for`.
 type MetadataForFn = Box<dyn Fn(&Path) -> Result<VideoMetadata, FfmpegError> + Send + Sync>;
@@ -57,9 +56,13 @@ pub struct FakeFfmpegAdapter {
     /// `extract_result`, so tests can model per-file success/failure (e.g.
     /// "this one legacy JPG is corrupt, the rest convert fine").
     pub convert_result: ConvertResultFn,
-    /// Decides the result of `crop_image_to_webp` from the source path and
-    /// the requested rectangle, so tests can fail at one specific frame.
-    pub crop_result: CropResultFn,
+    /// Decides the result of `split_image_to_webp` from the source path and
+    /// the requested rectangles, so tests can fail on one specific frame.
+    pub split_result: SplitResultFn,
+    /// How many leading outputs `split_image_to_webp` still writes when
+    /// `split_result` fails, modelling a real ffmpeg that dies after some
+    /// outputs were already created.
+    pub split_partial_writes: usize,
     pub calls: Mutex<Vec<FakeCall>>,
 }
 
@@ -83,11 +86,12 @@ impl Default for FakeFfmpegAdapter {
                     "FakeFfmpegAdapter: no canned convert_result configured for this test".into(),
                 ))
             }),
-            crop_result: Box::new(move |_src_path, _crop| {
+            split_result: Box::new(move |_src_path, _crops| {
                 Err(FfmpegError::Spawn(
-                    "FakeFfmpegAdapter: no canned crop_result configured for this test".into(),
+                    "FakeFfmpegAdapter: no canned split_result configured for this test".into(),
                 ))
             }),
+            split_partial_writes: 0,
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -168,24 +172,28 @@ impl FfmpegAdapter for FakeFfmpegAdapter {
         result
     }
 
-    fn crop_image_to_webp(
+    fn split_image_to_webp(
         &self,
         src_path: &Path,
-        output_tmp_path: &Path,
-        crop: CropRect,
+        outputs: &[CropOutput],
         quality: u8,
     ) -> Result<(), FfmpegError> {
-        self.calls.lock().unwrap().push(FakeCall::CropImageToWebp {
+        self.calls.lock().unwrap().push(FakeCall::SplitImageToWebp {
             src_path: src_path.to_path_buf(),
-            output_tmp_path: output_tmp_path.to_path_buf(),
-            crop,
+            outputs: outputs.to_vec(),
             quality,
         });
-        let result = (self.crop_result)(src_path, crop);
-        if result.is_ok() {
-            // Same rationale as extract_thumbnail: leave a real file behind
-            // for the caller's rename step.
-            let _ = std::fs::write(output_tmp_path, b"fake webp bytes");
+        let crops: Vec<CropRect> = outputs.iter().map(|o| o.crop).collect();
+        let result = (self.split_result)(src_path, &crops);
+        // Same rationale as extract_thumbnail: leave real files behind for
+        // the caller's rename step (or, on failure, for its cleanup).
+        let written = if result.is_ok() {
+            outputs.len()
+        } else {
+            self.split_partial_writes.min(outputs.len())
+        };
+        for output in &outputs[..written] {
+            let _ = std::fs::write(&output.tmp_path, b"fake webp bytes");
         }
         result
     }
@@ -231,9 +239,53 @@ mod tests {
             w: 1,
             h: 1,
         };
+        let output = CropOutput {
+            tmp_path: PathBuf::from("x.webp.tmp"),
+            crop,
+        };
         assert!(fake
-            .crop_image_to_webp(Path::new("x.jpg"), Path::new("x.webp.tmp"), crop, 50)
+            .split_image_to_webp(Path::new("x.jpg"), &[output], 50)
             .is_err());
+    }
+
+    #[test]
+    fn split_writes_every_output_on_success_and_none_on_failure() {
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let crop = CropRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        };
+        let outputs: Vec<CropOutput> = (0..3)
+            .map(|i| CropOutput {
+                tmp_path: dir.join(format!("gb-fake-ffmpeg-split-{pid}-{i}.webp.tmp")),
+                crop,
+            })
+            .collect();
+
+        let failing = FakeFfmpegAdapter::default();
+        assert!(failing
+            .split_image_to_webp(Path::new("x.jpg"), &outputs, 50)
+            .is_err());
+        assert!(outputs.iter().all(|o| !o.tmp_path.exists()));
+
+        let ok = FakeFfmpegAdapter {
+            split_result: Box::new(|_, crops| {
+                assert_eq!(crops.len(), 3);
+                Ok(())
+            }),
+            ..Default::default()
+        };
+        assert!(ok
+            .split_image_to_webp(Path::new("x.jpg"), &outputs, 50)
+            .is_ok());
+        assert_eq!(ok.calls.lock().unwrap().len(), 1);
+        for o in &outputs {
+            assert!(o.tmp_path.exists());
+            let _ = std::fs::remove_file(&o.tmp_path);
+        }
     }
 
     #[test]
