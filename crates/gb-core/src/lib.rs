@@ -27,6 +27,7 @@ pub mod stderr_tail;
 pub mod tags;
 pub mod thumbnail_policy;
 pub mod thumbnail_progress;
+pub mod view_state;
 pub mod watch_folders;
 pub mod wb_anonymize;
 pub mod wb_import;

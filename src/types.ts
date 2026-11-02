@@ -227,3 +227,14 @@ export interface LogChunkDto {
   /** true のとき、保持している分を捨ててから entries を使う。 */
   reset: boolean;
 }
+
+// Mirrors gb-core's SavedViewState (the state restored at the next launch).
+export interface SavedViewState {
+  search: string;
+  /** `null` = "すべて". */
+  folder_path: string | null;
+  sort_field: SortField;
+  sort_direction: SortDirection;
+  tag_ids: number[];
+  ratings: number[];
+}

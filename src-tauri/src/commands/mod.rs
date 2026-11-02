@@ -15,4 +15,5 @@ pub mod skipped_cmds;
 pub mod tag_cmds;
 pub mod thumbnail_cmds;
 pub mod update_cmds;
+pub mod view_state_cmds;
 pub mod wb_import_cmds;

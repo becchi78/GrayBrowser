@@ -993,6 +993,38 @@ pub fn set_sidebar_sections_collapsed(
     Ok(())
 }
 
+const RESTORE_VIEW_STATE_ENABLED_KEY: &str = "restore_view_state_enabled";
+const LAST_VIEW_STATE_KEY: &str = "last_view_state";
+
+/// Unset and unrecognized values both read as `true`: restoring is opt-out, and
+/// a corrupt value must not silently turn the feature off.
+pub fn get_restore_view_state_enabled(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(get_setting(conn, RESTORE_VIEW_STATE_ENABLED_KEY)?.as_deref() != Some("0"))
+}
+
+pub fn set_restore_view_state_enabled(conn: &Connection, enabled: bool) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        RESTORE_VIEW_STATE_ENABLED_KEY,
+        if enabled { "1" } else { "0" },
+    )?;
+    Ok(())
+}
+
+pub fn get_last_view_state(conn: &Connection) -> anyhow::Result<Option<String>> {
+    Ok(get_setting(conn, LAST_VIEW_STATE_KEY)?)
+}
+
+pub fn set_last_view_state(conn: &Connection, json: &str) -> anyhow::Result<()> {
+    set_setting(conn, LAST_VIEW_STATE_KEY, json)?;
+    Ok(())
+}
+
+pub fn delete_last_view_state(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute("DELETE FROM settings WHERE key = ?1", [LAST_VIEW_STATE_KEY])?;
+    Ok(())
+}
+
 pub struct TagRow {
     pub id: i64,
     pub name: String,

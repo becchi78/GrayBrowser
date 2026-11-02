@@ -13,6 +13,7 @@ import type {
   MissingRegistrationResult,
   RenameSkippedFileResult,
   RenameWatchFolderResult,
+  SavedViewState,
   ScanSummary,
   SkippedFileDto,
   SortDirection,
@@ -160,3 +161,10 @@ export const countMissingThumbnails = () => invoke<number>("count_missing_thumbn
 export const regenerateMissingThumbnails = () => invoke<number>("regenerate_missing_thumbnails");
 export const countMissingMetadata = () => invoke<number>("count_missing_metadata");
 export const reprobeMissingMetadata = () => invoke<number>("reprobe_missing_metadata");
+export const getRestoreViewStateEnabled = () => invoke<boolean>("get_restore_view_state_enabled");
+export const setRestoreViewStateEnabled = (enabled: boolean) =>
+  invoke<void>("set_restore_view_state_enabled", { enabled });
+/** 復元が無効なら null。有効なら、存在しない項目を除いた保存済みの状態。 */
+export const loadViewState = () => invoke<SavedViewState | null>("load_view_state");
+export const saveViewState = (state: SavedViewState) =>
+  invoke<void>("save_view_state", { state });
