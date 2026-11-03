@@ -202,7 +202,7 @@ button.search-box-clear {
   border-radius: 0;
   box-shadow: none;
   background: none;
-  padding: 0.5em 0.75em;
+  padding: 0.5em 0.75em 0.5em var(--sidebar-item-indent);
   font-size: 0.85em;
 }
 
@@ -292,6 +292,12 @@ button.search-box-clear {
   flex-direction: column;
   border-right: 1px solid #ddd;
   min-height: 0;
+  /* 一覧の項目の左 padding。見出しは「開閉の目印(▸/▾)+gap 0.4em」の次にアイコンが
+     来るので、アイコンの左端は 0.75em + 目印の幅 + 0.4em。目印は比例グリフで幅が
+     フォントに依存するため、約1.9emを起点にした値。em は使う側(項目も見出しと同じ
+     0.85em)で解決されるので、同じ基準で比べられる。背景は行幅いっぱいのまま、
+     padding だけで字下げする。 */
+  --sidebar-item-indent: 1.9em;
 }
 
 /* 縦スクロールはこの内側の要素が受け持つ。リサイズハンドルは外側のペインに
@@ -367,7 +373,7 @@ button.search-box-clear {
   border-radius: 0;
   box-shadow: none;
   background: none;
-  padding: 0.5em 0.75em;
+  padding: 0.5em 0.75em 0.5em var(--sidebar-item-indent);
   font-size: 0.85em;
   white-space: nowrap;
   overflow: hidden;
