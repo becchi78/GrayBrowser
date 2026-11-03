@@ -89,6 +89,35 @@ pub fn classify_unmatched_filename(filename: &str) -> UnmatchedReason {
     }
 }
 
+impl UnmatchedReason {
+    /// The text stored in the database. Fixed on purpose: renaming a variant
+    /// must not change what already-saved rows say.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            UnmatchedReason::EmptyHash => "empty_hash",
+            UnmatchedReason::NoMatchingVideo => "no_matching_video",
+        }
+    }
+
+    /// Inverse of [`Self::as_db_str`]; `None` for any other text.
+    pub fn from_db_str(value: &str) -> Option<Self> {
+        match value {
+            "empty_hash" => Some(UnmatchedReason::EmptyHash),
+            "no_matching_video" => Some(UnmatchedReason::NoMatchingVideo),
+            _ => None,
+        }
+    }
+}
+
+/// The search text to start from when a person picks the video for an
+/// unmatched legacy thumbnail by hand: the video-name part of the file name,
+/// trimmed. `None` when the name carries none (nothing before `.#`, or only
+/// whitespace), in which case the search box starts empty.
+pub fn default_candidate_search_term(filename: &str) -> Option<String> {
+    let name = extract_thumbnail_name_part(filename)?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Unmatched file names split by [`UnmatchedReason`], each group keeping the
 /// input order. Together the groups hold exactly the input.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -890,6 +919,52 @@ mod tests {
         );
         assert_eq!(extract_thumbnail_name_part(".#1e5e0fbf.jpg"), None);
         assert_eq!(extract_thumbnail_name_part("plain.jpg"), None);
+    }
+
+    #[test]
+    fn unmatched_reason_db_strings_are_stable_and_round_trip() {
+        assert_eq!(UnmatchedReason::EmptyHash.as_db_str(), "empty_hash");
+        assert_eq!(
+            UnmatchedReason::NoMatchingVideo.as_db_str(),
+            "no_matching_video"
+        );
+        for reason in [UnmatchedReason::EmptyHash, UnmatchedReason::NoMatchingVideo] {
+            assert_eq!(
+                UnmatchedReason::from_db_str(reason.as_db_str()),
+                Some(reason)
+            );
+        }
+        for bad in ["", "EmptyHash", "empty_hash ", "other"] {
+            assert_eq!(UnmatchedReason::from_db_str(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn default_search_term_is_the_trimmed_name_part() {
+        assert_eq!(
+            default_candidate_search_term("My Video.mp4.#.jpg").as_deref(),
+            Some("My Video.mp4")
+        );
+        assert_eq!(
+            default_candidate_search_term("  padded .#1e5e0fbf.jpg").as_deref(),
+            Some("padded")
+        );
+        assert_eq!(
+            default_candidate_search_term("a.#x.#1e5e0fbf.jpg").as_deref(),
+            Some("a.#x")
+        );
+    }
+
+    #[test]
+    fn default_search_term_is_none_without_a_usable_name() {
+        assert_eq!(default_candidate_search_term(""), None);
+        assert_eq!(default_candidate_search_term(".#.jpg"), None);
+        assert_eq!(default_candidate_search_term("   .#.jpg"), None);
+        assert_eq!(default_candidate_search_term("plain.jpg"), None);
+    }
+
+    #[test]
+    fn file_name_from_path_takes_the_last_component() {
         assert_eq!(file_name_from_path(r"Z:\gone\a.mp4"), "a.mp4");
         assert_eq!(file_name_from_path("/mnt/x/a.mp4"), "a.mp4");
         assert_eq!(file_name_from_path(r"Z:\a/b\c.mp4"), "c.mp4");

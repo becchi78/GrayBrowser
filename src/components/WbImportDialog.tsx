@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { openWbImportLog, pickWbFile, pickWbThumbnailFolder, startWbImport } from "../api";
+import {
+  listUnmatchedThumbnails,
+  openWbImportLog,
+  pickWbFile,
+  pickWbThumbnailFolder,
+  startWbImport,
+} from "../api";
 import {
   onWbImportComplete,
   onWbImportFailed,
@@ -7,6 +13,7 @@ import {
   onWbImportStage,
 } from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
+import { unmatchedCountText } from "../lib/unmatchedThumbnails";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import {
   computeWbImportSteps,
@@ -16,10 +23,13 @@ import {
 } from "../lib/wbImportSteps";
 import type { WbImportStageCounts } from "../lib/wbImportSteps";
 import type { WbImportStageId, WbImportSummary } from "../types";
+import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 
 interface Props {
   onClose: () => void;
   onImportComplete: () => void;
+  /** 手動の紐付けで動画のサムネイルが置き換わったとき(一覧側の表示を更新させる)。 */
+  onThumbnailsReplaced: (videoId: string) => void;
 }
 
 // 表示用に省略するパスの最大文字数。全体は title で見られる。
@@ -68,7 +78,7 @@ function ImportLogLink() {
 // The parent mounts this only while the dialog is open (see App.tsx), so
 // every open starts from the file-selection step: all state below is
 // discarded on close.
-export function WbImportDialog({ onClose, onImportComplete }: Props) {
+export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced }: Props) {
   const [wbPath, setWbPath] = useState<string | null>(null);
   const [thumbnailFolderPath, setThumbnailFolderPath] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -76,8 +86,21 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const [stage, setStage] = useState<WbImportStageId | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // 開いている「確認する」の項目。原因別に2項目あるため、キーで区別する。
-  const [openDetailKey, setOpenDetailKey] = useState<string | null>(null);
+  // DBに保存されている「自動対応できなかった旧サムネイル」の件数。前回までの
+  // インポート分も含むので、インポート前から出す。取得できないときは出さない。
+  const [unmatchedCount, setUnmatchedCount] = useState(0);
+  const [unmatchedDialogOpen, setUnmatchedDialogOpen] = useState(false);
+
+  function refreshUnmatchedCount() {
+    listUnmatchedThumbnails()
+      .then((list) => setUnmatchedCount(list.length))
+      .catch(console.error);
+  }
+
+  // インポートが終わるとその結果で保存内容が置き換わるので、完了ごとに取り直す。
+  useEffect(() => {
+    refreshUnmatchedCount();
+  }, [summary]);
 
   useEffect(() => {
     const unlistenProgress = onWbImportProgress((p) => {
@@ -158,7 +181,6 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
     setStage(null);
     setSummary(null);
     setError(null);
-    setOpenDetailKey(null);
     try {
       // Always register the imported videos' folders: without them in the
       // sidebar the migration is left half-done.
@@ -174,8 +196,9 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
   const resultDisplay = summary ? buildWbImportResultDisplay(summary) : null;
 
   return (
-    // Overlay click closes like every other dialog; requestClose keeps it shut
-    // while an import is running, so the outcome can't be lost by a stray click.
+    <>
+    {/* Overlay click closes like every other dialog; requestClose keeps it shut
+        while an import is running, so the outcome can't be lost by a stray click. */}
     <div className="dialog-overlay" onClick={requestClose}>
       <div
         className="dialog wb-import-dialog"
@@ -198,6 +221,19 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
               </button>
               {thumbnailFolderPath && <PathLabel path={thumbnailFolderPath} />}
             </div>
+            {unmatchedCountText(unmatchedCount) && (
+              <div className="wb-import-dialog-row" data-testid="import-unmatched-saved">
+                <span>{unmatchedCountText(unmatchedCount)}</span>
+                <button
+                  type="button"
+                  data-testid="import-unmatched-open-btn"
+                  onClick={() => setUnmatchedDialogOpen(true)}
+                  disabled={importing}
+                >
+                  確認する
+                </button>
+              </div>
+            )}
             <div className="wb-import-dialog-row">
               <button
                 type="button"
@@ -278,19 +314,13 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
                 >
                   <p className="wb-import-result-line">{item.text}</p>
                   {item.expandable && (
-                    <>
-                      <button type="button" onClick={() => setOpenDetailKey((k) => (k === item.key ? null : item.key))}>
-                        確認する
-                      </button>
-                      {openDetailKey === item.key && (
-                        // A real per-file list/manual-relink UI is out of scope
-                        // here. This only surfaces where the unmatched files
-                        // still are.
-                        <p className="wb-import-result-detail">
-                          対象の旧サムネイルファイルは、選択した旧サムネイルフォルダ内に残っています。個別の一覧表示・手動での紐付け操作は今後のアップデートで対応予定です。
-                        </p>
-                      )}
-                    </>
+                    <button
+                      type="button"
+                      data-testid={`import-unmatched-review-btn-${item.key}`}
+                      onClick={() => setUnmatchedDialogOpen(true)}
+                    >
+                      確認する
+                    </button>
                   )}
                 </div>
               );
@@ -340,5 +370,17 @@ export function WbImportDialog({ onClose, onImportComplete }: Props) {
         </div>
       </div>
     </div>
+    {/* A sibling, not a child: a child's overlay clicks would bubble into the
+        overlay above and close this dialog as well. */}
+    {unmatchedDialogOpen && (
+      <UnmatchedThumbnailsDialog
+        onClose={() => {
+          setUnmatchedDialogOpen(false);
+          refreshUnmatchedCount();
+        }}
+        onThumbnailsReplaced={onThumbnailsReplaced}
+      />
+    )}
+    </>
   );
 }

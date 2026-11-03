@@ -12,6 +12,8 @@ import { TagEditor } from "./TagEditor";
 
 interface Props {
   video: VideoDto;
+  /** Bumped when this video's thumbnail files were replaced; part of the cache key. */
+  thumbnailVersion: number;
   /** Shared across every row (owned by VideoList/ThumbnailGrid), keyed by video id. */
   cache: Map<string, string[]>;
   /** Bumped by the parent on every list re-fetch; see the properties effect. */
@@ -53,6 +55,7 @@ function formatFps(fps: number | null): string {
 // lazy initializer without a manual effect.
 export function VideoRow({
   video,
+  thumbnailVersion,
   cache,
   catalogVersion,
   tagsVersion,
@@ -61,7 +64,10 @@ export function VideoRow({
   onSelect,
   onContextMenu,
 }: Props) {
-  const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(video.id) ?? null);
+  // The version is in the key so images cached before a replacement are never
+  // served again; the parent also remounts the row, which drops `thumbnails`.
+  const cacheKey = `${video.id}:${thumbnailVersion}`;
+  const [thumbnails, setThumbnails] = useState<string[] | null>(cache.get(cacheKey) ?? null);
   const [rating, setRating] = useState(video.rating);
   const [properties, setProperties] = useState<VideoPropertiesDto | null>(null);
   const [isStartingPlay, setIsStartingPlay] = useState(false);
@@ -70,7 +76,7 @@ export function VideoRow({
   useEffect(() => {
     // The cache-hit case is already covered by useState's lazy initializer
     // above; this effect only needs to handle the actual fetch.
-    if (!video.thumbnail_ready || thumbnails || cache.has(video.id)) {
+    if (!video.thumbnail_ready || thumbnails || cache.has(cacheKey)) {
       return;
     }
     let cancelled = false;
@@ -80,14 +86,14 @@ export function VideoRow({
         // 上限（THUMBNAIL_CACHE_MAX_ENTRIES）を超えたら最も古いエントリを
         // 追い出す。大規模ライブラリを最後までスクロールしてもキャッシュが
         // 無制限に増え続けないようにするための対策。
-        setWithEviction(cache, video.id, urls, THUMBNAIL_CACHE_MAX_ENTRIES);
+        setWithEviction(cache, cacheKey, urls, THUMBNAIL_CACHE_MAX_ENTRIES);
         setThumbnails(urls);
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [video.id, video.thumbnail_ready, thumbnails, cache]);
+  }, [video.id, cacheKey, video.thumbnail_ready, thumbnails, cache]);
 
   // `probed_at === null` covers both "not yet probed" and "probe failed
   // permanently" -- the backend doesn't distinguish these today (known

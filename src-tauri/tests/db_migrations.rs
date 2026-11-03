@@ -11,7 +11,7 @@ fn init_temp_db() -> (tempfile::TempDir, db::Db) {
 }
 
 #[test]
-fn creates_all_seven_tables_and_ten_indexes() {
+fn creates_all_eight_tables_and_ten_indexes() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
 
@@ -35,7 +35,8 @@ fn creates_all_seven_tables_and_ten_indexes() {
             "skipped_files",
             "tags",
             "video_tags",
-            "videos"
+            "videos",
+            "wb_unmatched_thumbnails"
         ]
     );
 
@@ -99,15 +100,15 @@ fn rerunning_migrations_is_a_no_op() {
             .expect("re-running migrations should be a no-op, not an error");
     }
     let conn = db.writer.lock().unwrap();
-    // Ten migrations exist (v1 initial schema, v2
+    // Eleven migrations exist (v1 initial schema, v2
     // mtime, v3 kana/roma, v4 video metadata, v5 sort indexes, v6
     // path_collisions, v7 generation retry columns, v8 thumbnail_ready,
-    // v9 skipped_files.dismissed, v10 tags.sort_order) -- a fresh DB should land on all ten, and
+    // v9 skipped_files.dismissed, v10 tags.sort_order, v11 wb_unmatched_thumbnails) -- a fresh DB should land on all eleven, and
     // re-running must not insert extra schema_version rows for any of them.
     let version_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version_count, 10);
+    assert_eq!(version_count, 11);
 }
 
 /// kana/roma (v3) and the ffprobe metadata columns
@@ -176,7 +177,7 @@ fn migrating_from_a_real_v2_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     conn.execute(
         "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
@@ -256,7 +257,7 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10, "should also pick up v8 to v10");
+    assert_eq!(version, 11, "should also pick up v8 to v11");
 
     let (thumbnail_attempts, metadata_attempts): (i64, i64) = conn
         .query_row(
@@ -331,7 +332,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     let thumbnail_ready: i64 = conn
         .query_row(
@@ -402,7 +403,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     let dismissed: i64 = conn
         .query_row("SELECT dismissed FROM skipped_files", [], |r| r.get(0))
         .unwrap();
@@ -469,7 +470,7 @@ fn migrating_from_a_real_v1_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     // The column must be usable, not just present in the schema.
     conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])
@@ -632,4 +633,94 @@ fn migration_v10_adds_a_nullable_sort_order_column_without_default() {
         .find(|(name, _, _)| name == "sort_order")
         .expect("tags.sort_order should exist");
     assert_eq!((col.1, &col.2), (0, &None));
+}
+
+/// Upgrading a real v10 database adds the new table without touching the data
+/// that was already there.
+#[test]
+fn migrating_from_a_real_v10_database_adds_wb_unmatched_thumbnails_and_keeps_data() {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        for sql in [
+            include_str!("../migrations/0001_initial.sql"),
+            include_str!("../migrations/0002_add_mtime.sql"),
+            include_str!("../migrations/0003_add_kana_roma.sql"),
+            include_str!("../migrations/0004_add_video_metadata.sql"),
+            include_str!("../migrations/0005_add_sort_indexes.sql"),
+            include_str!("../migrations/0006_add_path_collisions.sql"),
+            include_str!("../migrations/0007_add_generation_retry_columns.sql"),
+            include_str!("../migrations/0008_add_thumbnail_ready.sql"),
+            include_str!("../migrations/0009_add_skipped_files_dismissed.sql"),
+            include_str!("../migrations/0010_add_tags_sort_order.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        for version in 1..=10 {
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                [version],
+            )
+            .unwrap();
+        }
+        conn.execute("INSERT INTO tags (id, name) VALUES (1, 'keep')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
+             VALUES ('pre-v11', 'D:/videos/a.mp4', 'a.mp4', 1024, 'qh', 'online')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO video_tags (video_id, tag_id) VALUES ('pre-v11', 1)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let db = db::init(&db_path).expect("db::init should upgrade a v10 database");
+    let conn = db.writer.lock().unwrap();
+
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 11);
+
+    let tag: String = conn
+        .query_row("SELECT name FROM tags WHERE id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(tag, "keep");
+    let video: String = conn
+        .query_row(
+            "SELECT file_path FROM videos WHERE id = 'pre-v11'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(video, "D:/videos/a.mp4");
+    let links: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM video_tags WHERE video_id = 'pre-v11' AND tag_id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(links, 1);
+
+    conn.execute(
+        "INSERT INTO wb_unmatched_thumbnails (folder_path, file_name, kind, thum_layout)
+         VALUES ('D:/thumb', 'a.#.jpg', 'empty_hash', NULL)",
+        [],
+    )
+    .expect("wb_unmatched_thumbnails should be writable and thum_layout nullable");
+    let duplicate = conn.execute(
+        "INSERT INTO wb_unmatched_thumbnails (folder_path, file_name, kind)
+         VALUES ('D:/thumb', 'a.#.jpg', 'empty_hash')",
+        [],
+    );
+    assert!(
+        duplicate.is_err(),
+        "(folder_path, file_name) must be the primary key"
+    );
 }

@@ -238,3 +238,24 @@ export interface SavedViewState {
   tag_ids: number[];
   ratings: number[];
 }
+
+// Mirrors src-tauri/src/commands/wb_unmatched_cmds.rs's UnmatchedThumbnail:
+// a legacy thumbnail the .wb import could not attach to a video.
+export type UnmatchedThumbnailKind = "empty_hash" | "no_matching_video";
+
+export interface UnmatchedThumbnailDto {
+  folder_path: string;
+  file_name: string;
+  kind: UnmatchedThumbnailKind;
+  /** null when the file name carries no usable video name. */
+  default_search_term: string | null;
+}
+
+// Mirrors wb_unmatched_cmds.rs's LinkCandidate (an offline video).
+export interface LinkCandidateDto {
+  id: string;
+  file_name: string;
+  file_path: string;
+  /** The video already has thumbnails; linking replaces them. */
+  thumbnail_ready: boolean;
+}

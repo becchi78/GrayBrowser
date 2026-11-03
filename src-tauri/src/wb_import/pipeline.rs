@@ -25,8 +25,9 @@ use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
-    count_clamped_scores, count_source_tags, extract_thumbnail_hash, file_name_from_path,
-    match_thumbnail_files, partition_unmatched, wb_row_to_import_candidate, WbImportStage,
+    classify_unmatched_filename, count_clamped_scores, count_source_tags, extract_thumbnail_hash,
+    file_name_from_path, match_thumbnail_files, partition_unmatched, wb_row_to_import_candidate,
+    WbImportStage,
 };
 use gb_core::wb_import_log::{
     self as wb_log, Availability, LogSummary, PathRestoration, RowLog, RowOutcome,
@@ -808,6 +809,12 @@ fn import_all<S, F, N, C, W, D, P, K, L>(
         let mut conn = db.writer.lock().unwrap();
         queries::mark_thumbnails_ready(&mut conn, &link_outcome.linked_video_ids);
     }
+    save_unmatched_thumbnails(
+        db,
+        &paths.thumbnail_folder,
+        &link_outcome,
+        thumb_layout.as_ref(),
+    );
     let thumbnails_linked = link_outcome.linked;
     let thumbnails_failed = link_outcome.failed;
     let thumbnails_unmatched = link_outcome.unmatched;
@@ -1023,6 +1030,40 @@ fn read_thumb_layout<S: WbSourceAdapter>(wb_source: &S) -> Option<ThumbLayout> {
             );
             None
         }
+    }
+}
+
+/// Records the legacy thumbnails this import left unlinked, replacing what an
+/// earlier import of the same folder recorded, so they can be linked by hand
+/// later. Nothing is changed when the folder could not be listed: its previous
+/// record is then still the best knowledge there is. A failure is logged and
+/// the import carries on, since the record is a convenience on top of files and
+/// registrations that are already in place.
+fn save_unmatched_thumbnails(
+    db: &Db,
+    thumbnail_folder: &Path,
+    link_outcome: &LinkOutcome,
+    layout: Option<&ThumbLayout>,
+) {
+    if link_outcome.folder_error.is_some() {
+        return;
+    }
+    let thum_layout = layout.map(ThumbLayout::to_thum_size);
+    let rows: Vec<queries::NewUnmatchedThumbnail> = link_outcome
+        .unmatched_filenames
+        .iter()
+        .map(|file_name| queries::NewUnmatchedThumbnail {
+            file_name: file_name.clone(),
+            kind: classify_unmatched_filename(file_name)
+                .as_db_str()
+                .to_string(),
+            thum_layout: thum_layout.clone(),
+        })
+        .collect();
+    let folder = thumbnail_folder.to_string_lossy();
+    let mut conn = db.writer.lock().unwrap();
+    if let Err(e) = queries::replace_unmatched_thumbnails(&mut conn, &folder, &rows) {
+        log::warn!("wb import: failed to record the unmatched legacy thumbnails: {e}");
     }
 }
 
@@ -1304,7 +1345,7 @@ fn link_worker_count(cores: usize) -> usize {
 }
 
 /// What became of one matched thumbnail.
-enum ItemResult {
+pub(crate) enum ItemResult {
     Linked { split: bool },
     Failed(String),
 }
@@ -1319,9 +1360,7 @@ struct LinkContext<'a, F: FfmpegAdapter> {
 }
 
 impl<F: FfmpegAdapter> LinkContext<'_, F> {
-    /// Links one legacy thumbnail to its video: creates the video's thumbnail
-    /// directory, then writes either its frames or the whole image into every
-    /// slot. A failure removes whatever slot files were written.
+    /// Links one legacy thumbnail to its video; see [`convert_thumbnail_to_slots`].
     fn link_one(&self, video_id: &str, filename: &str, file_path: Option<&str>) -> ItemResult {
         // Defensive only: every `video_id` here came from `movies_for_matching`,
         // which is derived from the very same `registered_movies` the lookup
@@ -1333,84 +1372,106 @@ impl<F: FfmpegAdapter> LinkContext<'_, F> {
             );
             return ItemResult::Failed("内部の不整合".to_string());
         };
-        let video_dir = crate::thumbnail::paths::video_thumbnail_dir(
+        convert_thumbnail_to_slots(
+            self.ffmpeg,
             self.thumbnails_root,
             self.watch_folders,
+            video_id,
             file_path,
+            &self.thumbnail_folder.join(filename),
+            self.layout,
+        )
+    }
+}
+
+/// Converts one legacy thumbnail JPG into the video's slot files: creates the
+/// video's thumbnail directory, then writes either its frames or the whole
+/// image into every slot. A failure removes whatever slot files were written.
+/// Shared by the import and by linking a thumbnail to a video by hand, so both
+/// place identical files.
+pub(crate) fn convert_thumbnail_to_slots<F: FfmpegAdapter>(
+    ffmpeg: &F,
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+    video_id: &str,
+    video_file_path: &str,
+    src_path: &Path,
+    layout: Option<&ThumbLayout>,
+) -> ItemResult {
+    let filename = src_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let filename = filename.as_str();
+    let video_dir = crate::thumbnail::paths::video_thumbnail_dir(
+        thumbnails_root,
+        watch_folders,
+        video_file_path,
+    );
+    if let Err(e) = fs::create_dir_all(&video_dir) {
+        log::warn!(
+            "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
+            video_dir.display()
         );
-        if let Err(e) = fs::create_dir_all(&video_dir) {
-            log::warn!(
-                "wb import: failed to create thumbnail directory {} for video {video_id}: {e}",
-                video_dir.display()
-            );
-            return ItemResult::Failed(format!("サムネイルの保存先を作れない: {e}"));
-        }
+        return ItemResult::Failed(format!("サムネイルの保存先を作れない: {e}"));
+    }
 
-        let src_path = self.thumbnail_folder.join(filename);
-
-        if let Some(rects) = self
-            .layout
-            .and_then(|l| split_rects(l, &src_path, filename, self.ffmpeg))
-        {
-            return match write_split_slots(self.ffmpeg, &src_path, &video_dir, video_id, &rects) {
-                Ok(()) => ItemResult::Linked { split: true },
-                Err(e) => {
-                    log::warn!(
-                        "wb import: failed to split thumbnail for video {video_id} \
-                         ({filename}): {e}"
-                    );
-                    remove_slot_files(&video_dir, video_id);
-                    ItemResult::Failed(format!("分割に失敗: {e}"))
-                }
-            };
-        }
-        // Shared scratch file for the single conversion pass below; distinct
-        // from the per-slot `{video_id}_{i}.webp.tmp` names used by
-        // `thumbnail::worker` so the two pipelines can never collide on a
-        // tmp path.
-        let shared_tmp_path = video_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
-
-        if let Err(e) =
-            self.ffmpeg
-                .convert_image_to_webp(&src_path, &shared_tmp_path, WB_THUMBNAIL_QUALITY)
-        {
-            log::warn!(
-                "wb import: thumbnail conversion failed for video {video_id} \
-                 ({filename}): {e}"
-            );
-            let _ = fs::remove_file(&shared_tmp_path);
-            // An earlier item of the same video may have written its slots;
-            // a video that ends up failed must not keep them.
-            remove_slot_files(&video_dir, video_id);
-            return ItemResult::Failed(format!("WebPへの変換に失敗: {e}"));
-        }
-
-        // Duplicate the converted image into every slot. Fail-fast on the
-        // first copy error (same rationale as
-        // `thumbnail::worker::generate_thumbnail_for_video`'s slot
-        // extraction loop): don't leave a partially populated set of slot
-        // files behind, since `get_thumbnails` / `list_videos_missing_thumbnails`
-        // treat "all slots present" as the only valid state.
-        let mut copy_err: Option<std::io::Error> = None;
-        for i in 0..THUMBNAILS_PER_VIDEO {
-            let final_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
-            if let Err(e) = fs::copy(&shared_tmp_path, &final_path) {
-                copy_err = Some(e);
-                break;
-            }
-        }
-        let _ = fs::remove_file(&shared_tmp_path);
-
-        match copy_err {
-            None => ItemResult::Linked { split: false },
-            Some(e) => {
+    if let Some(rects) = layout.and_then(|l| split_rects(l, src_path, filename, ffmpeg)) {
+        return match write_split_slots(ffmpeg, src_path, &video_dir, video_id, &rects) {
+            Ok(()) => ItemResult::Linked { split: true },
+            Err(e) => {
                 log::warn!(
-                    "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
+                    "wb import: failed to split thumbnail for video {video_id} \
                      ({filename}): {e}"
                 );
                 remove_slot_files(&video_dir, video_id);
-                ItemResult::Failed(format!("保存に失敗: {e}"))
+                ItemResult::Failed(format!("分割に失敗: {e}"))
             }
+        };
+    }
+    // Shared scratch file for the single conversion pass below; distinct
+    // from the per-slot `{video_id}_{i}.webp.tmp` names used by
+    // `thumbnail::worker` so the two pipelines can never collide on a
+    // tmp path.
+    let shared_tmp_path = video_dir.join(format!("{video_id}.wb_legacy.webp.tmp"));
+
+    if let Err(e) = ffmpeg.convert_image_to_webp(src_path, &shared_tmp_path, WB_THUMBNAIL_QUALITY) {
+        log::warn!(
+            "wb import: thumbnail conversion failed for video {video_id} \
+             ({filename}): {e}"
+        );
+        let _ = fs::remove_file(&shared_tmp_path);
+        // An earlier item of the same video may have written its slots;
+        // a video that ends up failed must not keep them.
+        remove_slot_files(&video_dir, video_id);
+        return ItemResult::Failed(format!("WebPへの変換に失敗: {e}"));
+    }
+
+    // Duplicate the converted image into every slot. Fail-fast on the
+    // first copy error (same rationale as
+    // `thumbnail::worker::generate_thumbnail_for_video`'s slot
+    // extraction loop): don't leave a partially populated set of slot
+    // files behind, since `get_thumbnails` / `list_videos_missing_thumbnails`
+    // treat "all slots present" as the only valid state.
+    let mut copy_err: Option<std::io::Error> = None;
+    for i in 0..THUMBNAILS_PER_VIDEO {
+        let final_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
+        if let Err(e) = fs::copy(&shared_tmp_path, &final_path) {
+            copy_err = Some(e);
+            break;
+        }
+    }
+    let _ = fs::remove_file(&shared_tmp_path);
+
+    match copy_err {
+        None => ItemResult::Linked { split: false },
+        Some(e) => {
+            log::warn!(
+                "wb import: failed to finalize thumbnail slot(s) for video {video_id} \
+                 ({filename}): {e}"
+            );
+            remove_slot_files(&video_dir, video_id);
+            ItemResult::Failed(format!("保存に失敗: {e}"))
         }
     }
 }
@@ -2170,6 +2231,124 @@ mod tests {
             ready(&failing_id),
             0,
             "a conversion failure must leave thumbnail_ready unset"
+        );
+    }
+
+    fn recorded_unmatched(h: &Harness) -> Vec<queries::UnmatchedThumbnailRow> {
+        let conn = h.db.writer.lock().unwrap();
+        queries::list_unmatched_thumbnails(&conn).unwrap()
+    }
+
+    fn import_once(h: &Harness, wb_source: &FakeWbSourceAdapter, ffmpeg: &FakeFfmpegAdapter) {
+        import_all(
+            &h.db,
+            &h.paths,
+            wb_source,
+            ffmpeg,
+            &FakeWbImportNotifier::default(),
+            &FakeCatalogNotifier::default(),
+        );
+    }
+
+    #[test]
+    fn records_unmatched_thumbnails_with_kind_and_layout_and_a_reimport_replaces_them() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_id = 1;
+                r.movie_path = "Z:\\linked.mp4".to_string();
+                r.hash = "1e5e0fbf".to_string();
+            })]),
+            profile_values: Ok(vec!["200x150x6x1".to_string()]),
+            ..Default::default()
+        };
+        for name in [
+            "linked.mp4.#1e5e0fbf.jpg",
+            "gone.mp4.#.jpg",
+            "orphan.mp4.#deadbeef.jpg",
+        ] {
+            std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
+        }
+        let ffmpeg = FakeFfmpegAdapter::default();
+
+        import_once(&h, &wb_source, &ffmpeg);
+
+        let folder = h.paths.thumbnail_folder.to_string_lossy().to_string();
+        let expected = |name: &str, kind: &str| queries::UnmatchedThumbnailRow {
+            folder_path: folder.clone(),
+            file_name: name.to_string(),
+            kind: kind.to_string(),
+            thum_layout: Some("200x150x6x1".to_string()),
+        };
+        assert_eq!(
+            recorded_unmatched(&h),
+            vec![
+                expected("gone.mp4.#.jpg", "empty_hash"),
+                expected("orphan.mp4.#deadbeef.jpg", "no_matching_video"),
+            ],
+            "the linked file must not be recorded"
+        );
+
+        // One of the two is dealt with outside the app; the repeat import must
+        // rebuild the record, not add to it.
+        std::fs::remove_file(h.paths.thumbnail_folder.join("orphan.mp4.#deadbeef.jpg")).unwrap();
+        import_once(&h, &wb_source, &ffmpeg);
+        assert_eq!(
+            recorded_unmatched(&h),
+            vec![expected("gone.mp4.#.jpg", "empty_hash")]
+        );
+    }
+
+    #[test]
+    fn records_no_layout_when_the_wb_states_none() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_path = "Z:\\a.mp4".to_string();
+            })]),
+            // Default: reading the profile fails, so there is no layout.
+            ..Default::default()
+        };
+        std::fs::write(h.paths.thumbnail_folder.join("a.mp4.#.jpg"), b"fake jpg").unwrap();
+
+        import_once(&h, &wb_source, &FakeFfmpegAdapter::default());
+
+        let rows = recorded_unmatched(&h);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].thum_layout, None);
+    }
+
+    #[test]
+    fn an_import_that_cannot_list_the_folder_keeps_the_previous_record() {
+        let h = harness();
+        let wb_source = FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_path = "Z:\\a.mp4".to_string();
+            })]),
+            ..Default::default()
+        };
+        std::fs::write(h.paths.thumbnail_folder.join("a.mp4.#.jpg"), b"fake jpg").unwrap();
+        let ffmpeg = FakeFfmpegAdapter::default();
+        import_once(&h, &wb_source, &ffmpeg);
+        assert_eq!(recorded_unmatched(&h).len(), 1);
+
+        let missing = WbImportPaths {
+            wb_path: h.paths.wb_path.clone(),
+            thumbnail_folder: h.paths.thumbnail_folder.join("does-not-exist"),
+            thumbnails_dir: h.paths.thumbnails_dir.clone(),
+        };
+        import_all(
+            &h.db,
+            &missing,
+            &wb_source,
+            &ffmpeg,
+            &FakeWbImportNotifier::default(),
+            &FakeCatalogNotifier::default(),
+        );
+        assert_eq!(
+            recorded_unmatched(&h).len(),
+            1,
+            "an unlistable folder is not evidence that nothing is unmatched"
         );
     }
 

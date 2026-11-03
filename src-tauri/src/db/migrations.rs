@@ -54,6 +54,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "add tags.sort_order (user-defined tag order, NULL = after placed tags by name) and migrate the pinned-tags setting into it",
         sql: include_str!("../../migrations/0010_add_tags_sort_order.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 11,
+        description: "add wb_unmatched_thumbnails: legacy thumbnail files a .wb import could not link, kept for manual linking",
+        sql: include_str!("../../migrations/0011_create_wb_unmatched_thumbnails.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.

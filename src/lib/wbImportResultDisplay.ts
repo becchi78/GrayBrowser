@@ -61,7 +61,7 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention.push({
       key: "unmatched-empty-hash",
       tone: "amber",
-      text: `旧サムネイルのハッシュが空のため自動では紐付けられません: ${emptyHash}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
+      text: `旧サムネイルのハッシュが空のため自動では紐付けられません: ${emptyHash}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
       expandable: true,
     });
   }
@@ -69,7 +69,7 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention.push({
       key: "unmatched",
       tone: "amber",
-      text: `対応する動画がない旧サムネイル: ${noMatchingVideo}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
+      text: `対応する動画がない旧サムネイル: ${noMatchingVideo}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
       expandable: true,
     });
   }
