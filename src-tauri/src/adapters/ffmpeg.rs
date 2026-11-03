@@ -2,11 +2,11 @@
 //! arrays -- never a shell string.
 
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gb_core::ports::ffmpeg::{
-    CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
+    CropOutput, CropRect, FfmpegAdapter, FfmpegAvailability, FfmpegError, VideoMetadata,
 };
 use gb_core::stderr_tail::{tail_lines, STDERR_TAIL_LINES};
 
@@ -211,48 +211,100 @@ impl FfmpegAdapter for RealFfmpegAdapter {
         output_tmp_path: &Path,
         quality: u8,
     ) -> Result<(), FfmpegError> {
-        run_image_to_webp(src_path, output_tmp_path, None, quality)
+        run_image_to_webp(src_path, output_tmp_path, quality)
     }
 
-    fn crop_image_to_webp(
+    fn split_image_to_webp(
         &self,
         src_path: &Path,
-        output_tmp_path: &Path,
-        crop: CropRect,
+        outputs: &[CropOutput],
         quality: u8,
     ) -> Result<(), FfmpegError> {
-        run_image_to_webp(src_path, output_tmp_path, Some(&crop_filter(crop)), quality)
+        if outputs.is_empty() {
+            return Ok(());
+        }
+        let long_input = long_path::to_long_path(src_path);
+        let input_str = path_to_str(&long_input)?;
+        let long_outputs: Vec<PathBuf> = outputs
+            .iter()
+            .map(|o| long_path::to_long_path(&o.tmp_path))
+            .collect();
+        let targets = long_outputs
+            .iter()
+            .zip(outputs)
+            .map(|(path, o)| Ok((path_to_str(path)?, o.crop)))
+            .collect::<Result<Vec<_>, FfmpegError>>()?;
+
+        run_ffmpeg_image(split_image_to_webp_args(input_str, &targets, quality))
     }
 }
 
-/// ffmpeg `-vf` value cutting `crop` out of the input.
-fn crop_filter(crop: CropRect) -> String {
-    format!("crop={}:{}:{}:{}", crop.w, crop.h, crop.x, crop.y)
-}
-
-/// Argument list for turning a still image into WebP, optionally through a
-/// `-vf` filter. The input is forced to the plain `image2` demuxer with
-/// `-pattern_type none`: otherwise ffmpeg reads a `%` in the file name
-/// (e.g. `120%` or `%03d`) as a printf-style sequence pattern and reports
-/// "No such file" for a file that exists. These flags go before `-i` because
-/// they are input options. The output, like `extract_thumbnail`'s, is a
-/// `[id].webp.tmp` path (atomic write scheme), so its extension can't tell
-/// ffmpeg the muxer; it is forced explicitly for the same reason documented
-/// there.
-fn image_to_webp_args(
-    input: &str,
-    output: &str,
-    video_filter: Option<&str>,
-    quality: u8,
-) -> Vec<String> {
+/// Input options shared by every still-image conversion. The input is forced
+/// to the plain `image2` demuxer with `-pattern_type none`: otherwise ffmpeg
+/// reads a `%` in the file name (e.g. `120%` or `%03d`) as a printf-style
+/// sequence pattern and reports "No such file" for a file that exists. These
+/// flags go before `-i` because they are input options.
+fn image_input_args(input: &str) -> Vec<String> {
     let mut args = ["-f", "image2", "-pattern_type", "none", "-i"]
         .map(String::from)
         .to_vec();
     args.push(input.to_string());
-    if let Some(filter) = video_filter {
-        args.push("-vf".to_string());
-        args.push(filter.to_string());
+    args
+}
+
+/// `-filter_complex` graph cutting every crop out of input stream 0, one
+/// labelled output `[oK]` per crop. A single crop needs no `split`.
+fn split_filter_graph(crops: &[CropRect]) -> String {
+    let crop = |c: &CropRect| format!("crop={}:{}:{}:{}", c.w, c.h, c.x, c.y);
+    if let [only] = crops {
+        return format!("[0:v]{}[o0]", crop(only));
     }
+    let mut graph = format!("[0:v]split={}", crops.len());
+    for i in 0..crops.len() {
+        graph.push_str(&format!("[s{i}]"));
+    }
+    for (i, c) in crops.iter().enumerate() {
+        graph.push_str(&format!(";[s{i}]{}[o{i}]", crop(c)));
+    }
+    graph
+}
+
+/// Argument list writing each `(output path, crop)` target as a WebP from a
+/// single decode of `input`. Output paths are `[id]_N.webp.tmp`, so the muxer
+/// is forced for the reason documented on `image_to_webp_args`.
+fn split_image_to_webp_args(input: &str, targets: &[(&str, CropRect)], quality: u8) -> Vec<String> {
+    let crops: Vec<CropRect> = targets.iter().map(|(_, c)| *c).collect();
+    let mut args = image_input_args(input);
+    args.push("-filter_complex".to_string());
+    args.push(split_filter_graph(&crops));
+    for (i, (output, _)) in targets.iter().enumerate() {
+        args.extend(
+            [
+                "-map",
+                &format!("[o{i}]"),
+                "-frames:v",
+                "1",
+                "-quality",
+                &quality.to_string(),
+                "-lossless",
+                "0",
+                "-f",
+                "webp",
+                "-y",
+                output,
+            ]
+            .map(String::from),
+        );
+    }
+    args
+}
+
+/// Argument list for turning a still image into WebP. The output, like
+/// `extract_thumbnail`'s, is a `[id].webp.tmp` path (atomic write scheme), so
+/// its extension can't tell ffmpeg the muxer; it is forced explicitly for the
+/// same reason documented there.
+fn image_to_webp_args(input: &str, output: &str, quality: u8) -> Vec<String> {
+    let mut args = image_input_args(input);
     args.extend(
         [
             "-quality",
@@ -272,21 +324,18 @@ fn image_to_webp_args(
 fn run_image_to_webp(
     src_path: &Path,
     output_tmp_path: &Path,
-    video_filter: Option<&str>,
     quality: u8,
 ) -> Result<(), FfmpegError> {
     let long_input = long_path::to_long_path(src_path);
     let long_output = long_path::to_long_path(output_tmp_path);
     let input_str = path_to_str(&long_input)?;
     let output_str = path_to_str(&long_output)?;
+    run_ffmpeg_image(image_to_webp_args(input_str, output_str, quality))
+}
 
+fn run_ffmpeg_image(args: Vec<String>) -> Result<(), FfmpegError> {
     let output = hidden_command("ffmpeg")
-        .args(image_to_webp_args(
-            input_str,
-            output_str,
-            video_filter,
-            quality,
-        ))
+        .args(args)
         .output()
         .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
@@ -337,20 +386,18 @@ fn version_of(binary_name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn crop_filter_is_width_height_x_y() {
-        let crop = CropRect {
-            x: 400,
+    fn rect(x: u32) -> CropRect {
+        CropRect {
+            x,
             y: 0,
             w: 200,
             h: 150,
-        };
-        assert_eq!(crop_filter(crop), "crop=200:150:400:0");
+        }
     }
 
     #[test]
-    fn image_to_webp_args_without_a_filter_has_no_vf() {
-        let args = image_to_webp_args("in.jpg", "out.webp.tmp", None, 55);
+    fn image_to_webp_args_converts_the_whole_image() {
+        let args = image_to_webp_args("in.jpg", "out.webp.tmp", 55);
         assert_eq!(
             args,
             [
@@ -360,32 +407,6 @@ mod tests {
                 "none",
                 "-i",
                 "in.jpg",
-                "-quality",
-                "55",
-                "-lossless",
-                "0",
-                "-f",
-                "webp",
-                "-y",
-                "out.webp.tmp"
-            ]
-        );
-    }
-
-    #[test]
-    fn image_to_webp_args_with_a_filter_puts_vf_between_input_and_quality() {
-        let args = image_to_webp_args("in.jpg", "out.webp.tmp", Some("crop=200:150:0:0"), 55);
-        assert_eq!(
-            args,
-            [
-                "-f",
-                "image2",
-                "-pattern_type",
-                "none",
-                "-i",
-                "in.jpg",
-                "-vf",
-                "crop=200:150:0:0",
                 "-quality",
                 "55",
                 "-lossless",
@@ -400,7 +421,93 @@ mod tests {
 
     #[test]
     fn image_to_webp_args_passes_a_percent_path_as_one_literal_input() {
-        let args = image_to_webp_args("a 120% max %03d.jpg", "out.webp.tmp", None, 55);
+        let args = image_to_webp_args("a 120% max %03d.jpg", "out.webp.tmp", 55);
+        let i = args.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(args[i + 1], "a 120% max %03d.jpg");
+        assert_eq!(&args[..i], ["-f", "image2", "-pattern_type", "none"]);
+    }
+
+    #[test]
+    fn split_args_for_six_outputs_split_once_and_map_each_output() {
+        let names: Vec<String> = (0..6).map(|i| format!("v_{i}.webp.tmp")).collect();
+        let targets: Vec<(&str, CropRect)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.as_str(), rect(i as u32 * 200)))
+            .collect();
+        let args = split_image_to_webp_args("in.jpg", &targets, 55);
+
+        let graph = "[0:v]split=6[s0][s1][s2][s3][s4][s5];\
+            [s0]crop=200:150:0:0[o0];[s1]crop=200:150:200:0[o1];\
+            [s2]crop=200:150:400:0[o2];[s3]crop=200:150:600:0[o3];\
+            [s4]crop=200:150:800:0[o4];[s5]crop=200:150:1000:0[o5]";
+        let mut expected: Vec<String> = [
+            "-f",
+            "image2",
+            "-pattern_type",
+            "none",
+            "-i",
+            "in.jpg",
+            "-filter_complex",
+            graph,
+        ]
+        .map(String::from)
+        .to_vec();
+        for i in 0..6 {
+            expected.extend(
+                [
+                    "-map",
+                    &format!("[o{i}]"),
+                    "-frames:v",
+                    "1",
+                    "-quality",
+                    "55",
+                    "-lossless",
+                    "0",
+                    "-f",
+                    "webp",
+                    "-y",
+                    &format!("v_{i}.webp.tmp"),
+                ]
+                .map(String::from),
+            );
+        }
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn split_args_for_one_output_crop_without_a_split() {
+        let args = split_image_to_webp_args("in.jpg", &[("o.webp.tmp", rect(400))], 55);
+        assert_eq!(
+            args,
+            [
+                "-f",
+                "image2",
+                "-pattern_type",
+                "none",
+                "-i",
+                "in.jpg",
+                "-filter_complex",
+                "[0:v]crop=200:150:400:0[o0]",
+                "-map",
+                "[o0]",
+                "-frames:v",
+                "1",
+                "-quality",
+                "55",
+                "-lossless",
+                "0",
+                "-f",
+                "webp",
+                "-y",
+                "o.webp.tmp"
+            ]
+        );
+    }
+
+    #[test]
+    fn split_args_pass_a_percent_path_as_one_literal_input() {
+        let args = split_image_to_webp_args("a 120% max %03d.jpg", &[("o", rect(0))], 55);
         let i = args.iter().position(|a| a == "-i").unwrap();
         assert_eq!(args[i + 1], "a 120% max %03d.jpg");
         assert_eq!(&args[..i], ["-f", "image2", "-pattern_type", "none"]);

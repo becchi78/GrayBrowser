@@ -18,7 +18,7 @@ use gb_core::image_size::jpeg_dimensions;
 use gb_core::path_restore::{last_segment, restore_path};
 use gb_core::paths::extract_drive_root;
 use gb_core::ports::dir_lister::DirLister;
-use gb_core::ports::ffmpeg::{CropRect, FfmpegAdapter};
+use gb_core::ports::ffmpeg::{CropOutput, CropRect, FfmpegAdapter};
 use gb_core::ports::folder_probe::FolderProbe;
 use gb_core::ports::wb_import_clock::{ClockReading, WbImportClock};
 use gb_core::ports::wb_import_log::WbImportLog;
@@ -805,12 +805,8 @@ fn import_all<S, F, N, C, W, D, P, K, L>(
     // free for other callers; a single failure is logged and does not
     // change the linked count, since the files really are in place.
     if !link_outcome.linked_video_ids.is_empty() {
-        let conn = db.writer.lock().unwrap();
-        for video_id in &link_outcome.linked_video_ids {
-            if let Err(e) = queries::mark_thumbnail_ready(&conn, video_id) {
-                log::warn!("wb import: failed to mark thumbnail ready for video {video_id}: {e}");
-            }
-        }
+        let mut conn = db.writer.lock().unwrap();
+        queries::mark_thumbnails_ready(&mut conn, &link_outcome.linked_video_ids);
     }
     let thumbnails_linked = link_outcome.linked;
     let thumbnails_failed = link_outcome.failed;
@@ -1534,9 +1530,10 @@ fn split_rects<F: FfmpegAdapter>(
     rects
 }
 
-/// Writes frame `i` of `src_path` to slot `i`, each through its own
-/// `{video_id}_{i}.webp.tmp` and a rename so a slot is never half written.
-/// Stops at the first failure; the caller removes whatever was written.
+/// Writes frame `i` of `src_path` to slot `i`. ffmpeg writes every frame in
+/// one launch, each into its own `{video_id}_{i}.webp.tmp`; the renames only
+/// start once all of them succeeded, so a slot is never half written. Stops
+/// at the first failure; the caller removes whatever was written.
 fn write_split_slots<F: FfmpegAdapter>(
     ffmpeg: &F,
     src_path: &Path,
@@ -1544,13 +1541,22 @@ fn write_split_slots<F: FfmpegAdapter>(
     video_id: &str,
     rects: &[CropRect],
 ) -> Result<(), String> {
-    for (i, rect) in rects.iter().enumerate() {
-        let tmp_path = video_dir.join(format!("{video_id}_{i}.webp.tmp"));
+    let outputs: Vec<CropOutput> = rects
+        .iter()
+        .enumerate()
+        .map(|(i, rect)| CropOutput {
+            tmp_path: video_dir.join(format!("{video_id}_{i}.webp.tmp")),
+            crop: *rect,
+        })
+        .collect();
+    ffmpeg
+        .split_image_to_webp(src_path, &outputs, WB_THUMBNAIL_QUALITY)
+        // One launch covers every frame, so the ffmpeg stderr tail in `e` is
+        // the only detail there is; there is no failing frame index to name.
+        .map_err(|e| format!("split: {e}"))?;
+    for (i, output) in outputs.iter().enumerate() {
         let final_path = crate::thumbnail::paths::slot_path(video_dir, video_id, i);
-        ffmpeg
-            .crop_image_to_webp(src_path, &tmp_path, *rect, WB_THUMBNAIL_QUALITY)
-            .map_err(|e| format!("frame {i}: {e}"))?;
-        fs::rename(&tmp_path, &final_path).map_err(|e| format!("frame {i}: {e}"))?;
+        fs::rename(&output.tmp_path, &final_path).map_err(|e| format!("frame {i}: {e}"))?;
     }
     Ok(())
 }
@@ -3468,7 +3474,7 @@ mod tests {
     }
 
     /// An ffmpeg fake whose JPG probe returns `size`, and whose convert and
-    /// crop calls succeed (crop unless `fail_crop_at_x` names its x).
+    /// split calls succeed (split unless a rectangle has x `fail_crop_at_x`).
     fn split_ffmpeg(
         size: Result<VideoMetadata, FfmpegError>,
         fail_crop_at_x: Option<u32>,
@@ -3476,8 +3482,8 @@ mod tests {
         FakeFfmpegAdapter {
             metadata_for: Some(Box::new(move |_| size.clone())),
             convert_result: Box::new(|_| Ok(())),
-            crop_result: Box::new(move |_, crop| {
-                if Some(crop.x) == fail_crop_at_x {
+            split_result: Box::new(move |_, crops| {
+                if crops.iter().any(|c| Some(c.x) == fail_crop_at_x) {
                     Err(FfmpegError::NonZeroExit {
                         status: 1,
                         stderr: "simulated crop failure".into(),
@@ -3486,6 +3492,8 @@ mod tests {
                     Ok(())
                 }
             }),
+            // A failing ffmpeg may already have created some outputs.
+            split_partial_writes: if fail_crop_at_x.is_some() { 3 } else { 0 },
             ..Default::default()
         }
     }
@@ -3497,10 +3505,21 @@ mod tests {
             .unwrap()
             .iter()
             .filter_map(|c| match c {
-                FakeCall::CropImageToWebp { crop, .. } => Some(*crop),
+                FakeCall::SplitImageToWebp { outputs, .. } => Some(outputs.iter().map(|o| o.crop)),
                 _ => None,
             })
+            .flatten()
             .collect()
+    }
+
+    fn split_calls(ffmpeg: &FakeFfmpegAdapter) -> usize {
+        ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| matches!(c, FakeCall::SplitImageToWebp { .. }))
+            .count()
     }
 
     fn converts(ffmpeg: &FakeFfmpegAdapter) -> usize {
@@ -3601,19 +3620,23 @@ mod tests {
             assert!(run.slot(i).exists(), "slot {i}");
             assert!(!run.slot_tmp(i).exists(), "tmp {i}");
         }
-        // Each frame is written through its own slot's scratch path.
+        // All six frames come from one ffmpeg call, each written through its
+        // own slot's scratch path.
+        assert_eq!(split_calls(&ffmpeg), 1);
         let outs: Vec<PathBuf> = ffmpeg
             .calls
             .lock()
             .unwrap()
             .iter()
             .filter_map(|c| match c {
-                FakeCall::CropImageToWebp {
-                    output_tmp_path, ..
-                } => Some(output_tmp_path.clone()),
+                FakeCall::SplitImageToWebp { outputs, .. } => {
+                    Some(outputs.iter().map(|o| o.tmp_path.clone()))
+                }
                 _ => None,
             })
+            .flatten()
             .collect();
+        assert_eq!(outs.len(), THUMBNAILS_PER_VIDEO);
         for (i, out) in outs.iter().enumerate() {
             assert_eq!(out, &run.slot_tmp(i));
         }
@@ -3712,9 +3735,8 @@ mod tests {
     }
 
     #[test]
-    fn a_crop_failure_partway_removes_every_slot_and_counts_as_failed() {
+    fn a_split_failure_removes_every_slot_and_counts_as_failed() {
         let h = harness();
-        // Fails on the fourth frame, after three slots were already written.
         let ffmpeg = split_ffmpeg(image_size(1200, 150), Some(600));
 
         let run = run_split_import(&h, six_by_one(), &ffmpeg);
@@ -3722,11 +3744,7 @@ mod tests {
         assert_eq!(run.summary.thumbnails_failed, 1);
         assert_eq!(run.summary.thumbnails_linked, 0);
         assert_eq!(run.ready, 0);
-        assert_eq!(
-            crops(&ffmpeg).len(),
-            4,
-            "frames after the failure are not attempted"
-        );
+        assert_eq!(split_calls(&ffmpeg), 1, "the split is not retried");
         assert_eq!(converts(&ffmpeg), 0, "a failed split does not fall back");
         for i in 0..THUMBNAILS_PER_VIDEO {
             assert!(!run.slot(i).exists(), "slot {i}");
@@ -3770,11 +3788,7 @@ mod tests {
         assert_eq!(outcome.failed, 1);
         assert_eq!(outcome.linked, 0);
         assert!(outcome.linked_video_ids.is_empty());
-        assert_eq!(
-            crops(&ffmpeg).len(),
-            3,
-            "frames after the failure are not attempted"
-        );
+        assert_eq!(split_calls(&ffmpeg), 1);
         for i in [0, 1, 3, 4, 5] {
             assert!(!video_dir.join(format!("{video_id}_{i}.webp")).exists());
         }
@@ -4554,7 +4568,7 @@ mod tests {
     fn a_failing_frame_cut_leaves_no_slot_files_and_stops_no_other_video() {
         let h = harness();
         let movies = legacy_movies(&h, 12, |_| jpeg_bytes(1200, 150));
-        // The fourth frame of every video fails.
+        // Splitting every video fails.
         let ffmpeg = split_ffmpeg(image_size(1200, 150), Some(600));
 
         let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));

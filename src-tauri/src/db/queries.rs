@@ -667,6 +667,44 @@ pub fn mark_thumbnail_ready(conn: &Connection, video_id: &str) -> rusqlite::Resu
     Ok(())
 }
 
+/// `mark_thumbnail_ready` for every id in `ids` inside one transaction, so a
+/// bulk link pays for one commit instead of one per row. A failing row is
+/// logged and skipped rather than aborting the batch: the thumbnail files are
+/// already in place, so the other rows must still become ready. Ids that match
+/// no row (or are already ready) are no-ops; an empty slice does not touch the
+/// database.
+pub fn mark_thumbnails_ready(conn: &mut Connection, ids: &[String]) {
+    if ids.is_empty() {
+        return;
+    }
+    let tx = match conn.transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::warn!("failed to begin the thumbnail-ready batch: {e}");
+            return;
+        }
+    };
+    {
+        let mut stmt = match tx
+            .prepare("UPDATE videos SET thumbnail_ready = 1 WHERE id = ?1 AND thumbnail_ready = 0")
+        {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                log::warn!("failed to prepare the thumbnail-ready update: {e}");
+                return;
+            }
+        };
+        for id in ids {
+            if let Err(e) = stmt.execute(params![id]) {
+                log::warn!("failed to mark thumbnail ready for video {id}: {e}");
+            }
+        }
+    }
+    if let Err(e) = tx.commit() {
+        log::warn!("failed to commit the thumbnail-ready batch: {e}");
+    }
+}
+
 /// Returns everything derived from the file's content (thumbnail state,
 /// duration, probed properties and their retry counters) to the "not yet
 /// generated/probed" state, for when the content itself changed. The probed
@@ -2533,5 +2571,91 @@ mod skipped_file_tests {
 
         let db = crate::db::init(&path).unwrap();
         assert!(list_skipped_files(&db.read_pool).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod mark_thumbnails_ready_tests {
+    use super::*;
+    use crate::db::test_support::{init_temp_db, insert_test_video};
+    use crate::db::Db;
+
+    fn ready_flag(db: &Db, id: &str) -> i64 {
+        db.writer
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT thumbnail_ready FROM videos WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_listed_row_becomes_ready_and_others_are_untouched() {
+        let (_d, db) = init_temp_db();
+        for (id, path) in [("a", "C:/a.mp4"), ("b", "C:/b.mp4"), ("c", "C:/c.mp4")] {
+            insert_test_video(&db, id, path);
+        }
+
+        mark_thumbnails_ready(&mut db.writer.lock().unwrap(), &ids(&["a", "b"]));
+
+        assert_eq!(ready_flag(&db, "a"), 1);
+        assert_eq!(ready_flag(&db, "b"), 1);
+        assert_eq!(ready_flag(&db, "c"), 0);
+    }
+
+    #[test]
+    fn an_already_ready_row_is_not_rewritten() {
+        let (_d, db) = init_temp_db();
+        insert_test_video(&db, "a", "C:/a.mp4");
+        insert_test_video(&db, "b", "C:/b.mp4");
+        mark_thumbnail_ready(&db.writer.lock().unwrap(), "a").unwrap();
+
+        let before: i64 = {
+            let conn = db.writer.lock().unwrap();
+            conn.query_row("SELECT total_changes()", [], |r| r.get(0))
+                .unwrap()
+        };
+        mark_thumbnails_ready(&mut db.writer.lock().unwrap(), &ids(&["a"]));
+        let after: i64 = {
+            let conn = db.writer.lock().unwrap();
+            conn.query_row("SELECT total_changes()", [], |r| r.get(0))
+                .unwrap()
+        };
+
+        assert_eq!(before, after, "the thumbnail_ready = 0 guard must hold");
+        assert_eq!(ready_flag(&db, "a"), 1);
+        assert_eq!(ready_flag(&db, "b"), 0);
+    }
+
+    #[test]
+    fn an_unknown_id_does_not_stop_the_others() {
+        let (_d, db) = init_temp_db();
+        insert_test_video(&db, "a", "C:/a.mp4");
+        insert_test_video(&db, "b", "C:/b.mp4");
+
+        mark_thumbnails_ready(
+            &mut db.writer.lock().unwrap(),
+            &ids(&["a", "no-such-id", "b"]),
+        );
+
+        assert_eq!(ready_flag(&db, "a"), 1);
+        assert_eq!(ready_flag(&db, "b"), 1);
+    }
+
+    #[test]
+    fn an_empty_batch_is_a_no_op() {
+        let (_d, db) = init_temp_db();
+        insert_test_video(&db, "a", "C:/a.mp4");
+
+        mark_thumbnails_ready(&mut db.writer.lock().unwrap(), &[]);
+
+        assert_eq!(ready_flag(&db, "a"), 0);
     }
 }

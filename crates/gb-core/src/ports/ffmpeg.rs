@@ -1,7 +1,7 @@
 //! FFmpeg/FFprobe adapter port. The trait is OS-independent; only the real
 //! implementation (in `src-tauri::adapters::ffmpeg`) spawns processes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub trait FfmpegAdapter: Send + Sync {
     /// Checks whether `ffmpeg` and `ffprobe` are on PATH, returning their
@@ -42,16 +42,26 @@ pub trait FfmpegAdapter: Send + Sync {
         quality: u8,
     ) -> Result<(), FfmpegError>;
 
-    /// Like `convert_image_to_webp`, but writes only the `crop` region of the
-    /// source image. A separate method rather than an optional parameter so
-    /// the whole-image path keeps its exact behavior.
-    fn crop_image_to_webp(
+    /// Like `convert_image_to_webp`, but writes one WebP per entry of
+    /// `outputs`, each holding only that entry's `crop` region. All outputs
+    /// come from a single decode in one process launch: launching once per
+    /// region dominates the cost when a library is migrated. A separate
+    /// method rather than an optional parameter so the whole-image path keeps
+    /// its exact behavior. On error, any of the output files may or may not
+    /// exist; the caller owns cleanup.
+    fn split_image_to_webp(
         &self,
         src_path: &Path,
-        output_tmp_path: &Path,
-        crop: CropRect,
+        outputs: &[CropOutput],
         quality: u8,
     ) -> Result<(), FfmpegError>;
+}
+
+/// One output of [`FfmpegAdapter::split_image_to_webp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CropOutput {
+    pub tmp_path: PathBuf,
+    pub crop: CropRect,
 }
 
 /// A rectangle in source-image pixels, origin at the top-left.
