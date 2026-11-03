@@ -25,8 +25,8 @@ use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
 use gb_core::wb_import::{
-    count_clamped_scores, count_source_tags, extract_thumbnail_hash, match_thumbnail_files,
-    partition_unmatched, wb_row_to_import_candidate, WbImportStage,
+    count_clamped_scores, count_source_tags, extract_thumbnail_hash, file_name_from_path,
+    match_thumbnail_files, partition_unmatched, wb_row_to_import_candidate, WbImportStage,
 };
 use gb_core::wb_import_log::{
     self as wb_log, Availability, LogSummary, PathRestoration, RowLog, RowOutcome,
@@ -1069,7 +1069,9 @@ fn register_import_folders(
     })
 }
 
-/// Result of [`link_thumbnails`]. `linked == linked_video_ids.len()`.
+/// Result of [`link_thumbnails`]. `linked == linked_video_ids.len()` and
+/// `failed == failed_video_ids.len()`; both count videos, each video in at most
+/// one of the two lists.
 #[derive(Debug, Default)]
 struct LinkOutcome {
     linked: u32,
@@ -1079,11 +1081,11 @@ struct LinkOutcome {
     /// (`unmatched - unmatched_empty_hash` is the rest).
     unmatched_empty_hash: u32,
     skipped_online: u32,
-    /// Videos whose slot files were all written; the caller must flag these
-    /// ready in the DB.
+    /// Videos whose last item wrote all slot files, each once; the caller must
+    /// flag these ready in the DB.
     linked_video_ids: Vec<String>,
-    /// (video id, reason) for every matched video whose thumbnail could not
-    /// be written; `failed == failed_video_ids.len()`.
+    /// (video id, reason) for every matched video whose last item could not
+    /// be written, each video once; `failed == failed_video_ids.len()`.
     failed_video_ids: Vec<(String, String)>,
     /// Legacy JPG files that matched no registered or online video; the
     /// names behind `unmatched`.
@@ -1191,12 +1193,18 @@ fn link_thumbnails<F: FfmpegAdapter>(
         });
     }
 
-    // `match_thumbnail_files` only needs (video_id, thumbnail_hash) pairs --
-    // `file_path` is looked back up per matched video via this map instead
-    // of threading a third tuple element through `gb_core::wb_import`.
-    let movies_for_matching: Vec<(String, String)> = registered_movies
+    // `match_thumbnail_files` needs the video's file name to tell apart videos
+    // sharing a hash; the full `file_path` is looked back up per matched video
+    // via this map for the thumbnail directory.
+    let movies_for_matching: Vec<(String, String, String)> = registered_movies
         .iter()
-        .map(|(id, hash, _)| (id.clone(), hash.clone()))
+        .map(|(id, hash, file_path)| {
+            (
+                id.clone(),
+                hash.clone(),
+                file_name_from_path(file_path).to_string(),
+            )
+        })
         .collect();
     let file_path_by_id: std::collections::HashMap<&str, &str> = registered_movies
         .iter()
@@ -1235,18 +1243,29 @@ fn link_thumbnails<F: FfmpegAdapter>(
         on_progress(matched_total, matched_total);
     }
 
-    // Folded in `plan.matched` order, so the id lists read exactly as they did
-    // when the items were handled one after another.
+    // A video can have several items; as in a serial run the last one decides
+    // (a later item overwrites the slots of an earlier one). Each video is
+    // classified once, in the order its first item appears in `plan.matched`.
+    let mut order: Vec<&str> = Vec::new();
+    let mut last_result: HashMap<&str, ItemResult> = HashMap::new();
+    for ((video_id, _), result) in plan.matched.iter().zip(results) {
+        if last_result.insert(video_id.as_str(), result).is_none() {
+            order.push(video_id.as_str());
+        }
+    }
     let mut linked_video_ids: Vec<String> = Vec::new();
     let mut failed_video_ids: Vec<(String, String)> = Vec::new();
     let mut split_count = 0u32;
-    for ((video_id, _), result) in plan.matched.iter().zip(results) {
-        match result {
-            ItemResult::Linked { split } => {
+    for video_id in order {
+        match last_result.remove(video_id) {
+            Some(ItemResult::Linked { split }) => {
                 split_count += u32::from(split);
-                linked_video_ids.push(video_id.clone());
+                linked_video_ids.push(video_id.to_string());
             }
-            ItemResult::Failed(reason) => failed_video_ids.push((video_id.clone(), reason)),
+            Some(ItemResult::Failed(reason)) => {
+                failed_video_ids.push((video_id.to_string(), reason));
+            }
+            None => {}
         }
     }
 
@@ -1360,6 +1379,9 @@ impl<F: FfmpegAdapter> LinkContext<'_, F> {
                  ({filename}): {e}"
             );
             let _ = fs::remove_file(&shared_tmp_path);
+            // An earlier item of the same video may have written its slots;
+            // a video that ends up failed must not keep them.
+            remove_slot_files(&video_dir, video_id);
             return ItemResult::Failed(format!("WebPへの変換に失敗: {e}"));
         }
 
@@ -4517,9 +4539,15 @@ mod tests {
             .enumerate()
             .map(|(i, (_, hash, _))| (hash.as_str(), i))
             .collect();
-        let movie_pairs: Vec<(String, String)> = movies
+        let movie_pairs: Vec<(String, String, String)> = movies
             .iter()
-            .map(|(id, hash, _)| (id.clone(), hash.clone()))
+            .map(|(id, hash, path)| {
+                (
+                    id.clone(),
+                    hash.clone(),
+                    file_name_from_path(path).to_string(),
+                )
+            })
             .collect();
         let filenames = thumbnail_scan::list_filenames(&h.paths.thumbnail_folder).unwrap();
         let plan = match_thumbnail_files(&movie_pairs, &[], &filenames);
@@ -4718,18 +4746,119 @@ mod tests {
 
         // a fails, b succeeds: the video ends up linked, with its slots.
         duplicate_hash_run(true, |outcome, dir| {
-            assert_eq!((outcome.linked, outcome.failed), (20, 1));
+            assert_eq!((outcome.linked, outcome.failed), (20, 0));
             assert_eq!(slots_exist(dir), [true; THUMBNAILS_PER_VIDEO]);
         });
 
-        // a succeeds, b fails to convert: as in a serial run, a's slots stay
-        // (a failed conversion removes only its own scratch file), and the
-        // video is counted once as linked (a) and once as failed (b).
+        // a succeeds, b fails to convert: the video is counted once, by its
+        // last item (b): failed. A failed video keeps no slot files, so a's
+        // slots are removed and disk, classification and the ready flag agree.
         duplicate_hash_run(false, |outcome, dir| {
-            assert_eq!((outcome.linked, outcome.failed), (20, 1));
-            assert_eq!(slots_exist(dir), [true; THUMBNAILS_PER_VIDEO]);
+            assert_eq!((outcome.linked, outcome.failed), (19, 1));
+            assert_eq!(outcome.failed_video_ids.len(), 1);
+            assert_eq!(outcome.failed_video_ids[0].0, "video-5");
+            assert!(!outcome.linked_video_ids.contains(&"video-5".to_string()));
+            assert_eq!(slots_exist(dir), [false; THUMBNAILS_PER_VIDEO]);
             assert!(crate::thumbnail::paths::slot_path(dir, "video-6", 0).exists());
         });
+    }
+
+    /// Two videos sharing one hash, each with a legacy JPG named after it.
+    fn shared_hash_run(fail_name: Option<&'static str>) -> (LinkOutcome, Vec<(String, String)>) {
+        let h = harness();
+        let hash = "abcdef01";
+        for name in ["alpha", "beta"] {
+            std::fs::write(
+                h.paths.thumbnail_folder.join(format!("{name}.#{hash}.jpg")),
+                b"fake jpg",
+            )
+            .unwrap();
+        }
+        let movies = vec![
+            (
+                "video-a".to_string(),
+                hash.to_string(),
+                r"Z:\gone\alpha.mp4".to_string(),
+            ),
+            (
+                "video-b".to_string(),
+                hash.to_string(),
+                "Z:/gone/BETA.mp4".to_string(),
+            ),
+        ];
+        let ffmpeg = FakeFfmpegAdapter {
+            convert_result: Box::new(move |src| {
+                let name = src.file_name().unwrap().to_string_lossy().into_owned();
+                if fail_name.is_some_and(|f| name.starts_with(f)) {
+                    Err(FfmpegError::NonZeroExit {
+                        status: 1,
+                        stderr: "simulated".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+            ..Default::default()
+        };
+        let outcome = link_with_layout(&h, &movies, &ffmpeg, None);
+        // (video the conversion was for, legacy JPG it read), sorted.
+        let mut converted: Vec<(String, String)> = ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::ConvertImageToWebp {
+                    src_path,
+                    output_tmp_path,
+                    ..
+                } => {
+                    let tmp = output_tmp_path.file_name()?.to_string_lossy().into_owned();
+                    let video = tmp.strip_suffix(".wb_legacy.webp.tmp")?.to_string();
+                    let src = src_path.file_name()?.to_string_lossy().into_owned();
+                    Some((video, src))
+                }
+                _ => None,
+            })
+            .collect();
+        converted.sort();
+        (outcome, converted)
+    }
+
+    #[test]
+    fn videos_sharing_a_hash_are_counted_once_each_and_get_their_own_file() {
+        let (outcome, converted) = shared_hash_run(None);
+
+        assert_eq!(
+            (outcome.linked, outcome.failed, outcome.unmatched),
+            (2, 0, 0)
+        );
+        assert_eq!(outcome.linked_video_ids, ["video-a", "video-b"]);
+        // Each video is converted from its own file, once; no cross pairing.
+        assert_eq!(
+            converted,
+            [
+                ("video-a".to_string(), "alpha.#abcdef01.jpg".to_string()),
+                ("video-b".to_string(), "beta.#abcdef01.jpg".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shared_hash_video_is_classified_by_its_own_file() {
+        let (outcome, converted) = shared_hash_run(Some("beta"));
+
+        assert_eq!(
+            converted,
+            [
+                ("video-a".to_string(), "alpha.#abcdef01.jpg".to_string()),
+                ("video-b".to_string(), "beta.#abcdef01.jpg".to_string()),
+            ]
+        );
+        assert_eq!((outcome.linked, outcome.failed), (1, 1));
+        assert_eq!(outcome.linked_video_ids, ["video-a"]);
+        assert_eq!(outcome.failed_video_ids.len(), 1);
+        assert_eq!(outcome.failed_video_ids[0].0, "video-b");
     }
 
     #[test]

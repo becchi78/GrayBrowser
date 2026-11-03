@@ -145,19 +145,20 @@ pub fn wb_tag_merge_key(tag: &str) -> String {
     wb_fold_width(tag).trim().to_lowercase()
 }
 
-/// Result of matching legacy `.wb` thumbnail files (by embedded hash)
-/// against `movie` rows' `hash` column, for thumbnail migration.
+/// Result of matching legacy `.wb` thumbnail files (by embedded hash and
+/// video name) against `movie` rows, for thumbnail migration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ThumbnailLinkPlan {
     /// `(video_id, source_filename)` pairs to copy/convert into the new
-    /// `thumbnails/[id].webp` layout. If `movies` contains duplicate hashes
-    /// (two videos sharing one legacy thumbnail file), the same filename
-    /// appears once per matching `video_id` here.
+    /// `thumbnails/[id].webp` layout, in the order of the input filenames.
+    /// A video appears more than once only when several files are left for it
+    /// (see [`match_thumbnail_files`]).
     pub matched: Vec<(String, String)>,
-    /// Filenames from the legacy thumbnail folder that matched no `movies`
-    /// hash -- either the filename didn't fit the expected naming pattern,
-    /// or its hash isn't among `movies`. Reported to the user in the import
-    /// log rather than silently dropped.
+    /// Filenames from the legacy thumbnail folder that were given to no
+    /// video -- the filename didn't fit the expected naming pattern, its hash
+    /// isn't among `movies`, or every video behind its hash already has a file
+    /// of its own. Reported to the user in the import log rather than silently
+    /// dropped.
     pub unmatched_filenames: Vec<String>,
     /// Filenames whose hash belongs to an online video (and to no offline
     /// one). Online videos get a fresh thumbnail from the video itself, so
@@ -167,46 +168,150 @@ pub struct ThumbnailLinkPlan {
     pub skipped_online_filenames: Vec<String>,
 }
 
+/// Returns the last path component of `path`, splitting on both `\` and `/`
+/// because a `.wb` file stores Windows paths but this logic must not depend on
+/// the host OS.
+pub fn file_name_from_path(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
+/// Extracts the video-name part of a legacy thumbnail filename: everything
+/// before the last `.#`. `None` when there is no `.#` or nothing before it.
+pub fn extract_thumbnail_name_part(filename: &str) -> Option<&str> {
+    let (name, _) = filename.rsplit_once(".#")?;
+    (!name.is_empty()).then_some(name)
+}
+
+/// Whether the name part of a legacy thumbnail names the video `file_name`.
+/// Legacy files carry the video name with or without its extension, and
+/// Windows file names ignore case.
+fn name_part_matches_video(name_part: &str, file_name: &str) -> bool {
+    if file_name.is_empty() {
+        return false;
+    }
+    let name_part = name_part.to_lowercase();
+    let file_name = file_name.to_lowercase();
+    if name_part == file_name {
+        return true;
+    }
+    match file_name.rsplit_once('.') {
+        Some((stem, _)) => !stem.is_empty() && name_part == stem,
+        None => false,
+    }
+}
+
 /// Matches legacy thumbnail filenames (`[video filename].#<hash>.jpg`)
-/// against `.wb` `movie` rows' thumbnail hashes.
+/// against `.wb` `movie` rows' thumbnail hashes and video names.
 ///
-/// `movies` is `(video_id, thumbnail_hash)` pairs, `thumbnail_hash` being an
-/// 8-hex-digit string as produced by `wb_row_to_import_candidate`'s `Some`
-/// case. `filenames` is every filename (no path, extension included) found
-/// in the legacy thumbnail folder.
+/// `movies` is `(video_id, thumbnail_hash, video_file_name)` triples,
+/// `thumbnail_hash` being an 8-hex-digit string as produced by
+/// `wb_row_to_import_candidate`'s `Some` case and `video_file_name` the last
+/// path component (see [`file_name_from_path`]; may be empty when unknown).
+/// `filenames` is every filename (no path, extension included) found in the
+/// legacy thumbnail folder.
 ///
-/// Each filename's hash is extracted with `extract_thumbnail_hash` and
-/// compared against every entry in `movies`; a filename with no extractable
-/// hash, or whose hash matches no `movies` entry, lands in
-/// `unmatched_filenames` instead. Duplicate hashes within `movies` do not
-/// panic -- the filename is simply matched to every video sharing that hash.
+/// Each filename's hash is extracted with `extract_thumbnail_hash`; a filename
+/// with no extractable hash, or whose hash matches no `movies` entry, lands in
+/// `unmatched_filenames` instead.
+///
+/// Several videos can share one hash. The files behind that hash are then
+/// shared out by name, because linking every file to every video would let a
+/// later file overwrite the thumbnail of a video it does not belong to:
+/// 1. a video takes the first file whose name part equals its file name
+///    (with or without extension, ignoring case) and only that file;
+/// 2. a video without such a file takes the files no other video took by
+///    name; if there are none it falls back to every file of the hash;
+/// 3. a file given to no video goes to `unmatched_filenames`.
+///
+/// A hash with a single video is not subject to these rules: that video is
+/// linked to every file of the hash, whatever their names.
 ///
 /// `online_hashes` are the thumbnail hashes of online videos. A filename that
 /// matches no `movies` entry but whose hash is in `online_hashes` goes to
 /// `skipped_online_filenames` rather than `unmatched_filenames`. A match in
 /// `movies` takes precedence if a hash is (unexpectedly) in both.
 pub fn match_thumbnail_files(
-    movies: &[(String, String)],
+    movies: &[(String, String, String)],
     online_hashes: &[String],
     filenames: &[String],
 ) -> ThumbnailLinkPlan {
+    use std::collections::{HashMap, HashSet};
+
+    let hashes: Vec<Option<String>> = filenames
+        .iter()
+        .map(|f| extract_thumbnail_hash(f))
+        .collect();
+
+    // hash -> indexes into `movies` / `filenames`, each in input order.
+    let mut movies_by_hash: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, (_, hash, _)) in movies.iter().enumerate() {
+        movies_by_hash.entry(hash.as_str()).or_default().push(i);
+    }
+    let mut files_by_hash: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, hash) in hashes.iter().enumerate() {
+        if let Some(hash) = hash {
+            files_by_hash.entry(hash.as_str()).or_default().push(i);
+        }
+    }
+
+    // (movie index, file index) pairs to link.
+    let mut assigned: HashSet<(usize, usize)> = HashSet::new();
+    for (hash, movie_idxs) in &movies_by_hash {
+        let Some(file_idxs) = files_by_hash.get(hash) else {
+            continue;
+        };
+        // A hash with a single video keeps every file of the hash whatever
+        // the names say: there is nobody to mix them up with.
+        if let [m] = movie_idxs.as_slice() {
+            assigned.extend(file_idxs.iter().map(|&f| (*m, f)));
+            continue;
+        }
+        let mut by_name: Vec<Option<usize>> = Vec::with_capacity(movie_idxs.len());
+        for &m in movie_idxs {
+            let file_name = &movies[m].2;
+            by_name.push(file_idxs.iter().copied().find(|&f| {
+                extract_thumbnail_name_part(&filenames[f])
+                    .is_some_and(|part| name_part_matches_video(part, file_name))
+            }));
+        }
+        let taken: HashSet<usize> = by_name.iter().flatten().copied().collect();
+        let free: Vec<usize> = file_idxs
+            .iter()
+            .copied()
+            .filter(|f| !taken.contains(f))
+            .collect();
+        for (&m, named) in movie_idxs.iter().zip(&by_name) {
+            match named {
+                Some(f) => {
+                    assigned.insert((m, *f));
+                }
+                None if !free.is_empty() => {
+                    assigned.extend(free.iter().map(|&f| (m, f)));
+                }
+                None => {
+                    assigned.extend(file_idxs.iter().map(|&f| (m, f)));
+                }
+            }
+        }
+    }
+
     let mut plan = ThumbnailLinkPlan::default();
-    for filename in filenames {
-        let Some(hash) = extract_thumbnail_hash(filename) else {
+    for (f, filename) in filenames.iter().enumerate() {
+        let Some(hash) = &hashes[f] else {
             plan.unmatched_filenames.push(filename.clone());
             continue;
         };
         let mut matched_any = false;
-        for (video_id, movie_hash) in movies {
-            if *movie_hash == hash {
-                plan.matched.push((video_id.clone(), filename.clone()));
+        for &m in movies_by_hash.get(hash.as_str()).into_iter().flatten() {
+            if assigned.contains(&(m, f)) {
+                plan.matched.push((movies[m].0.clone(), filename.clone()));
                 matched_any = true;
             }
         }
         if matched_any {
             continue;
         }
-        if online_hashes.contains(&hash) {
+        if !movies_by_hash.contains_key(hash.as_str()) && online_hashes.contains(hash) {
             plan.skipped_online_filenames.push(filename.clone());
         } else {
             plan.unmatched_filenames.push(filename.clone());
@@ -670,7 +775,7 @@ mod tests {
 
     #[test]
     fn match_thumbnail_files_matches_by_hash() {
-        let movies = vec![("id1".to_string(), "1e5e0fbf".to_string())];
+        let movies = vec![("id1".to_string(), "1e5e0fbf".to_string(), String::new())];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
         let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert_eq!(
@@ -682,7 +787,7 @@ mod tests {
 
     #[test]
     fn match_thumbnail_files_leaves_hash_mismatch_unmatched() {
-        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
+        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string(), String::new())];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
         let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert!(plan.matched.is_empty());
@@ -694,7 +799,7 @@ mod tests {
 
     #[test]
     fn match_thumbnail_files_leaves_malformed_filenames_unmatched() {
-        let movies = vec![("id1".to_string(), "1e5e0fbf".to_string())];
+        let movies = vec![("id1".to_string(), "1e5e0fbf".to_string(), String::new())];
         let filenames = vec!["not_a_thumbnail.jpg".to_string()];
         let plan = match_thumbnail_files(&movies, &[], &filenames);
         assert!(plan.matched.is_empty());
@@ -707,8 +812,8 @@ mod tests {
     #[test]
     fn match_thumbnail_files_does_not_panic_on_duplicate_hashes_in_movies() {
         let movies = vec![
-            ("id1".to_string(), "1e5e0fbf".to_string()),
-            ("id2".to_string(), "1e5e0fbf".to_string()),
+            ("id1".to_string(), "1e5e0fbf".to_string(), String::new()),
+            ("id2".to_string(), "1e5e0fbf".to_string(), String::new()),
         ];
         let filenames = vec!["MyVideo.mp4.#1e5e0fbf.jpg".to_string()];
         let plan = match_thumbnail_files(&movies, &[], &filenames);
@@ -724,7 +829,7 @@ mod tests {
 
     #[test]
     fn match_thumbnail_files_separates_online_hash_from_unmatched() {
-        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
+        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string(), String::new())];
         let online = vec!["bbbbbbbb".to_string()];
         let filenames = vec![
             "Off.mp4.#aaaaaaaa.jpg".to_string(),
@@ -752,12 +857,197 @@ mod tests {
 
     #[test]
     fn match_thumbnail_files_prefers_offline_match_over_online_skip() {
-        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string())];
+        let movies = vec![("id1".to_string(), "aaaaaaaa".to_string(), String::new())];
         let online = vec!["aaaaaaaa".to_string()];
         let filenames = vec!["V.mp4.#aaaaaaaa.jpg".to_string()];
         let plan = match_thumbnail_files(&movies, &online, &filenames);
         assert_eq!(plan.matched.len(), 1);
         assert!(plan.skipped_online_filenames.is_empty());
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    fn mv(id: &str, hash: &str, name: &str) -> (String, String, String) {
+        (id.to_string(), hash.to_string(), name.to_string())
+    }
+
+    fn strs(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn pair(id: &str, file: &str) -> (String, String) {
+        (id.to_string(), file.to_string())
+    }
+
+    #[test]
+    fn name_part_and_path_helpers() {
+        assert_eq!(
+            extract_thumbnail_name_part("My.Video.#1e5e0fbf.jpg"),
+            Some("My.Video")
+        );
+        assert_eq!(
+            extract_thumbnail_name_part("a.#x.#1e5e0fbf.jpg"),
+            Some("a.#x")
+        );
+        assert_eq!(extract_thumbnail_name_part(".#1e5e0fbf.jpg"), None);
+        assert_eq!(extract_thumbnail_name_part("plain.jpg"), None);
+        assert_eq!(file_name_from_path(r"Z:\gone\a.mp4"), "a.mp4");
+        assert_eq!(file_name_from_path("/mnt/x/a.mp4"), "a.mp4");
+        assert_eq!(file_name_from_path(r"Z:\a/b\c.mp4"), "c.mp4");
+        assert_eq!(file_name_from_path("a.mp4"), "a.mp4");
+    }
+
+    #[test]
+    fn shared_hash_gives_each_video_its_own_file() {
+        let movies = vec![mv("A", "aaaaaaaa", "va.mp4"), mv("B", "aaaaaaaa", "vb.mp4")];
+        // File order is the reverse of the video order on purpose.
+        let files = strs(&["vb.#aaaaaaaa.jpg", "va.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![pair("B", "vb.#aaaaaaaa.jpg"), pair("A", "va.#aaaaaaaa.jpg")]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_three_videos_three_files() {
+        let movies = vec![
+            mv("A", "aaaaaaaa", "a.mp4"),
+            mv("B", "aaaaaaaa", "b.mp4"),
+            mv("C", "aaaaaaaa", "c.mp4"),
+        ];
+        let files = strs(&["c.#aaaaaaaa.jpg", "a.#aaaaaaaa.jpg", "b.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("C", "c.#aaaaaaaa.jpg"),
+                pair("A", "a.#aaaaaaaa.jpg"),
+                pair("B", "b.#aaaaaaaa.jpg"),
+            ]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_name_match_ignores_case_and_accepts_extension() {
+        let movies = vec![mv("A", "aaaaaaaa", "Va.MP4"), mv("B", "aaaaaaaa", "vb.mp4")];
+        let files = strs(&["VA.#aaaaaaaa.jpg", "vb.MP4.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("A", "VA.#aaaaaaaa.jpg"),
+                pair("B", "vb.MP4.#aaaaaaaa.jpg")
+            ]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_with_names_that_match_nothing_links_every_file() {
+        let movies = vec![mv("A", "aaaaaaaa", "va.mp4"), mv("B", "aaaaaaaa", "vb.mp4")];
+        let files = strs(&["x.#aaaaaaaa.jpg", "y.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("A", "x.#aaaaaaaa.jpg"),
+                pair("B", "x.#aaaaaaaa.jpg"),
+                pair("A", "y.#aaaaaaaa.jpg"),
+                pair("B", "y.#aaaaaaaa.jpg"),
+            ]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_unnamed_video_takes_the_files_nobody_else_took() {
+        let movies = vec![
+            mv("A", "aaaaaaaa", "va.mp4"),
+            mv("B", "aaaaaaaa", "other.mp4"),
+        ];
+        let files = strs(&["va.#aaaaaaaa.jpg", "renamed.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("A", "va.#aaaaaaaa.jpg"),
+                pair("B", "renamed.#aaaaaaaa.jpg")
+            ]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_unnamed_video_without_free_files_falls_back_to_all() {
+        let movies = vec![
+            mv("A", "aaaaaaaa", "va.mp4"),
+            mv("B", "aaaaaaaa", "other.mp4"),
+        ];
+        let files = strs(&["va.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![pair("A", "va.#aaaaaaaa.jpg"), pair("B", "va.#aaaaaaaa.jpg")]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn shared_hash_leftover_files_are_unmatched() {
+        let movies = vec![mv("A", "aaaaaaaa", "va.mp4"), mv("B", "aaaaaaaa", "vb.mp4")];
+        let files = strs(&["va.#aaaaaaaa.jpg", "vb.#aaaaaaaa.jpg", "vc.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![pair("A", "va.#aaaaaaaa.jpg"), pair("B", "vb.#aaaaaaaa.jpg")]
+        );
+        assert_eq!(plan.unmatched_filenames, strs(&["vc.#aaaaaaaa.jpg"]));
+    }
+
+    #[test]
+    fn single_video_hash_keeps_every_file_even_when_only_one_matches_by_name() {
+        let movies = vec![mv("A", "aaaaaaaa", "va.mp4")];
+        let files = strs(&["va.#aaaaaaaa.jpg", "other.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("A", "va.#aaaaaaaa.jpg"),
+                pair("A", "other.#aaaaaaaa.jpg")
+            ]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn unknown_video_name_never_matches_by_name() {
+        // An empty name must not match a file whose name part is empty-ish,
+        // and a file with no name part can only be linked by fallback.
+        let movies = vec![mv("A", "aaaaaaaa", ""), mv("B", "aaaaaaaa", "vb.mp4")];
+        let files = strs(&["vb.#aaaaaaaa.jpg", ".#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![pair("B", "vb.#aaaaaaaa.jpg"), pair("A", ".#aaaaaaaa.jpg")]
+        );
+        assert!(plan.unmatched_filenames.is_empty());
+    }
+
+    #[test]
+    fn unshared_hashes_link_by_hash_whatever_the_names_are() {
+        let movies = vec![mv("A", "aaaaaaaa", "va.mp4"), mv("B", "bbbbbbbb", "vb.mp4")];
+        let files = strs(&["zzz.#bbbbbbbb.jpg", "yyy.#aaaaaaaa.jpg", "x.#aaaaaaaa.jpg"]);
+        let plan = match_thumbnail_files(&movies, &[], &files);
+        assert_eq!(
+            plan.matched,
+            vec![
+                pair("B", "zzz.#bbbbbbbb.jpg"),
+                pair("A", "yyy.#aaaaaaaa.jpg"),
+                pair("A", "x.#aaaaaaaa.jpg"),
+            ]
+        );
         assert!(plan.unmatched_filenames.is_empty());
     }
 }
