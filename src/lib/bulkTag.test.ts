@@ -4,9 +4,9 @@ import { filterTagCandidates } from "./bulkTag.ts";
 
 describe("filterTagCandidates", () => {
   const tags = [
-    { id: 1, name: "Action" },
-    { id: 2, name: "drama" },
-    { id: 3, name: "reaction" },
+    { id: 1, name: "Action", parent_id: null },
+    { id: 2, name: "drama", parent_id: null },
+    { id: 3, name: "reaction", parent_id: null },
   ];
 
   it("returns every tag for an empty or whitespace-only input", () => {

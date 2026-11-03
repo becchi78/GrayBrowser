@@ -54,6 +54,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "add tags.sort_order (user-defined tag order, NULL = after placed tags by name) and migrate the pinned-tags setting into it",
         sql: include_str!("../../migrations/0010_add_tags_sort_order.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 11,
+        description: "add tags.parent_id (NULL = top-level) for a two-level tag hierarchy",
+        sql: include_str!("../../migrations/0011_add_tags_parent_id.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.

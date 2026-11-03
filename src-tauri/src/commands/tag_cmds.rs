@@ -2,7 +2,7 @@
 //! app-layer-integrity-guaranteed tag functions -- no additional
 //! business logic lives here beyond DTO mapping and error stringification.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::{queries, Db};
@@ -12,6 +12,7 @@ use crate::events::{CatalogNotifier, TauriCatalogNotifier};
 pub struct TagDto {
     pub id: i64,
     pub name: String,
+    pub parent_id: Option<i64>,
 }
 
 impl From<queries::TagRow> for TagDto {
@@ -19,6 +20,7 @@ impl From<queries::TagRow> for TagDto {
         Self {
             id: row.id,
             name: row.name,
+            parent_id: row.parent_id,
         }
     }
 }
@@ -109,6 +111,7 @@ pub fn list_all_tags(db: State<Db>) -> Result<Vec<TagDto>, String> {
 pub struct TagWithCountDto {
     pub id: i64,
     pub name: String,
+    pub parent_id: Option<i64>,
     pub video_count: i64,
 }
 
@@ -117,6 +120,7 @@ impl From<queries::TagWithCountRow> for TagWithCountDto {
         Self {
             id: row.id,
             name: row.name,
+            parent_id: row.parent_id,
             video_count: row.video_count,
         }
     }
@@ -144,17 +148,33 @@ pub fn delete_tag(app: tauri::AppHandle, db: State<Db>, tag_id: i64) -> Result<(
     Ok(())
 }
 
-fn set_tag_order_impl(db: &Db, tag_ids: &[i64]) -> Result<(), String> {
-    let mut conn = db.writer.lock().unwrap();
-    queries::set_tag_order(&mut conn, tag_ids).map_err(|e| e.to_string())
+/// One entry of the layout the tag editor saves; the list order is the
+/// display order.
+#[derive(Deserialize, Clone, Copy)]
+pub struct TagLayoutItemDto {
+    pub id: i64,
+    pub parent_id: Option<i64>,
 }
 
-/// Stores the order of all tags as the user arranged them. Not a catalog
-/// change (no video row is touched), so no catalog notification is sent; the
-/// caller reloads the tag list itself.
+fn set_tag_layout_impl(db: &Db, items: &[TagLayoutItemDto]) -> Result<(), String> {
+    let items: Vec<gb_core::tag_hierarchy::LayoutItem> = items
+        .iter()
+        .map(|i| gb_core::tag_hierarchy::LayoutItem {
+            id: i.id,
+            parent_id: i.parent_id,
+        })
+        .collect();
+    let mut conn = db.writer.lock().unwrap();
+    queries::set_tag_layout(&mut conn, &items).map_err(|e| e.to_string())
+}
+
+/// Stores the order and parent of the tags as the user arranged them, all or
+/// nothing: a layout that breaks the hierarchy rules is refused with an error
+/// and nothing changes. Not a catalog change (no video row is touched), so no
+/// catalog notification is sent; the caller reloads the tag list itself.
 #[tauri::command]
-pub fn set_tag_order(db: State<Db>, tag_ids: Vec<i64>) -> Result<(), String> {
-    set_tag_order_impl(&db, &tag_ids)
+pub fn set_tag_layout(db: State<Db>, items: Vec<TagLayoutItemDto>) -> Result<(), String> {
+    set_tag_layout_impl(&db, &items)
 }
 
 #[cfg(test)]
@@ -162,21 +182,49 @@ mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
 
+    fn layout(items: &[(i64, Option<i64>)]) -> Vec<TagLayoutItemDto> {
+        items
+            .iter()
+            .map(|&(id, parent_id)| TagLayoutItemDto { id, parent_id })
+            .collect()
+    }
+
     #[test]
-    fn set_tag_order_impl_persists_the_order_for_list_all_tags() {
+    fn set_tag_layout_impl_persists_parents_and_order_for_the_listings() {
         let (_dir, db) = init_temp_db();
         {
             let conn = db.writer.lock().unwrap();
             conn.execute_batch("INSERT INTO tags (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c');")
                 .unwrap();
         }
-        set_tag_order_impl(&db, &[3, 1, 2]).unwrap();
-        let names: Vec<String> = queries::list_all_tags(&db.read_pool)
+        set_tag_layout_impl(&db, &layout(&[(2, None), (3, Some(2)), (1, None)])).unwrap();
+        let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
+        let summary: Vec<(i64, Option<i64>)> = rows.iter().map(|t| (t.id, t.parent_id)).collect();
+        assert_eq!(summary, [(2, None), (3, Some(2)), (1, None)]);
+        let dtos: Vec<TagDto> = queries::list_all_tags(&db.read_pool)
             .unwrap()
             .into_iter()
-            .map(|t| t.name)
+            .map(TagDto::from)
             .collect();
-        assert_eq!(names, ["c", "a", "b"]);
+        assert_eq!(dtos[1].parent_id, Some(2));
+    }
+
+    #[test]
+    fn set_tag_layout_impl_reports_a_rule_violation_and_changes_nothing() {
+        let (_dir, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO tags (id, name, sort_order, parent_id)
+                   VALUES (1, 'a', 0, NULL), (2, 'b', 1, 1), (3, 'c', 2, NULL);",
+            )
+            .unwrap();
+        }
+        let err = set_tag_layout_impl(&db, &layout(&[(3, Some(2)), (1, None)])).unwrap_err();
+        assert!(err.contains("tag 3"), "{err}");
+        let rows = queries::list_all_tags(&db.read_pool).unwrap();
+        let summary: Vec<(i64, Option<i64>)> = rows.iter().map(|t| (t.id, t.parent_id)).collect();
+        assert_eq!(summary, [(1, None), (2, Some(1)), (3, None)]);
     }
 
     #[test]

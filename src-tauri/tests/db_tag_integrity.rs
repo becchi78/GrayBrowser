@@ -15,6 +15,18 @@ fn init_temp_db() -> (tempfile::TempDir, db::Db) {
     (dir, db)
 }
 
+/// Stores a flat order (every tag top-level).
+fn set_tag_order(conn: &mut Connection, ids: &[i64]) {
+    let items: Vec<gb_core::tag_hierarchy::LayoutItem> = ids
+        .iter()
+        .map(|&id| gb_core::tag_hierarchy::LayoutItem {
+            id,
+            parent_id: None,
+        })
+        .collect();
+    queries::set_tag_layout(conn, &items).unwrap();
+}
+
 fn insert_test_video(conn: &Connection, id: &str, file_path: &str) {
     conn.execute(
         "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
@@ -579,7 +591,7 @@ fn list_all_tags_with_video_count_follows_sort_order_then_name() {
             .collect::<Result<Vec<i64>, _>>()
             .unwrap();
         // ids by name: alpha, beta, delta, gamma
-        queries::set_tag_order(&mut conn, &[ids[3], ids[0]]).unwrap();
+        set_tag_order(&mut conn, &[ids[3], ids[0]]);
         ids
     };
     let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();

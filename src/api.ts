@@ -74,7 +74,8 @@ export const listAllTags = () => invoke<TagDto[]>("list_all_tags");
 export const listTagsWithVideoCount = () =>
   invoke<TagWithCountDto[]>("list_tags_with_video_count");
 export const deleteTag = (tagId: number) => invoke<void>("delete_tag", { tagId });
-export const setTagOrder = (tagIds: number[]) => invoke<void>("set_tag_order", { tagIds });
+export const setTagLayout = (items: { id: number; parent_id: number | null }[]) =>
+  invoke<void>("set_tag_layout", { items });
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>
   invoke<void>("set_info_pane_collapsed", { collapsed });

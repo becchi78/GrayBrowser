@@ -98,7 +98,7 @@ export function restoreTagSortOrders(snapshot) {
 }
 
 // Gives `tagIds` sort_order 0.. in the given order; every other tag becomes
-// NULL (= after the ordered ones, by name), the same shape set_tag_order
+// NULL (= after the ordered ones, by name), the same shape set_tag_layout
 // leaves behind.
 export function seedTagOrder(tagIds) {
   const db = new DatabaseSync(appDbPath());

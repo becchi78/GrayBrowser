@@ -43,6 +43,8 @@ export interface FfmpegStatusDto {
 export interface TagDto {
   id: number;
   name: string;
+  /** null はトップレベル */
+  parent_id: number | null;
 }
 
 export interface TagWithCountDto extends TagDto {

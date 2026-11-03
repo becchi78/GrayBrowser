@@ -17,4 +17,15 @@ describe("buildTagDeleteMessage", () => {
   it("omits the count sentence when no video has the tag", () => {
     assert.equal(buildTagDeleteMessage(0), "元に戻せません。");
   });
+
+  it("mentions child tags that return to the top level", () => {
+    assert.equal(
+      buildTagDeleteMessage(2, 3),
+      "このタグが付いている 2 件の動画からタグが外れます。子のタグ 3 件は削除されず、親なしに戻ります。元に戻せません。",
+    );
+    assert.equal(
+      buildTagDeleteMessage(0, 1),
+      "子のタグ 1 件は削除されず、親なしに戻ります。元に戻せません。",
+    );
+  });
 });

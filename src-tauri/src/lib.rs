@@ -401,7 +401,7 @@ pub fn run() {
             commands::info_pane_cmds::set_info_pane_collapsed,
             commands::sidebar_cmds::get_sidebar_sections_collapsed,
             commands::sidebar_cmds::set_sidebar_sections_collapsed,
-            commands::tag_cmds::set_tag_order,
+            commands::tag_cmds::set_tag_layout,
             commands::tag_cmds::list_tags_with_video_count,
             commands::tag_cmds::delete_tag,
             commands::rating_cmds::set_rating,

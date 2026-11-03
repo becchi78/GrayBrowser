@@ -99,15 +99,15 @@ fn rerunning_migrations_is_a_no_op() {
             .expect("re-running migrations should be a no-op, not an error");
     }
     let conn = db.writer.lock().unwrap();
-    // Ten migrations exist (v1 initial schema, v2
+    // Eleven migrations exist (v1 initial schema, v2
     // mtime, v3 kana/roma, v4 video metadata, v5 sort indexes, v6
     // path_collisions, v7 generation retry columns, v8 thumbnail_ready,
-    // v9 skipped_files.dismissed, v10 tags.sort_order) -- a fresh DB should land on all ten, and
+    // v9 skipped_files.dismissed, v10 tags.sort_order, v11 tags.parent_id) -- a fresh DB should land on all eleven, and
     // re-running must not insert extra schema_version rows for any of them.
     let version_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version_count, 10);
+    assert_eq!(version_count, 11);
 }
 
 /// kana/roma (v3) and the ffprobe metadata columns
@@ -176,7 +176,7 @@ fn migrating_from_a_real_v2_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     conn.execute(
         "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
@@ -256,7 +256,7 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10, "should also pick up v8 to v10");
+    assert_eq!(version, 11, "should also pick up v8 to v11");
 
     let (thumbnail_attempts, metadata_attempts): (i64, i64) = conn
         .query_row(
@@ -331,7 +331,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     let thumbnail_ready: i64 = conn
         .query_row(
@@ -402,7 +402,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     let dismissed: i64 = conn
         .query_row("SELECT dismissed FROM skipped_files", [], |r| r.get(0))
         .unwrap();
@@ -469,7 +469,7 @@ fn migrating_from_a_real_v1_database_reaches_the_current_version_cleanly() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 
     // The column must be usable, not just present in the schema.
     conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])
@@ -632,4 +632,80 @@ fn migration_v10_adds_a_nullable_sort_order_column_without_default() {
         .find(|(name, _, _)| name == "sort_order")
         .expect("tags.sort_order should exist");
     assert_eq!((col.1, &col.2), (0, &None));
+}
+
+#[test]
+fn migrating_from_a_real_v10_database_keeps_tags_and_video_tags_and_makes_them_top_level() {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        for sql in [
+            include_str!("../migrations/0001_initial.sql"),
+            include_str!("../migrations/0002_add_mtime.sql"),
+            include_str!("../migrations/0003_add_kana_roma.sql"),
+            include_str!("../migrations/0004_add_video_metadata.sql"),
+            include_str!("../migrations/0005_add_sort_indexes.sql"),
+            include_str!("../migrations/0006_add_path_collisions.sql"),
+            include_str!("../migrations/0007_add_generation_retry_columns.sql"),
+            include_str!("../migrations/0008_add_thumbnail_ready.sql"),
+            include_str!("../migrations/0009_add_skipped_files_dismissed.sql"),
+            include_str!("../migrations/0010_add_tags_sort_order.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        for version in 1..=10 {
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                [version],
+            )
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO tags (id, name, sort_order) VALUES (1, 'a', 1), (2, 'b', NULL), (3, 'c', 0);
+             INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
+               VALUES ('v1', 'D:\\a.mp4', 'a.mp4', 1024, 'h1', 'online'),
+                      ('v2', 'D:\\b.mp4', 'b.mp4', 1024, 'h2', 'online');
+             INSERT INTO video_tags (video_id, tag_id) VALUES ('v1', 1), ('v1', 3), ('v2', 3);",
+        )
+        .unwrap();
+    }
+
+    let db = db::init(&db_path).expect("db::init should upgrade a v10 database");
+    let conn = db.writer.lock().unwrap();
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 11);
+
+    let tags: Vec<(i64, String, Option<i64>, Option<i64>)> = conn
+        .prepare("SELECT id, name, sort_order, parent_id FROM tags ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        tags,
+        vec![
+            (1, "a".to_string(), Some(1), None),
+            (2, "b".to_string(), None, None),
+            (3, "c".to_string(), Some(0), None),
+        ]
+    );
+    let links: Vec<(String, i64)> = conn
+        .prepare("SELECT video_id, tag_id FROM video_tags ORDER BY video_id, tag_id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        links,
+        vec![
+            ("v1".to_string(), 1),
+            ("v1".to_string(), 3),
+            ("v2".to_string(), 3)
+        ]
+    );
 }

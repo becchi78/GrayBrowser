@@ -266,7 +266,8 @@ pub fn get_video_properties(
 /// `.wb` import, so most rows have neither -- safely never-match rather
 /// than crash or wrongly match everything).
 /// `tag_ids` are also ANDed via `EXISTS` (a video must carry every selected
-/// tag, using `idx_video_tags_tag`). `sort_field`/`sort_direction` resolve
+/// tag, using `idx_video_tags_tag`); selecting a parent tag is satisfied by the
+/// parent itself or any of its children. `sort_field`/`sort_direction` resolve
 /// through `gb_core::sort::order_by_clause` -- the only thing allowed to
 /// produce raw `ORDER BY` SQL, so no frontend string reaches SQL text
 /// directly. `folder_path` (the folder sidebar's filter) is a fourth,
@@ -313,10 +314,15 @@ pub fn list_videos_filtered(
     }
 
     for tag_id in tag_ids {
+        // A parent also matches through its children; a child or a tag without
+        // children matches only itself, as before. Still one EXISTS per
+        // selected tag, so separate tags stay ANDed.
         clauses.push(
-            "EXISTS (SELECT 1 FROM video_tags vt WHERE vt.video_id = videos.id AND vt.tag_id = ?)"
+            "EXISTS (SELECT 1 FROM video_tags vt WHERE vt.video_id = videos.id \
+              AND vt.tag_id IN (SELECT id FROM tags WHERE id = ? OR parent_id = ?))"
                 .to_string(),
         );
+        bound_params.push(Box::new(*tag_id));
         bound_params.push(Box::new(*tag_id));
     }
 
@@ -1066,6 +1072,8 @@ pub fn delete_last_view_state(conn: &Connection) -> anyhow::Result<()> {
 pub struct TagRow {
     pub id: i64,
     pub name: String,
+    /// `None` for a top-level tag.
+    pub parent_id: Option<i64>,
 }
 
 /// Errors from `assign_tag_to_video`. Deliberately hand-rolled (no
@@ -1124,12 +1132,13 @@ fn get_or_create_tag(tx: &Transaction, normalized_name: &str) -> rusqlite::Resul
     tx.query_row(
         "INSERT INTO tags (name) VALUES (?1)
          ON CONFLICT(name) DO UPDATE SET name = excluded.name
-         RETURNING id, name",
+         RETURNING id, name, parent_id",
         params![normalized_name],
         |r| {
             Ok(TagRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                parent_id: r.get(2)?,
             })
         },
     )
@@ -1279,7 +1288,7 @@ pub fn list_tags_for_video(
 ) -> anyhow::Result<Vec<TagRow>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT tags.id, tags.name FROM tags
+        "SELECT tags.id, tags.name, tags.parent_id FROM tags
          JOIN video_tags ON video_tags.tag_id = tags.id
          WHERE video_tags.video_id = ?1
          ORDER BY tags.name",
@@ -1289,6 +1298,7 @@ pub fn list_tags_for_video(
             Ok(TagRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                parent_id: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1300,13 +1310,15 @@ pub fn list_tags_for_video(
 /// user-defined `sort_order`; tags without one follow, by name.
 pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Result<Vec<TagRow>> {
     let conn = pool.get()?;
-    let mut stmt =
-        conn.prepare("SELECT id, name FROM tags ORDER BY (sort_order IS NULL), sort_order, name")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, parent_id FROM tags ORDER BY (sort_order IS NULL), sort_order, name",
+    )?;
     let rows = stmt
         .query_map([], |r| {
             Ok(TagRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                parent_id: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1316,6 +1328,7 @@ pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Resu
 pub struct TagWithCountRow {
     pub id: i64,
     pub name: String,
+    pub parent_id: Option<i64>,
     pub video_count: i64,
 }
 
@@ -1327,7 +1340,7 @@ pub fn list_all_tags_with_video_count(
 ) -> anyhow::Result<Vec<TagWithCountRow>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.name, COUNT(vt.video_id) \
+        "SELECT t.id, t.name, t.parent_id, COUNT(vt.video_id) \
          FROM tags t LEFT JOIN video_tags vt ON vt.tag_id = t.id \
          GROUP BY t.id \
          ORDER BY (t.sort_order IS NULL), t.sort_order, t.name",
@@ -1337,32 +1350,12 @@ pub fn list_all_tags_with_video_count(
             Ok(TagWithCountRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
-                video_count: r.get(2)?,
+                parent_id: r.get(2)?,
+                video_count: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
-}
-
-/// Stores the user's tag order: the first id gets 0, the next 1, and so on.
-/// Ids with no tag are skipped without leaving a gap, and a repeated id keeps
-/// its first position. Every tag not in the list is reset to NULL (placed
-/// after the listed ones, by name) rather than left as is: a stale number
-/// could equal one just assigned and make the order between the two
-/// undefined. One transaction, so a failure leaves the previous order intact.
-pub fn set_tag_order(conn: &mut Connection, tag_ids: &[i64]) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
-    tx.execute("UPDATE tags SET sort_order = NULL", [])?;
-    let mut next = 0_i64;
-    {
-        let mut stmt = tx.prepare("UPDATE tags SET sort_order = ?1 WHERE id = ?2")?;
-        for id in gb_core::tags::dedup_keep_first(tag_ids) {
-            if stmt.execute(params![next, id])? > 0 {
-                next += 1;
-            }
-        }
-    }
-    tx.commit()
 }
 
 /// Deletes a tag from the `tags` master table and every `video_tags` row
@@ -1374,8 +1367,94 @@ pub fn set_tag_order(conn: &mut Connection, tag_ids: &[i64]) -> rusqlite::Result
 pub fn delete_tag(conn: &mut Connection, tag_id: i64) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM video_tags WHERE tag_id = ?1", params![tag_id])?;
+    // Children go back to top-level instead of keeping a parent_id that points
+    // at nothing.
+    tx.execute(
+        "UPDATE tags SET parent_id = NULL WHERE parent_id = ?1",
+        params![tag_id],
+    )?;
     tx.execute("DELETE FROM tags WHERE id = ?1", params![tag_id])?;
     tx.commit()
+}
+
+/// Errors from `set_tag_layout`.
+#[derive(Debug)]
+pub enum TagLayoutError {
+    /// The requested layout breaks the hierarchy rules; nothing was changed.
+    /// `tag_id` is the listed tag whose parent was refused.
+    Invalid {
+        tag_id: i64,
+        reason: gb_core::tag_hierarchy::ParentError,
+    },
+    Sqlite(rusqlite::Error),
+}
+
+impl std::fmt::Display for TagLayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TagLayoutError::Invalid { tag_id, reason } => {
+                write!(f, "invalid tag layout for tag {tag_id}: {reason}")
+            }
+            TagLayoutError::Sqlite(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for TagLayoutError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            TagLayoutError::Invalid { reason, .. } => Some(reason),
+            TagLayoutError::Sqlite(e) => Some(e),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for TagLayoutError {
+    fn from(e: rusqlite::Error) -> Self {
+        TagLayoutError::Sqlite(e)
+    }
+}
+
+/// Stores the tag order and each tag's parent in one go: the first listed tag
+/// gets `sort_order` 0, the next 1, and so on, and each takes the listed
+/// `parent_id`. Validation (`gb_core::tag_hierarchy::resolve_layout`) runs
+/// against the tags as read inside the transaction, so a bad layout is
+/// rejected before anything is written. Listed ids with no tag are skipped
+/// without leaving a gap and a repeated id keeps its first position. Tags not
+/// listed get a NULL `sort_order` (placed after the listed ones, by name) and keep their parent.
+/// A failure at any point rolls the whole change back.
+pub fn set_tag_layout(
+    conn: &mut Connection,
+    items: &[gb_core::tag_hierarchy::LayoutItem],
+) -> Result<(), TagLayoutError> {
+    let tx = conn.transaction()?;
+    let current = {
+        let mut stmt = tx.prepare("SELECT id, name, parent_id, sort_order FROM tags")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(gb_core::tag_hierarchy::TagNode {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    parent_id: r.get(2)?,
+                    sort_order: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    let resolved = gb_core::tag_hierarchy::resolve_layout(&current, items)
+        .map_err(|(tag_id, reason)| TagLayoutError::Invalid { tag_id, reason })?;
+
+    tx.execute("UPDATE tags SET sort_order = NULL", [])?;
+    {
+        let mut stmt =
+            tx.prepare("UPDATE tags SET sort_order = ?1, parent_id = ?2 WHERE id = ?3")?;
+        for (position, item) in resolved.iter().enumerate() {
+            stmt.execute(params![position as i64, item.parent_id, item.id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// Deletes a video row and every `video_tags` row referencing it, in one
@@ -1953,12 +2032,13 @@ fn find_or_create_tag_folding_case(
     merge_key: &str,
     display_name_if_new: &str,
 ) -> Result<TagRow, WbTagResolutionError> {
-    let mut stmt = tx.prepare("SELECT id, name FROM tags")?;
+    let mut stmt = tx.prepare("SELECT id, name, parent_id FROM tags")?;
     let existing = stmt
         .query_map([], |r| {
             Ok(TagRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                parent_id: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

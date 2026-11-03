@@ -13,6 +13,19 @@ fn init_temp_db() -> (tempfile::TempDir, db::Db) {
     (dir, db)
 }
 
+/// Stores a flat order (every tag top-level), the shape the old order-only
+/// save had.
+fn set_tag_order(conn: &mut Connection, ids: &[i64]) {
+    let items: Vec<gb_core::tag_hierarchy::LayoutItem> = ids
+        .iter()
+        .map(|&id| gb_core::tag_hierarchy::LayoutItem {
+            id,
+            parent_id: None,
+        })
+        .collect();
+    queries::set_tag_layout(conn, &items).unwrap();
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_test_video(
     conn: &Connection,
@@ -538,7 +551,7 @@ fn newly_created_tag_goes_after_ordered_tags() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "m"), (2, "z")]);
-    queries::set_tag_order(&mut conn, &[2, 1]).unwrap();
+    set_tag_order(&mut conn, &[2, 1]);
     insert_test_video(
         &conn,
         "v",
@@ -555,21 +568,21 @@ fn newly_created_tag_goes_after_ordered_tags() {
 }
 
 #[test]
-fn set_tag_order_follows_input_order() {
+fn set_tag_layout_flat_order_follows_input_order() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
-    queries::set_tag_order(&mut conn, &[2, 3, 1]).unwrap();
+    set_tag_order(&mut conn, &[2, 3, 1]);
     drop(conn);
     assert_eq!(tag_names(&db), ["b", "c", "a"]);
 }
 
 #[test]
-fn set_tag_order_keeps_first_of_duplicates() {
+fn set_tag_layout_flat_order_keeps_first_of_duplicates() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
-    queries::set_tag_order(&mut conn, &[3, 1, 3, 2, 1]).unwrap();
+    set_tag_order(&mut conn, &[3, 1, 3, 2, 1]);
     assert_eq!(
         sort_orders(&conn),
         vec![(1, Some(1)), (2, Some(2)), (3, Some(0))]
@@ -577,23 +590,23 @@ fn set_tag_order_keeps_first_of_duplicates() {
 }
 
 #[test]
-fn set_tag_order_ignores_unknown_ids_without_gaps() {
+fn set_tag_layout_flat_order_ignores_unknown_ids_without_gaps() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "a"), (2, "b")]);
-    queries::set_tag_order(&mut conn, &[99, 2, -5, 1]).unwrap();
+    set_tag_order(&mut conn, &[99, 2, -5, 1]);
     assert_eq!(sort_orders(&conn), vec![(1, Some(1)), (2, Some(0))]);
 }
 
 #[test]
-fn set_tag_order_resets_tags_missing_from_the_list_to_the_end() {
+fn set_tag_layout_flat_order_resets_tags_missing_from_the_list_to_the_end() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]);
-    queries::set_tag_order(&mut conn, &[1, 2, 3, 4]).unwrap();
+    set_tag_order(&mut conn, &[1, 2, 3, 4]);
     // Tags 1 and 2 are left out. Their old numbers (0, 1) equal the ones the
     // listed tags receive now, so keeping them would make the order undefined.
-    queries::set_tag_order(&mut conn, &[4, 3]).unwrap();
+    set_tag_order(&mut conn, &[4, 3]);
     assert_eq!(
         sort_orders(&conn),
         vec![(1, None), (2, None), (3, Some(1)), (4, Some(0))]
@@ -603,24 +616,24 @@ fn set_tag_order_resets_tags_missing_from_the_list_to_the_end() {
 }
 
 #[test]
-fn set_tag_order_with_an_empty_list_clears_every_order() {
+fn set_tag_layout_flat_order_with_an_empty_list_clears_every_order() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "b"), (2, "a")]);
-    queries::set_tag_order(&mut conn, &[1, 2]).unwrap();
-    queries::set_tag_order(&mut conn, &[]).unwrap();
+    set_tag_order(&mut conn, &[1, 2]);
+    set_tag_order(&mut conn, &[]);
     drop(conn);
     assert_eq!(tag_names(&db), ["a", "b"]);
 }
 
 #[test]
-fn set_tag_order_is_idempotent() {
+fn set_tag_layout_flat_order_is_idempotent() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
-    queries::set_tag_order(&mut conn, &[3, 1]).unwrap();
+    set_tag_order(&mut conn, &[3, 1]);
     let first = sort_orders(&conn);
-    queries::set_tag_order(&mut conn, &[3, 1]).unwrap();
+    set_tag_order(&mut conn, &[3, 1]);
     assert_eq!(sort_orders(&conn), first);
     drop(conn);
     assert_eq!(tag_names(&db), ["c", "a", "b"]);

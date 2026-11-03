@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
-import { deleteTag, listTagsWithVideoCount, setTagOrder } from "../api";
-import { moveDown, moveUp } from "../lib/reorderablePinnedTags";
+import { deleteTag, listTagsWithVideoCount, setTagLayout } from "../api";
 import { buildTagDeleteMessage } from "../lib/tagDeleteMessage";
+import {
+  canMove,
+  displayOrder,
+  moveWithinSiblings,
+  parentCandidates,
+  removeTag,
+  setParent,
+  toLayoutItems,
+} from "../lib/tagTree";
 import type { TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -19,7 +27,8 @@ interface Props {
 }
 
 // Draft-then-save editing, same convention as FolderDialog's editingValue/
-// cancelEdit: every ↑/↓ click below only mutates local `draftTags` state.
+// cancelEdit: every ↑/↓ click and every parent change below only mutates local
+// `draftTags` state (kept in display order: a parent, then its children).
 // Nothing reaches the backend until "保存" is clicked; "キャンセル" (or the
 // overlay click) discards the draft unpersisted -- the next `open` re-fetches
 // a fresh draft from the currently-persisted order anyway, so there's nothing
@@ -44,7 +53,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     listTagsWithVideoCount()
       .then((tags) => {
         if (cancelled) return;
-        setDraftTags(tags);
+        setDraftTags(displayOrder(tags));
         setError(null);
       })
       .catch((e) => {
@@ -63,7 +72,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     setSaving(true);
     setError(null);
     try {
-      await setTagOrder(draftTags.map((tag) => tag.id));
+      await setTagLayout(toLayoutItems(draftTags));
       onChanged();
       onClose();
     } catch (e) {
@@ -80,7 +89,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     setError(null);
     try {
       await deleteTag(target.id);
-      setDraftTags((tags) => tags.filter((tag) => tag.id !== target.id));
+      setDraftTags((tags) => removeTag(tags, target.id));
       onTagDeleted(target.id);
       onChanged();
     } catch (e) {
@@ -107,41 +116,76 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
             <p className="tag-bar-edit-empty">タグがありません。</p>
           ) : (
             <ul className="tag-bar-edit-list" data-testid="tag-bar-edit-list">
-              {draftTags.map((tag, index) => (
-                <li key={tag.id} className="tag-bar-edit-row" data-testid="tag-bar-edit-row">
-                  <span className="tag-bar-edit-row-name" title={tag.name}>
-                    {tag.name}
-                  </span>
-                  <div className="tag-bar-edit-row-actions">
-                    <button
-                      type="button"
-                      aria-label="上へ移動"
-                      data-testid="tag-bar-edit-move-up-btn"
-                      onClick={() => setDraftTags((tags) => moveUp(tags, index))}
-                      disabled={saving || deleting || index === 0}
+              {draftTags.map((tag) => {
+                const candidates = parentCandidates(draftTags, tag.id);
+                const busy = saving || deleting;
+                return (
+                  <li
+                    key={tag.id}
+                    className={
+                      tag.parent_id === null
+                        ? "tag-bar-edit-row"
+                        : "tag-bar-edit-row tag-bar-edit-row--child"
+                    }
+                    data-testid="tag-bar-edit-row"
+                  >
+                    <span className="tag-bar-edit-row-name" title={tag.name}>
+                      {tag.name}
+                    </span>
+                    {/* 子を持つタグは別のタグの子にできないので、「なし」だけ。 */}
+                    <select
+                      className="tag-bar-edit-parent-select"
+                      aria-label={`${tag.name}の親`}
+                      data-testid="tag-bar-edit-parent-select"
+                      value={tag.parent_id ?? ""}
+                      disabled={busy || candidates.length === 0}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDraftTags((tags) =>
+                          setParent(tags, tag.id, value === "" ? null : Number(value)),
+                        );
+                      }}
                     >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="下へ移動"
-                      data-testid="tag-bar-edit-move-down-btn"
-                      onClick={() => setDraftTags((tags) => moveDown(tags, index))}
-                      disabled={saving || deleting || index === draftTags.length - 1}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="tag-bar-edit-delete-btn"
-                      onClick={() => setDeleteTarget(tag)}
-                      disabled={saving || deleting}
-                    >
-                      削除
-                    </button>
-                  </div>
-                </li>
-              ))}
+                      <option value="">親なし</option>
+                      {candidates.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="tag-bar-edit-row-actions">
+                      <button
+                        type="button"
+                        aria-label="上へ移動"
+                        data-testid="tag-bar-edit-move-up-btn"
+                        onClick={() => setDraftTags((tags) => moveWithinSiblings(tags, tag.id, "up"))}
+                        disabled={busy || !canMove(draftTags, tag.id, "up")}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="下へ移動"
+                        data-testid="tag-bar-edit-move-down-btn"
+                        onClick={() =>
+                          setDraftTags((tags) => moveWithinSiblings(tags, tag.id, "down"))
+                        }
+                        disabled={busy || !canMove(draftTags, tag.id, "down")}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="tag-bar-edit-delete-btn"
+                        onClick={() => setDeleteTarget(tag)}
+                        disabled={busy}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {error && (
@@ -181,7 +225,10 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         {deleteTarget && (
           <p>
             タグ『<strong className="tag-delete-target" data-testid="tag-delete-target">{deleteTarget.name}</strong>』を削除します。
-            {buildTagDeleteMessage(deleteTarget.video_count)}
+            {buildTagDeleteMessage(
+              deleteTarget.video_count,
+              draftTags.filter((t) => t.parent_id === deleteTarget.id).length,
+            )}
           </p>
         )}
       </ConfirmDialog>
