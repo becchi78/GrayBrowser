@@ -19,6 +19,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     source_tag_count: 0,
     ratings_from_star_tags: 0,
     thumbnails_linked: 0,
+    thumbnails_linked_by_name: 0,
     thumbnails_failed: 0,
     thumbnails_unmatched: 0,
     thumbnails_unmatched_empty_hash: 0,
@@ -206,11 +207,11 @@ test("自動対応できなかった旧サムネイルは、ハッシュが空�
   assert.deepEqual(keys(d.attention), ["unmatched-empty-hash", "unmatched"]);
   assert.equal(
     d.attention[0].text,
-    "旧サムネイルのハッシュが空のため自動では紐付けられません: 97件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。",
+    "旧サムネイルのハッシュがファイル名に無く、名前でも動画を1つに決められなかったため自動では紐付けられません: 97件 — エラーではありません。「確認する」から動画を選んで紐付けできます。",
   );
   assert.equal(
     d.attention[1].text,
-    "対応する動画がない旧サムネイル: 2件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。",
+    "対応する動画がない旧サムネイル: 2件 — エラーではありません。「確認する」から動画を選んで紐付けできます。",
   );
   assert.deepEqual(
     d.attention.map((a) => a.expandable),
@@ -236,4 +237,18 @@ test("ハッシュが空の件数が合計を超えても、動画なしが負�
   );
   assert.deepEqual(keys(d.attention), ["unmatched-empty-hash"]);
   assert.match(d.attention[0].text, /: 2件/);
+});
+
+test("名前の一致で自動紐付けした件数は、1件以上のときだけ別の行に出す", () => {
+  const none = buildWbImportResultDisplay(makeSummary({ registered_offline: 3, thumbnails_linked: 2 }));
+  assert.equal(none.linkedByNameText, null);
+  const some = buildWbImportResultDisplay(
+    makeSummary({
+      registered_offline: 80,
+      thumbnails_linked: 78,
+      thumbnails_linked_by_name: 77,
+    }),
+  );
+  assert.equal(some.linkedByNameText, "名前が一致したため自動で紐付けた: 77件");
+  assert.equal(some.offlineThumbnailsText, "オフライン動画の旧サムネイル紐付け成功: 78件（80件中）");
 });

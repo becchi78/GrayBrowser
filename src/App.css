@@ -1880,6 +1880,133 @@ button.link-button:focus-visible {
   opacity: 0.85;
 }
 
+/* 旧サムネイルの手動紐付け。一覧は縦に長くなりうるので、行の高さは内容に任せ、
+   スクロールは.dialog自体(max-height + overflow)に任せる。 */
+.unmatched-dialog {
+  width: min(44em, 92vw);
+}
+
+.unmatched-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.unmatched-row {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 0.5em 0.75em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.unmatched-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75em;
+}
+
+.unmatched-row-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+}
+
+.unmatched-row-name,
+.unmatched-candidate-name {
+  overflow-wrap: anywhere;
+  font-size: 0.9em;
+}
+
+.unmatched-row-folder,
+.unmatched-candidate-path {
+  font-size: 0.8em;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.unmatched-kind,
+.unmatched-badge {
+  align-self: flex-start;
+  border-radius: 4px;
+  padding: 0 0.4em;
+  font-size: 0.75em;
+}
+
+.unmatched-kind {
+  background-color: #fff3cd;
+  color: #7a5a00;
+}
+
+.unmatched-badge {
+  background-color: #dff0e3;
+  color: #1f6d2c;
+}
+
+.unmatched-row-actions {
+  flex: none;
+  display: flex;
+  gap: 0.5em;
+}
+
+.unmatched-row-actions button {
+  white-space: nowrap;
+}
+
+.unmatched-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.unmatched-picker-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.unmatched-candidates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14em;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+
+.unmatched-candidate {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1em;
+}
+
+.unmatched-candidate--selected {
+  outline: 2px solid #396cd8;
+  outline-offset: -2px;
+}
+
+.unmatched-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4em;
+}
+
+.unmatched-overwrite {
+  color: #7a5a00;
+  font-weight: 600;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -2117,6 +2244,28 @@ button.link-button:focus-visible {
   .wb-import-result-attention--failed {
     background-color: #5a1f1f;
     color: #f3caca;
+  }
+
+  .unmatched-row {
+    border-color: #555;
+  }
+
+  .unmatched-kind {
+    background-color: #5a4600;
+    color: #f0c674;
+  }
+
+  .unmatched-badge {
+    background-color: #1f4a2b;
+    color: #7ed494;
+  }
+
+  .unmatched-candidate--selected {
+    outline-color: #7aa2f7;
+  }
+
+  .unmatched-overwrite {
+    color: #f0c674;
   }
 }
 

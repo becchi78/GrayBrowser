@@ -89,6 +89,35 @@ pub fn classify_unmatched_filename(filename: &str) -> UnmatchedReason {
     }
 }
 
+impl UnmatchedReason {
+    /// The text stored in the database. Fixed on purpose: renaming a variant
+    /// must not change what already-saved rows say.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            UnmatchedReason::EmptyHash => "empty_hash",
+            UnmatchedReason::NoMatchingVideo => "no_matching_video",
+        }
+    }
+
+    /// Inverse of [`Self::as_db_str`]; `None` for any other text.
+    pub fn from_db_str(value: &str) -> Option<Self> {
+        match value {
+            "empty_hash" => Some(UnmatchedReason::EmptyHash),
+            "no_matching_video" => Some(UnmatchedReason::NoMatchingVideo),
+            _ => None,
+        }
+    }
+}
+
+/// The search text to start from when a person picks the video for an
+/// unmatched legacy thumbnail by hand: the video-name part of the file name,
+/// trimmed. `None` when the name carries none (nothing before `.#`, or only
+/// whitespace), in which case the search box starts empty.
+pub fn default_candidate_search_term(filename: &str) -> Option<String> {
+    let name = extract_thumbnail_name_part(filename)?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Unmatched file names split by [`UnmatchedReason`], each group keeping the
 /// input order. Together the groups hold exactly the input.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -180,6 +209,52 @@ pub fn file_name_from_path(path: &str) -> &str {
 pub fn extract_thumbnail_name_part(filename: &str) -> Option<&str> {
     let (name, _) = filename.rsplit_once(".#")?;
     (!name.is_empty()).then_some(name)
+}
+
+/// Pairs legacy thumbnails with an empty hash (`rows`: their file names) to
+/// offline videos by name alone, returning `(video_id, row_file_name)` for the
+/// ones that can safely be attached without a person looking.
+///
+/// A row qualifies only when its name part equals exactly one video's
+/// `file_name` (case-insensitive, nothing else normalised), that video has no
+/// thumbnails yet (`ready == false`), and no other row points at the same
+/// video. Anything ambiguous is left out so a person decides.
+///
+/// `videos` is `(video_id, file_name, thumbnail_ready)`. The whole of
+/// `file_name` is compared, never a prefix before a dot: the stored name has no
+/// extension, so a trailing `.1` in `Vol.1` is part of the name.
+pub fn match_empty_hash_by_name(
+    rows: &[String],
+    videos: &[(String, String, bool)],
+) -> Vec<(String, String)> {
+    use std::collections::HashMap;
+
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, (_, file_name, _)) in videos.iter().enumerate() {
+        if !file_name.is_empty() {
+            by_name.entry(file_name.to_lowercase()).or_default().push(i);
+        }
+    }
+
+    // Rows whose name picks out exactly one video, whether or not that video
+    // is free: a second row aimed at an already-taken video must still block.
+    let mut targets: Vec<(usize, &String)> = Vec::new();
+    let mut rows_per_video: HashMap<usize, u32> = HashMap::new();
+    for row in rows {
+        let Some(name_part) = extract_thumbnail_name_part(row) else {
+            continue;
+        };
+        if let Some(&[video]) = by_name.get(&name_part.to_lowercase()).map(Vec::as_slice) {
+            targets.push((video, row));
+            *rows_per_video.entry(video).or_insert(0) += 1;
+        }
+    }
+
+    targets
+        .into_iter()
+        .filter(|(video, _)| rows_per_video[video] == 1 && !videos[*video].2)
+        .map(|(video, row)| (videos[video].0.clone(), row.clone()))
+        .collect()
 }
 
 /// Whether the name part of a legacy thumbnail names the video `file_name`.
@@ -890,6 +965,117 @@ mod tests {
         );
         assert_eq!(extract_thumbnail_name_part(".#1e5e0fbf.jpg"), None);
         assert_eq!(extract_thumbnail_name_part("plain.jpg"), None);
+    }
+
+    fn vid(id: &str, name: &str, ready: bool) -> (String, String, bool) {
+        (id.to_string(), name.to_string(), ready)
+    }
+
+    #[test]
+    fn name_match_ignores_case_and_returns_the_row_name() {
+        let got = match_empty_hash_by_name(
+            &strs(&["Movie ABC.#.jpg"]),
+            &[vid("v1", "movie abc", false), vid("v2", "other", false)],
+        );
+        assert_eq!(got, vec![pair("v1", "Movie ABC.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_needs_exactly_one_video() {
+        let videos = [
+            vid("v1", "same", false),
+            vid("v2", "SAME", false),
+            vid("v3", "x", false),
+        ];
+        assert!(match_empty_hash_by_name(&strs(&["same.#.jpg"]), &videos).is_empty());
+        assert!(match_empty_hash_by_name(&strs(&["none.#.jpg"]), &videos).is_empty());
+        assert!(match_empty_hash_by_name(&[], &videos).is_empty());
+        assert!(match_empty_hash_by_name(&strs(&["x.#.jpg"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn name_match_skips_videos_that_already_have_thumbnails() {
+        let got = match_empty_hash_by_name(
+            &strs(&["a.#.jpg", "b.#.jpg"]),
+            &[vid("v1", "a", true), vid("v2", "b", false)],
+        );
+        assert_eq!(got, vec![pair("v2", "b.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_leaves_every_row_aimed_at_one_video_to_a_person() {
+        let got = match_empty_hash_by_name(
+            &strs(&["A.#.jpg", "a.#.jpg", "b.#.jpg"]),
+            &[vid("v1", "a", false), vid("v2", "b", false)],
+        );
+        assert_eq!(got, vec![pair("v2", "b.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_compares_the_whole_name_so_dots_are_not_extensions() {
+        let videos = [vid("v1", "title vol.1", false), vid("v2", "title", false)];
+        let got = match_empty_hash_by_name(&strs(&["Title Vol.1.#.jpg"]), &videos);
+        assert_eq!(got, vec![pair("v1", "Title Vol.1.#.jpg")]);
+        // The part before the last dot is not a name of its own.
+        let got = match_empty_hash_by_name(&strs(&["title.mp4.#.jpg"]), &videos);
+        assert!(got.is_empty());
+        let got = match_empty_hash_by_name(&strs(&["title vol.#.jpg"]), &videos);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn name_match_ignores_rows_without_a_name_and_videos_without_one() {
+        let got = match_empty_hash_by_name(
+            &strs(&[".#.jpg", "plain.jpg"]),
+            &[vid("v1", "", false), vid("v2", "plain", false)],
+        );
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn unmatched_reason_db_strings_are_stable_and_round_trip() {
+        assert_eq!(UnmatchedReason::EmptyHash.as_db_str(), "empty_hash");
+        assert_eq!(
+            UnmatchedReason::NoMatchingVideo.as_db_str(),
+            "no_matching_video"
+        );
+        for reason in [UnmatchedReason::EmptyHash, UnmatchedReason::NoMatchingVideo] {
+            assert_eq!(
+                UnmatchedReason::from_db_str(reason.as_db_str()),
+                Some(reason)
+            );
+        }
+        for bad in ["", "EmptyHash", "empty_hash ", "other"] {
+            assert_eq!(UnmatchedReason::from_db_str(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn default_search_term_is_the_trimmed_name_part() {
+        assert_eq!(
+            default_candidate_search_term("My Video.mp4.#.jpg").as_deref(),
+            Some("My Video.mp4")
+        );
+        assert_eq!(
+            default_candidate_search_term("  padded .#1e5e0fbf.jpg").as_deref(),
+            Some("padded")
+        );
+        assert_eq!(
+            default_candidate_search_term("a.#x.#1e5e0fbf.jpg").as_deref(),
+            Some("a.#x")
+        );
+    }
+
+    #[test]
+    fn default_search_term_is_none_without_a_usable_name() {
+        assert_eq!(default_candidate_search_term(""), None);
+        assert_eq!(default_candidate_search_term(".#.jpg"), None);
+        assert_eq!(default_candidate_search_term("   .#.jpg"), None);
+        assert_eq!(default_candidate_search_term("plain.jpg"), None);
+    }
+
+    #[test]
+    fn file_name_from_path_takes_the_last_component() {
         assert_eq!(file_name_from_path(r"Z:\gone\a.mp4"), "a.mp4");
         assert_eq!(file_name_from_path("/mnt/x/a.mp4"), "a.mp4");
         assert_eq!(file_name_from_path(r"Z:\a/b\c.mp4"), "c.mp4");

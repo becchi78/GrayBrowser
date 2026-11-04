@@ -424,6 +424,22 @@ pub fn format_unmatched_filenames(filenames: &[String]) -> String {
     out
 }
 
+/// Legacy thumbnails attached on their own because the name matched exactly one
+/// video: `(image file name, video name)` per link. Empty when there are none.
+pub fn format_name_linked_thumbnails(links: &[(String, String)]) -> String {
+    if links.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "名前が一致したため自動で紐付けた旧サムネイル: {} 件\n",
+        links.len()
+    );
+    for (image, video) in links {
+        out.push_str(&format!("  {} -> {}\n", quote(image), quote(video)));
+    }
+    out
+}
+
 pub fn format_thumbnail_folder_error(reason: &str) -> String {
     format!("旧サムネイルフォルダを読めなかったため、紐付けを行いませんでした: {reason}\n")
 }
@@ -454,6 +470,8 @@ pub struct LogSummary {
     pub source_tag_count: u32,
     pub ratings_from_star_tags: u32,
     pub thumbnails_linked: u32,
+    /// Part of `thumbnails_linked` attached by name rather than by hash.
+    pub thumbnails_linked_by_name: u32,
     pub thumbnails_failed: u32,
     pub thumbnails_unmatched: u32,
     /// Part of `thumbnails_unmatched` whose file name carries an empty hash.
@@ -481,7 +499,7 @@ pub fn format_summary(s: &LogSummary) -> String {
          スコアを5に丸めた行: {clamped}\n\
          タグ: 割り当て {tags_assigned} / 元データ {source_tags}\n\
          星タグから決めた評価: {stars}\n\
-         旧サムネイル: 紐付け {linked} / 失敗 {thumb_failed} / 対応なし {unmatched} (ハッシュが空 {empty_hash} / 対応する動画なし {no_video}) / 動画から生成するため未使用 {skipped_online}\n",
+         旧サムネイル: 紐付け {linked} (うち名前の一致で自動 {by_name}) / 失敗 {thumb_failed} / 対応なし {unmatched} (ハッシュが空 {empty_hash} / 対応する動画なし {no_video}) / 動画から生成するため未使用 {skipped_online}\n",
         total = s.total,
         registered = s.registered,
         online = s.registered_online,
@@ -496,6 +514,7 @@ pub fn format_summary(s: &LogSummary) -> String {
         source_tags = s.source_tag_count,
         stars = s.ratings_from_star_tags,
         linked = s.thumbnails_linked,
+        by_name = s.thumbnails_linked_by_name,
         thumb_failed = s.thumbnails_failed,
         unmatched = s.thumbnails_unmatched,
         empty_hash = s.thumbnails_unmatched_empty_hash,
@@ -891,6 +910,24 @@ mod tests {
         s.thumbnails_unmatched = 99;
         s.thumbnails_unmatched_empty_hash = 97;
         assert!(format_summary(&s).contains("対応なし 99 (ハッシュが空 97 / 対応する動画なし 2)"));
+    }
+
+    #[test]
+    fn summary_states_how_many_links_were_made_by_name() {
+        let mut s = summary();
+        s.thumbnails_linked = 80;
+        s.thumbnails_linked_by_name = 77;
+        assert!(format_summary(&s).contains("紐付け 80 (うち名前の一致で自動 77)"));
+    }
+
+    #[test]
+    fn name_links_are_listed_image_to_video() {
+        assert_eq!(format_name_linked_thumbnails(&[]), "");
+        let text = format_name_linked_thumbnails(&[("A.#.jpg".to_string(), "a".to_string())]);
+        assert_eq!(
+            text,
+            "名前が一致したため自動で紐付けた旧サムネイル: 1 件\n  \"A.#.jpg\" -> \"a\"\n"
+        );
     }
 
     #[test]

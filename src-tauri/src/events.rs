@@ -175,6 +175,11 @@ pub struct WbImportSummary {
     /// reports its own progress via `catalog:changed`, not via
     /// `WbImportSummary`.
     pub thumbnails_linked: u32,
+    /// Part of `thumbnails_linked` attached by name: empty-hash legacy JPGs
+    /// whose name matched exactly one offline video that had no thumbnails.
+    /// Those files are no longer in `thumbnails_unmatched` or
+    /// `thumbnails_unmatched_empty_hash`.
+    pub thumbnails_linked_by_name: u32,
     /// **Offline rows only** (see `thumbnails_linked`). Legacy JPGs that
     /// matched an *offline* video by hash but failed to convert or rename
     /// into place.

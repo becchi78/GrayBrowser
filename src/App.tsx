@@ -65,6 +65,10 @@ function App() {
 
 function AppContent({ initialView }: { initialView: ViewState }) {
   const [refreshKey, setRefreshKey] = useState(0);
+  // 手動の紐付けでサムネイルが置き換わった動画の id -> 回数。サムネイルは
+  // 動画ごとに取得済みの画像をメモリに持つため、ファイルだけ差し替わっても
+  // 表示は変わらない。この値が変わった行だけ取り直させる。
+  const [thumbnailVersions, setThumbnailVersions] = useState<Readonly<Record<string, number>>>({});
   const [search, setSearch] = useState(initialView.search);
   const [sortField, setSortField] = useState(initialView.sortField);
   const [sortDirection, setSortDirection] = useState(initialView.sortDirection);
@@ -246,6 +250,7 @@ function AppContent({ initialView }: { initialView: ViewState }) {
             default: (
               <ThumbnailGrid
                 refreshKey={refreshKey}
+                thumbnailVersions={thumbnailVersions}
                 search={search}
                 sortField={sortField}
                 sortDirection={sortDirection}
@@ -292,6 +297,9 @@ function AppContent({ initialView }: { initialView: ViewState }) {
         <WbImportDialog
           onClose={() => setWbImportDialogOpen(false)}
           onImportComplete={() => setRefreshKey((k) => k + 1)}
+          onThumbnailsReplaced={(videoId) =>
+            setThumbnailVersions((prev) => ({ ...prev, [videoId]: (prev[videoId] ?? 0) + 1 }))
+          }
         />
       )}
       <TagBarEditDialog

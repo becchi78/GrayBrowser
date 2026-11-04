@@ -19,6 +19,15 @@ impl ThumbLayout {
     pub fn tile_count(&self) -> Option<u32> {
         self.cols.checked_mul(self.rows)
     }
+
+    /// The `thum_size` text for this layout, in the canonical form
+    /// [`parse_thum_size`] reads back to an equal value.
+    pub fn to_thum_size(&self) -> String {
+        format!(
+            "{}x{}x{}x{}",
+            self.tile_w, self.tile_h, self.cols, self.rows
+        )
+    }
 }
 
 /// Parses `thum_size`. Exactly four `x`-separated positive integers;
@@ -97,6 +106,19 @@ mod tests {
     fn parses_the_known_layout() {
         assert_eq!(parse_thum_size("200x150x6x1"), Some(L));
         assert_eq!(parse_thum_size(" 200x150x6x1 "), Some(L));
+    }
+
+    #[test]
+    fn to_thum_size_round_trips_through_parse() {
+        assert_eq!(L.to_thum_size(), "200x150x6x1");
+        assert_eq!(parse_thum_size(&L.to_thum_size()), Some(L));
+        let grid = ThumbLayout {
+            tile_w: 1,
+            tile_h: u32::MAX,
+            cols: 3,
+            rows: 2,
+        };
+        assert_eq!(parse_thum_size(&grid.to_thum_size()), Some(grid));
     }
 
     #[test]

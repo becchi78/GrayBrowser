@@ -43,6 +43,8 @@ const NOTIFY_THROTTLE_MS = 300;
 
 interface Props {
   refreshKey: number;
+  /** Per-video count of manual thumbnail replacements; a change re-reads that row's images. */
+  thumbnailVersions: Readonly<Record<string, number>>;
   search: string;
   sortField: SortField;
   sortDirection: SortDirection;
@@ -63,6 +65,7 @@ interface Props {
 
 export function ThumbnailGrid({
   refreshKey,
+  thumbnailVersions,
   search,
   sortField,
   sortDirection,
@@ -423,7 +426,8 @@ export function ThumbnailGrid({
                 }}
               >
                 <VideoRow
-                  key={video.id}
+                  key={`${video.id}:${thumbnailVersions[video.id] ?? 0}`}
+                  thumbnailVersion={thumbnailVersions[video.id] ?? 0}
                   video={video}
                   cache={cache}
                   catalogVersion={catalogVersion}

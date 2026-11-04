@@ -41,6 +41,8 @@ export interface WbImportResultDisplay {
   registeredText: string;
   /** オフラインが1件以上のときだけ。旧サムネイルが紐付いた件数を、オフライン件数に対して示す。 */
   offlineThumbnailsText: string | null;
+  /** 名前の一致で自動的に紐付けた旧サムネイルがないときは null（0件は出さない）。件数は紐付け成功の内数。 */
+  linkedByNameText: string | null;
   /** 監視フォルダを追加しなかったときは null（0件は出さない）。 */
   watchFoldersAddedText: string | null;
   /** 登録済みのためスキップした行がないときは null（0件は出さない）。 */
@@ -61,7 +63,7 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention.push({
       key: "unmatched-empty-hash",
       tone: "amber",
-      text: `旧サムネイルのハッシュが空のため自動では紐付けられません: ${emptyHash}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
+      text: `旧サムネイルのハッシュがファイル名に無く、名前でも動画を1つに決められなかったため自動では紐付けられません: ${emptyHash}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
       expandable: true,
     });
   }
@@ -69,7 +71,7 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention.push({
       key: "unmatched",
       tone: "amber",
-      text: `対応する動画がない旧サムネイル: ${noMatchingVideo}件 — エラーではありません。個別の紐付け操作は今後のアップデートで対応予定です。`,
+      text: `対応する動画がない旧サムネイル: ${noMatchingVideo}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
       expandable: true,
     });
   }
@@ -116,6 +118,10 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     offlineThumbnailsText:
       s.registered_offline > 0
         ? `オフライン動画の旧サムネイル紐付け成功: ${s.thumbnails_linked}件（${s.registered_offline}件中）`
+        : null,
+    linkedByNameText:
+      s.thumbnails_linked_by_name > 0
+        ? `名前が一致したため自動で紐付けた: ${s.thumbnails_linked_by_name}件`
         : null,
     watchFoldersAddedText:
       s.watch_folders_added.length > 0

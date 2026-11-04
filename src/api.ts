@@ -9,6 +9,7 @@ import type {
   DuplicateGroup,
   FfmpegStatusDto,
   GenerationFailuresDto,
+  LinkCandidateDto,
   LogChunkDto,
   MissingRegistrationResult,
   RenameSkippedFileResult,
@@ -22,6 +23,7 @@ import type {
   TagWithCountDto,
   AssignTagResultDto,
   ThumbnailProgress,
+  UnmatchedThumbnailDto,
   VideoDto,
   VideoPropertiesDto,
 } from "./types";
@@ -143,6 +145,14 @@ export const startWbImport = (
   registerWatchFolders: boolean,
 ) => invoke<void>("start_wb_import", { wbPath, thumbnailFolderPath, registerWatchFolders });
 export const openWbImportLog = () => invoke<void>("open_wb_import_log");
+export const listUnmatchedThumbnails = () =>
+  invoke<UnmatchedThumbnailDto[]>("list_unmatched_thumbnails");
+export const searchLinkCandidates = (term: string, limit: number) =>
+  invoke<LinkCandidateDto[]>("search_link_candidates", { term, limit });
+export const linkUnmatchedThumbnail = (folderPath: string, fileName: string, videoId: string) =>
+  invoke<void>("link_unmatched_thumbnail", { folderPath, fileName, videoId });
+export const dismissUnmatchedThumbnail = (folderPath: string, fileName: string) =>
+  invoke<void>("dismiss_unmatched_thumbnail", { folderPath, fileName });
 export const listDuplicateGroups = () => invoke<DuplicateGroup[]>("list_duplicate_groups");
 export const refreshDuplicateGroups = () => invoke<void>("refresh_duplicate_groups");
 export const deleteDuplicateVideo = (videoId: string) =>
