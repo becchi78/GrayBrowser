@@ -104,6 +104,8 @@ export interface WbImportSummary {
   /** Newly registered videos whose rating came from a ★-only tag. */
   ratings_from_star_tags: number;
   thumbnails_linked: number;
+  /** thumbnails_linked のうち、名前の一致で自動的に紐付けたもの。 */
+  thumbnails_linked_by_name: number;
   thumbnails_failed: number;
   thumbnails_unmatched: number;
   /** thumbnails_unmatched のうち、ファイル名のハッシュが空のもの。 */

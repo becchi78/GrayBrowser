@@ -22,3 +22,11 @@ export function overwriteNotice(thumbnailReady: boolean): string | null {
     ? "この動画には既にサムネイルがあります。紐付けると置き換えられ、失敗した場合は今のサムネイルも消えます。"
     : null;
 }
+
+/** kind を指定したときはその原因の行だけ。省略すると全件。 */
+export function filterUnmatchedByKind<T extends Pick<UnmatchedThumbnailDto, "kind">>(
+  rows: T[],
+  kind?: UnmatchedThumbnailKind,
+): T[] {
+  return kind === undefined ? rows : rows.filter((r) => r.kind === kind);
+}

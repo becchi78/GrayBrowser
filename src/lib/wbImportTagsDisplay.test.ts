@@ -22,6 +22,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     source_tag_count: 0,
     ratings_from_star_tags: 0,
     thumbnails_linked: 0,
+    thumbnails_linked_by_name: 0,
     thumbnails_failed: 0,
     thumbnails_unmatched: 0,
     thumbnails_unmatched_empty_hash: 0,

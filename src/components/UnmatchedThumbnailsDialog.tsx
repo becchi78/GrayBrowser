@@ -8,17 +8,20 @@ import {
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import {
+  filterUnmatchedByKind,
   overwriteNotice,
   unmatchedCountText,
   unmatchedKindLabel,
   unmatchedRowKey,
 } from "../lib/unmatchedThumbnails";
-import type { LinkCandidateDto, UnmatchedThumbnailDto } from "../types";
+import type { LinkCandidateDto, UnmatchedThumbnailDto, UnmatchedThumbnailKind } from "../types";
 
 interface Props {
   onClose: () => void;
   /** 動画のサムネイルが置き換わった(または置き換えに失敗して消えた)ときに呼ぶ。 */
   onThumbnailsReplaced: (videoId: string) => void;
+  /** 指定すると、その原因の行だけを並べる(見出しの件数も同じ範囲)。省略すると全件。 */
+  kind?: UnmatchedThumbnailKind;
 }
 
 const PATH_DISPLAY_MAX_CHARS = 60;
@@ -142,8 +145,8 @@ function LinkPicker({ row, busy, onLink }: PickerProps) {
 
 // WbImportDialog が開いている間だけマウントする。閉じると一覧の取得結果や
 // 行ごとのエラーは破棄され、開き直すたびに保存済みの一覧を読み直す。
-export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced }: Props) {
-  const [rows, setRows] = useState<UnmatchedThumbnailDto[] | null>(null);
+export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind }: Props) {
+  const [allRows, setRows] = useState<UnmatchedThumbnailDto[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
@@ -226,6 +229,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced }: Pro
   }
 
   const anyBusy = busyKey !== null;
+  const rows = allRows === null ? null : filterUnmatchedByKind(allRows, kind);
 
   return (
     <div className="dialog-overlay" onClick={onClose}>

@@ -22,7 +22,7 @@ import {
   progressBarValue,
 } from "../lib/wbImportSteps";
 import type { WbImportStageCounts } from "../lib/wbImportSteps";
-import type { WbImportStageId, WbImportSummary } from "../types";
+import type { UnmatchedThumbnailKind, WbImportStageId, WbImportSummary } from "../types";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 
 interface Props {
@@ -89,7 +89,10 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
   // DBに保存されている「自動対応できなかった旧サムネイル」の件数。前回までの
   // インポート分も含むので、インポート前から出す。取得できないときは出さない。
   const [unmatchedCount, setUnmatchedCount] = useState(0);
-  const [unmatchedDialogOpen, setUnmatchedDialogOpen] = useState(false);
+  // null は閉じている状態。kind を省略した {} は全件を開く。
+  const [unmatchedDialog, setUnmatchedDialog] = useState<{
+    kind?: UnmatchedThumbnailKind;
+  } | null>(null);
 
   function refreshUnmatchedCount() {
     listUnmatchedThumbnails()
@@ -227,7 +230,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                 <button
                   type="button"
                   data-testid="import-unmatched-open-btn"
-                  onClick={() => setUnmatchedDialogOpen(true)}
+                  onClick={() => setUnmatchedDialog({})}
                   disabled={importing}
                 >
                   確認する
@@ -286,6 +289,11 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                 {resultDisplay.offlineThumbnailsText}
               </p>
             )}
+            {resultDisplay.linkedByNameText && (
+              <p className="wb-import-result-line" data-testid="import-result-linked-by-name">
+                {resultDisplay.linkedByNameText}
+              </p>
+            )}
             {resultDisplay.watchFoldersAddedText && (
               <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
             )}
@@ -317,7 +325,11 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                     <button
                       type="button"
                       data-testid={`import-unmatched-review-btn-${item.key}`}
-                      onClick={() => setUnmatchedDialogOpen(true)}
+                      onClick={() =>
+                        setUnmatchedDialog({
+                          kind: item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video",
+                        })
+                      }
                     >
                       確認する
                     </button>
@@ -372,13 +384,14 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
     </div>
     {/* A sibling, not a child: a child's overlay clicks would bubble into the
         overlay above and close this dialog as well. */}
-    {unmatchedDialogOpen && (
+    {unmatchedDialog && (
       <UnmatchedThumbnailsDialog
         onClose={() => {
-          setUnmatchedDialogOpen(false);
+          setUnmatchedDialog(null);
           refreshUnmatchedCount();
         }}
         onThumbnailsReplaced={onThumbnailsReplaced}
+        kind={unmatchedDialog.kind}
       />
     )}
     </>

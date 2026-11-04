@@ -2786,6 +2786,23 @@ pub fn search_offline_videos(
     rows.collect()
 }
 
+/// Every offline video, in one read, for matching legacy thumbnails by name in
+/// memory. Unlike [`search_offline_videos`] it is neither filtered nor capped.
+pub fn list_offline_videos(conn: &Connection) -> rusqlite::Result<Vec<OfflineVideoCandidate>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_name, file_path, thumbnail_ready FROM videos WHERE status = 'offline'",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(OfflineVideoCandidate {
+            id: r.get(0)?,
+            file_name: r.get(1)?,
+            file_path: r.get(2)?,
+            thumbnail_ready: r.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
 #[cfg(test)]
 mod unmatched_thumbnail_tests {
     use super::*;
@@ -2969,6 +2986,26 @@ mod unmatched_thumbnail_tests {
 
     fn ids(found: &[OfflineVideoCandidate]) -> Vec<&str> {
         found.iter().map(|c| c.id.as_str()).collect()
+    }
+
+    #[test]
+    fn list_offline_videos_returns_every_offline_video_with_its_flag() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        insert_video(&conn, "a", "a", "Z:/a.mp4", "offline", 1);
+        insert_video(&conn, "b", "b", "Z:/b.mp4", "offline", 0);
+        insert_video(&conn, "c", "c", "Z:/c.mp4", "online", 0);
+
+        let mut found: Vec<(String, bool)> = list_offline_videos(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.thumbnail_ready))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![("a".to_string(), true), ("b".to_string(), false)]
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  filterUnmatchedByKind,
   overwriteNotice,
   unmatchedCountText,
   unmatchedKindLabel,
@@ -33,4 +34,22 @@ test("行の識別子はフォルダとファイル名の組で決まる", () =>
 test("上書きの注意は既にサムネイルがある動画のときだけ出す", () => {
   assert.equal(overwriteNotice(false), null);
   assert.match(overwriteNotice(true) ?? "", /置き換え/);
+});
+
+test("kind を指定するとその原因の行だけに絞り、省略すると全件を返す", () => {
+  const rows = [
+    { kind: "empty_hash" as const, n: 1 },
+    { kind: "no_matching_video" as const, n: 2 },
+    { kind: "empty_hash" as const, n: 3 },
+  ];
+  assert.deepEqual(
+    filterUnmatchedByKind(rows, "empty_hash").map((r) => r.n),
+    [1, 3],
+  );
+  assert.deepEqual(
+    filterUnmatchedByKind(rows, "no_matching_video").map((r) => r.n),
+    [2],
+  );
+  assert.equal(filterUnmatchedByKind(rows), rows);
+  assert.deepEqual(filterUnmatchedByKind([], "empty_hash"), []);
 });

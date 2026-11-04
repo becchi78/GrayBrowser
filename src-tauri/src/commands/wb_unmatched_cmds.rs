@@ -7,15 +7,13 @@ use std::path::Path;
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use gb_core::wb_import::default_candidate_search_term;
-use gb_core::wb_thumbnail_split::parse_thum_size;
 use serde::Serialize;
 use tauri::State;
 
 use crate::adapters;
-use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
-use crate::wb_import::pipeline::{convert_thumbnail_to_slots, ItemResult};
+use crate::wb_import::pipeline::attach_recorded_thumbnail;
 
 /// Most candidates one search may return, whatever the caller asks for: the
 /// list is rendered in full, so an unbounded request would stall the UI.
@@ -100,53 +98,29 @@ fn link_impl<F: FfmpegAdapter, C: CatalogNotifier>(
         return Err("オフラインの動画にだけ紐付けできます。".to_string());
     }
 
-    let src_path = Path::new(&record.folder_path).join(&record.file_name);
-    if std::fs::metadata(long_path::to_long_path(&src_path)).is_err() {
-        return Err("旧サムネイルのファイルが見つかりません。".to_string());
-    }
-
-    // A stored value that no longer parses is treated as "no layout" (import
-    // the image whole), the same as when the .wb stated none.
-    let layout = record.thum_layout.as_deref().and_then(parse_thum_size);
     let watch_folders = {
         let conn = db.read_pool.get().map_err(db_err)?;
         queries::get_watch_folders(&conn).map_err(db_err)?
     };
+    let target = queries::OfflineVideoCandidate {
+        id: video.id.clone(),
+        file_name: video.file_name.clone(),
+        file_path: video.file_path.clone(),
+        thumbnail_ready: video.thumbnail_ready,
+    };
 
-    match convert_thumbnail_to_slots(
+    if let Err(e) = attach_recorded_thumbnail(
+        db,
         ffmpeg,
         thumbnails_root,
         &watch_folders,
-        &video.id,
-        &video.file_path,
-        &src_path,
-        layout.as_ref(),
+        &record,
+        &target,
     ) {
-        ItemResult::Linked { .. } => {}
-        ItemResult::Failed(reason) => {
-            // The failed attempt removed the video's slot files, including
-            // any it had before; the flag must not keep claiming them.
-            if video.thumbnail_ready {
-                let conn = db.writer.lock().unwrap();
-                if let Err(e) = queries::clear_thumbnail_ready(&conn, &video.id) {
-                    log::warn!("failed to clear thumbnail_ready of {}: {e}", video.id);
-                }
-                drop(conn);
-                notifier.notify_changed();
-            }
-            return Err(format!("紐付けに失敗しました: {reason}"));
+        if e.catalog_changed {
+            notifier.notify_changed();
         }
-    }
-
-    // One transaction: the flag and the record change together, so a failure
-    // cannot leave a linked video still listed as unmatched.
-    {
-        let conn = db.writer.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(db_err)?;
-        queries::mark_thumbnail_ready(&tx, &video.id).map_err(db_err)?;
-        queries::delete_unmatched_thumbnail(&tx, &record.folder_path, &record.file_name)
-            .map_err(db_err)?;
-        tx.commit().map_err(db_err)?;
+        return Err(e.message);
     }
     notifier.notify_changed();
     Ok(())

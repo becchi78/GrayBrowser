@@ -211,6 +211,52 @@ pub fn extract_thumbnail_name_part(filename: &str) -> Option<&str> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Pairs legacy thumbnails with an empty hash (`rows`: their file names) to
+/// offline videos by name alone, returning `(video_id, row_file_name)` for the
+/// ones that can safely be attached without a person looking.
+///
+/// A row qualifies only when its name part equals exactly one video's
+/// `file_name` (case-insensitive, nothing else normalised), that video has no
+/// thumbnails yet (`ready == false`), and no other row points at the same
+/// video. Anything ambiguous is left out so a person decides.
+///
+/// `videos` is `(video_id, file_name, thumbnail_ready)`. The whole of
+/// `file_name` is compared, never a prefix before a dot: the stored name has no
+/// extension, so a trailing `.1` in `Vol.1` is part of the name.
+pub fn match_empty_hash_by_name(
+    rows: &[String],
+    videos: &[(String, String, bool)],
+) -> Vec<(String, String)> {
+    use std::collections::HashMap;
+
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, (_, file_name, _)) in videos.iter().enumerate() {
+        if !file_name.is_empty() {
+            by_name.entry(file_name.to_lowercase()).or_default().push(i);
+        }
+    }
+
+    // Rows whose name picks out exactly one video, whether or not that video
+    // is free: a second row aimed at an already-taken video must still block.
+    let mut targets: Vec<(usize, &String)> = Vec::new();
+    let mut rows_per_video: HashMap<usize, u32> = HashMap::new();
+    for row in rows {
+        let Some(name_part) = extract_thumbnail_name_part(row) else {
+            continue;
+        };
+        if let Some(&[video]) = by_name.get(&name_part.to_lowercase()).map(Vec::as_slice) {
+            targets.push((video, row));
+            *rows_per_video.entry(video).or_insert(0) += 1;
+        }
+    }
+
+    targets
+        .into_iter()
+        .filter(|(video, _)| rows_per_video[video] == 1 && !videos[*video].2)
+        .map(|(video, row)| (videos[video].0.clone(), row.clone()))
+        .collect()
+}
+
 /// Whether the name part of a legacy thumbnail names the video `file_name`.
 /// Legacy files carry the video name with or without its extension, and
 /// Windows file names ignore case.
@@ -919,6 +965,71 @@ mod tests {
         );
         assert_eq!(extract_thumbnail_name_part(".#1e5e0fbf.jpg"), None);
         assert_eq!(extract_thumbnail_name_part("plain.jpg"), None);
+    }
+
+    fn vid(id: &str, name: &str, ready: bool) -> (String, String, bool) {
+        (id.to_string(), name.to_string(), ready)
+    }
+
+    #[test]
+    fn name_match_ignores_case_and_returns_the_row_name() {
+        let got = match_empty_hash_by_name(
+            &strs(&["Movie ABC.#.jpg"]),
+            &[vid("v1", "movie abc", false), vid("v2", "other", false)],
+        );
+        assert_eq!(got, vec![pair("v1", "Movie ABC.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_needs_exactly_one_video() {
+        let videos = [
+            vid("v1", "same", false),
+            vid("v2", "SAME", false),
+            vid("v3", "x", false),
+        ];
+        assert!(match_empty_hash_by_name(&strs(&["same.#.jpg"]), &videos).is_empty());
+        assert!(match_empty_hash_by_name(&strs(&["none.#.jpg"]), &videos).is_empty());
+        assert!(match_empty_hash_by_name(&[], &videos).is_empty());
+        assert!(match_empty_hash_by_name(&strs(&["x.#.jpg"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn name_match_skips_videos_that_already_have_thumbnails() {
+        let got = match_empty_hash_by_name(
+            &strs(&["a.#.jpg", "b.#.jpg"]),
+            &[vid("v1", "a", true), vid("v2", "b", false)],
+        );
+        assert_eq!(got, vec![pair("v2", "b.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_leaves_every_row_aimed_at_one_video_to_a_person() {
+        let got = match_empty_hash_by_name(
+            &strs(&["A.#.jpg", "a.#.jpg", "b.#.jpg"]),
+            &[vid("v1", "a", false), vid("v2", "b", false)],
+        );
+        assert_eq!(got, vec![pair("v2", "b.#.jpg")]);
+    }
+
+    #[test]
+    fn name_match_compares_the_whole_name_so_dots_are_not_extensions() {
+        let videos = [vid("v1", "title vol.1", false), vid("v2", "title", false)];
+        let got = match_empty_hash_by_name(&strs(&["Title Vol.1.#.jpg"]), &videos);
+        assert_eq!(got, vec![pair("v1", "Title Vol.1.#.jpg")]);
+        // The part before the last dot is not a name of its own.
+        let got = match_empty_hash_by_name(&strs(&["title.mp4.#.jpg"]), &videos);
+        assert!(got.is_empty());
+        let got = match_empty_hash_by_name(&strs(&["title vol.#.jpg"]), &videos);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn name_match_ignores_rows_without_a_name_and_videos_without_one() {
+        let got = match_empty_hash_by_name(
+            &strs(&[".#.jpg", "plain.jpg"]),
+            &[vid("v1", "", false), vid("v2", "plain", false)],
+        );
+        assert!(got.is_empty());
     }
 
     #[test]
