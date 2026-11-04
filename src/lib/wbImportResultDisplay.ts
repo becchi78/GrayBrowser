@@ -22,7 +22,14 @@ import { classifyTagsAssigned } from "./wbImportTagsDisplay.ts";
 export type AttentionTone = "amber" | "failed";
 
 export interface AttentionItem {
-  key: "unmatched-empty-hash" | "unmatched" | "failed" | "invalid-name" | "failed-rows" | "tags";
+  key:
+    | "unmatched-empty-hash"
+    | "unmatched"
+    | "failed"
+    | "invalid-name"
+    | "failed-rows"
+    | "tags"
+    | "skipped-roots";
   tone: AttentionTone;
   text: string;
   /** 「確認する」ボタンで補足を開ける項目。 */
@@ -51,6 +58,8 @@ export interface WbImportResultDisplay {
   details: DetailItem[];
   /** 内訳に並べる、追加した監視フォルダのパス。 */
   watchFolders: string[];
+  /** 内訳に並べる、監視フォルダに追加しなかったドライブ直下・共有ルートのパス。 */
+  skippedRoots: string[];
 }
 
 export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDisplay {
@@ -100,6 +109,16 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     });
   }
 
+  if (s.watch_folders_skipped_roots.length > 0) {
+    const roots = s.watch_folders_skipped_roots;
+    attention.push({
+      key: "skipped-roots",
+      tone: "amber",
+      text: `ドライブ直下・共有ルート直下の動画があるため、監視フォルダには追加していません: ${roots.length}か所 — 動画は登録されていますが、サイドバーには出ず、新しいファイルも自動では検出されません。必要なら「ファイル > フォルダ管理...」の「+ フォルダを追加」から手動で追加できます（ドライブ全体が走査の対象になります）。`,
+      expandable: false,
+    });
+  }
+
   const tags = classifyTagsAssigned(s);
   const details: DetailItem[] = [];
   if (tags.tone === "amber" || tags.tone === "failed") {
@@ -131,5 +150,6 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention,
     details,
     watchFolders: s.watch_folders_added,
+    skippedRoots: s.watch_folders_skipped_roots,
   };
 }

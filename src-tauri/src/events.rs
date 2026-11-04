@@ -201,6 +201,10 @@ pub struct WbImportSummary {
     /// Folders newly added to the watch-folder list by this import (empty when
     /// the user opted out, or every parent folder was already watched).
     pub watch_folders_added: Vec<String>,
+    /// Drive or share roots holding videos registered by this import that are
+    /// not watched, because a root is never added to the watch folders on its
+    /// own. Empty when the user opted out of watch-folder registration.
+    pub watch_folders_skipped_roots: Vec<String>,
 }
 
 pub struct TauriWbImportNotifier<R: tauri::Runtime> {

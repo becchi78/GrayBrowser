@@ -455,6 +455,23 @@ pub fn format_watch_folders(added: &[String]) -> String {
     out
 }
 
+/// Roots (drive or share) whose videos were registered but could not be added
+/// to the watch folders. Empty when there are none, so a normal import's log
+/// gains no line.
+pub fn format_skipped_root_folders(roots: &[String]) -> String {
+    if roots.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "\nルート直下のため監視フォルダへ追加しなかったパス: {} 件\n",
+        roots.len()
+    );
+    for path in roots {
+        out.push_str(&format!("  {}\n", quote(path)));
+    }
+    out
+}
+
 /// The numbers of the result screen, copied from the import's summary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogSummary {
@@ -864,6 +881,16 @@ mod tests {
         assert!(text.contains("1 件") && text.contains("\"x.#abcdef01.jpg\""));
         assert!(text.contains("対応する動画なし: 1 件"));
         assert!(!text.contains("ハッシュが空"));
+    }
+
+    #[test]
+    fn skipped_root_folders_section_is_silent_when_empty() {
+        assert_eq!(format_skipped_root_folders(&[]), "");
+        let text = format_skipped_root_folders(&names(&["E:\\", "\\\\nas\\share\\"]));
+        assert_eq!(
+            text,
+            "\nルート直下のため監視フォルダへ追加しなかったパス: 2 件\n  \"E:\\\"\n  \"\\\\nas\\share\\\"\n"
+        );
     }
 
     #[test]
