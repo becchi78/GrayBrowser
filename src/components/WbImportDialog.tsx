@@ -13,7 +13,7 @@ import {
   onWbImportStage,
 } from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
-import { unmatchedCountText } from "../lib/unmatchedThumbnails";
+import { countUnmatchedByKind, unmatchedCountText } from "../lib/unmatchedThumbnails";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import {
   computeWbImportSteps,
@@ -22,7 +22,12 @@ import {
   progressBarValue,
 } from "../lib/wbImportSteps";
 import type { WbImportStageCounts } from "../lib/wbImportSteps";
-import type { UnmatchedThumbnailKind, WbImportStageId, WbImportSummary } from "../types";
+import type {
+  UnmatchedThumbnailDto,
+  UnmatchedThumbnailKind,
+  WbImportStageId,
+  WbImportSummary,
+} from "../types";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 
 interface Props {
@@ -86,9 +91,12 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
   const [stage, setStage] = useState<WbImportStageId | null>(null);
   const [summary, setSummary] = useState<WbImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // DBに保存されている「自動対応できなかった旧サムネイル」の件数。前回までの
+  // DBに保存されている「自動対応できなかった旧サムネイル」の行。前回までの
   // インポート分も含むので、インポート前から出す。取得できないときは出さない。
-  const [unmatchedCount, setUnmatchedCount] = useState(0);
+  // 全体の件数も原因別の残数も同じ行から導く(手動紐付けで減った分を結果画面にも反映するため)。
+  const [unmatchedRows, setUnmatchedRows] = useState<UnmatchedThumbnailDto[]>([]);
+  const unmatchedCount = unmatchedRows.length;
+  const unmatchedByKind = countUnmatchedByKind(unmatchedRows);
   // null は閉じている状態。kind を省略した {} は全件を開く。
   const [unmatchedDialog, setUnmatchedDialog] = useState<{
     kind?: UnmatchedThumbnailKind;
@@ -96,7 +104,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
 
   function refreshUnmatchedCount() {
     listUnmatchedThumbnails()
-      .then((list) => setUnmatchedCount(list.length))
+      .then((list) => setUnmatchedRows(list))
       .catch(console.error);
   }
 
@@ -314,6 +322,10 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                     : item.key === "failed-rows"
                       ? "import-result-failed-rows"
                       : undefined;
+              const reviewKind: UnmatchedThumbnailKind =
+                item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
+              // 結果の文章はインポート時点の記録なので、確認先の行が全て紐付け済みならボタンだけ消す。
+              const showReview = item.expandable && unmatchedByKind[reviewKind] > 0;
               return (
                 <div
                   key={item.key}
@@ -321,15 +333,11 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                   data-testid={testId}
                 >
                   <p className="wb-import-result-line">{item.text}</p>
-                  {item.expandable && (
+                  {showReview && (
                     <button
                       type="button"
                       data-testid={`import-unmatched-review-btn-${item.key}`}
-                      onClick={() =>
-                        setUnmatchedDialog({
-                          kind: item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video",
-                        })
-                      }
+                      onClick={() => setUnmatchedDialog({ kind: reviewKind })}
                     >
                       確認する
                     </button>

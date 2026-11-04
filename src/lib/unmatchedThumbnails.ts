@@ -23,6 +23,19 @@ export function overwriteNotice(thumbnailReady: boolean): string | null {
     : null;
 }
 
+/** 原因別の残数。未知の kind は数えない(将来の追加でボタンが誤って出ないように)。 */
+export function countUnmatchedByKind(rows: Pick<UnmatchedThumbnailDto, "kind">[]): {
+  empty_hash: number;
+  no_matching_video: number;
+} {
+  const counts = { empty_hash: 0, no_matching_video: 0 };
+  for (const r of rows) {
+    if (r.kind === "empty_hash") counts.empty_hash += 1;
+    else if (r.kind === "no_matching_video") counts.no_matching_video += 1;
+  }
+  return counts;
+}
+
 /** kind を指定したときはその原因の行だけ。省略すると全件。 */
 export function filterUnmatchedByKind<T extends Pick<UnmatchedThumbnailDto, "kind">>(
   rows: T[],

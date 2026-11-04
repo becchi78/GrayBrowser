@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  countUnmatchedByKind,
   filterUnmatchedByKind,
   overwriteNotice,
   unmatchedCountText,
@@ -52,4 +53,15 @@ test("kind を指定するとその原因の行だけに絞り、省略すると
   );
   assert.equal(filterUnmatchedByKind(rows), rows);
   assert.deepEqual(filterUnmatchedByKind([], "empty_hash"), []);
+});
+
+test("原因別の残数を数え、未知の kind は無視する", () => {
+  assert.deepEqual(countUnmatchedByKind([]), { empty_hash: 0, no_matching_video: 0 });
+  const rows = [
+    { kind: "empty_hash" },
+    { kind: "no_matching_video" },
+    { kind: "empty_hash" },
+    { kind: "something_new" },
+  ] as unknown as { kind: "empty_hash" | "no_matching_video" }[];
+  assert.deepEqual(countUnmatchedByKind(rows), { empty_hash: 2, no_matching_video: 1 });
 });
