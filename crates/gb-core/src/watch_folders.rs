@@ -61,6 +61,8 @@ fn has_lost_char_marker(folder: &str) -> bool {
 /// - Candidates nested inside another candidate collapse into the outer one;
 ///   unrelated siblings are never widened to their common parent, which could
 ///   pull in folders the user never meant to watch.
+/// - A path starting with `::` (an unresolved volume label) is never a
+///   candidate.
 /// - A path whose parent folders still contain a `?` is never a candidate: it
 ///   would become a watch folder that can never be reached. A `?` only in the
 ///   file name does not matter, since the folder is still valid.
@@ -68,6 +70,11 @@ fn has_lost_char_marker(folder: &str) -> bool {
 pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]) -> Vec<String> {
     let mut candidates: Vec<(String, String)> = Vec::new();
     for path in video_paths {
+        // A volume label that could not be turned into a drive letter is not a
+        // folder that exists, so it must not become a watch folder.
+        if path.starts_with("::") {
+            continue;
+        }
         let Some(folder) = parent_folder(path) else {
             continue;
         };
@@ -294,6 +301,16 @@ mod tests {
     }
 
     #[test]
+    fn suggest_never_proposes_an_unresolved_volume_label_path() {
+        assert!(
+            suggest_watch_folders(&v(&[r"::ESD-USB\a.avi", r"::ESD-USB\sub\b.avi"]), &[])
+                .is_empty()
+        );
+        let got = suggest_watch_folders(&v(&[r"::ESD-USB\a.avi", r"D:\Videos\b.mp4"]), &[]);
+        assert_eq!(got, v(&[r"D:\Videos"]));
+    }
+
+    #[test]
     fn suggest_of_empty_input_is_empty() {
         assert!(suggest_watch_folders(&[], &v(&[r"D:\x"])).is_empty());
     }
@@ -388,6 +405,11 @@ mod tests {
         assert!(skipped_root_folders(&v(&[r"\\nas\sh?\a.mp4"]), &[]).is_empty());
         let got = skipped_root_folders(&v(&[r"E:\a?b.mp4"]), &[]);
         assert_eq!(got, v(&[r"E:\"]));
+    }
+
+    #[test]
+    fn skipped_roots_ignores_volume_label_paths() {
+        assert!(skipped_root_folders(&v(&[r"::ESD-USB\a.avi", "::ESD-USB"]), &[]).is_empty());
     }
 
     #[test]

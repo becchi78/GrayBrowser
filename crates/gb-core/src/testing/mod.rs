@@ -12,6 +12,7 @@ pub mod fake_log_source;
 pub mod fake_path_existence;
 pub mod fake_player;
 pub mod fake_trash;
+pub mod fake_volume_label;
 pub mod fake_watcher;
 pub mod fake_wb_file;
 pub mod fake_wb_import_clock;

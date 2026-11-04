@@ -29,7 +29,8 @@ export interface AttentionItem {
     | "invalid-name"
     | "failed-rows"
     | "tags"
-    | "skipped-roots";
+    | "skipped-roots"
+    | "volume-label-unresolved";
   tone: AttentionTone;
   text: string;
   /** 「確認する」ボタンで補足を開ける項目。 */
@@ -52,6 +53,8 @@ export interface WbImportResultDisplay {
   linkedByNameText: string | null;
   /** 監視フォルダを追加しなかったときは null（0件は出さない）。 */
   watchFoldersAddedText: string | null;
+  /** ドライブ文字に直したパスがないときは null（0件は出さない）。 */
+  volumeLabelResolvedText: string | null;
   /** 登録済みのためスキップした行がないときは null（0件は出さない）。 */
   skippedText: string | null;
   attention: AttentionItem[];
@@ -119,6 +122,16 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     });
   }
 
+  if (s.volume_label_unresolved > 0) {
+    const labels = s.volume_label_unresolved_labels.join("、");
+    attention.push({
+      key: "volume-label-unresolved",
+      tone: "amber",
+      text: `ドライブに接続されていないか、同名のドライブが複数あるため、ドライブ文字に直せなかった動画: ${s.volume_label_unresolved}件（ラベル: ${labels}）— ドライブの接続は、最初のインポートの前に行ってください。接続してから同じ.wbをもう一度インポートすると、ドライブ文字のパスの動画が新しく登録され、今回登録した「::」のオフライン動画が重複として残ります（不要な方は、一覧で動画を右クリックして「登録から削除」で消せます）。`,
+      expandable: false,
+    });
+  }
+
   const tags = classifyTagsAssigned(s);
   const details: DetailItem[] = [];
   if (tags.tone === "amber" || tags.tone === "failed") {
@@ -145,6 +158,10 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     watchFoldersAddedText:
       s.watch_folders_added.length > 0
         ? `監視フォルダに追加: ${s.watch_folders_added.length}件`
+        : null,
+    volumeLabelResolvedText:
+      s.volume_label_resolved > 0
+        ? `ドライブ文字に直したパス: ${s.volume_label_resolved}件`
         : null,
     skippedText: s.skipped > 0 ? `登録済みのためスキップ: ${s.skipped}件` : null,
     attention,
