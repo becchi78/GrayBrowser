@@ -63,7 +63,7 @@ export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDi
     attention.push({
       key: "unmatched-empty-hash",
       tone: "amber",
-      text: `旧サムネイルのハッシュが空で、名前でも動画を1つに決められなかったため自動では紐付けられません: ${emptyHash}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
+      text: `旧サムネイルのハッシュがファイル名に無く、名前でも動画を1つに決められなかったため自動では紐付けられません: ${emptyHash}件 — エラーではありません。「確認する」から動画を選んで紐付けできます。`,
       expandable: true,
     });
   }

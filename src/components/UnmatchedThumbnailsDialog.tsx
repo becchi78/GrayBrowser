@@ -293,7 +293,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
                         disabled={anyBusy}
                         onClick={() => handleDismiss(row)}
                       >
-                        一覧から外す
+                        スキップ
                       </button>
                     </div>
                   </div>

@@ -3,7 +3,7 @@
 import type { UnmatchedThumbnailDto, UnmatchedThumbnailKind } from "../types";
 
 export function unmatchedKindLabel(kind: UnmatchedThumbnailKind): string {
-  return kind === "empty_hash" ? "空のhash" : "対応する動画なし";
+  return kind === "empty_hash" ? "hash無し" : "対応する動画なし";
 }
 
 /** 0件のときは null(何も出さない)。 */

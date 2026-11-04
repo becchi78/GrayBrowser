@@ -10,7 +10,7 @@ import {
 } from "./unmatchedThumbnails.ts";
 
 test("原因の種類を表示名にする", () => {
-  assert.equal(unmatchedKindLabel("empty_hash"), "空のhash");
+  assert.equal(unmatchedKindLabel("empty_hash"), "hash無し");
   assert.equal(unmatchedKindLabel("no_matching_video"), "対応する動画なし");
 });
 

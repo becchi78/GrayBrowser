@@ -95,6 +95,11 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
   // インポート分も含むので、インポート前から出す。取得できないときは出さない。
   // 全体の件数も原因別の残数も同じ行から導く(手動紐付けで減った分を結果画面にも反映するため)。
   const [unmatchedRows, setUnmatchedRows] = useState<UnmatchedThumbnailDto[]>([]);
+  // 結果画面の該当項目は、一覧に行が残るときだけ出す。読み込み前は隠し(出してから消えるちらつきを避ける)、
+  // 取得に失敗したときは、隠してはいけない項目を隠さないよう出す。
+  const [unmatchedListState, setUnmatchedListState] = useState<"pending" | "loaded" | "failed">(
+    "pending",
+  );
   const unmatchedCount = unmatchedRows.length;
   const unmatchedByKind = countUnmatchedByKind(unmatchedRows);
   // null は閉じている状態。kind を省略した {} は全件を開く。
@@ -104,8 +109,14 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
 
   function refreshUnmatchedCount() {
     listUnmatchedThumbnails()
-      .then((list) => setUnmatchedRows(list))
-      .catch(console.error);
+      .then((list) => {
+        setUnmatchedRows(list);
+        setUnmatchedListState("loaded");
+      })
+      .catch((e) => {
+        console.error(e);
+        setUnmatchedListState("failed");
+      });
   }
 
   // インポートが終わるとその結果で保存内容が置き換わるので、完了ごとに取り直す。
@@ -127,6 +138,8 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
       }
     });
     const unlistenComplete = onWbImportComplete((s) => {
+      // 取り直し前の古い行で、結果画面の項目が一瞬出入りしないようにする。
+      setUnmatchedListState("pending");
       setSummary(s);
       setImporting(false);
       onImportComplete();
@@ -324,8 +337,16 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                       : undefined;
               const reviewKind: UnmatchedThumbnailKind =
                 item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
-              // 結果の文章はインポート時点の記録なので、確認先の行が全て紐付け済みならボタンだけ消す。
-              const showReview = item.expandable && unmatchedByKind[reviewKind] > 0;
+              const isUnmatchedItem = item.key === "unmatched-empty-hash" || item.key === "unmatched";
+              // 結果の文章はインポート時点の記録なので、確認先の行が全て紐付け済み・スキップ済みなら項目ごと消す。
+              if (
+                isUnmatchedItem &&
+                (unmatchedListState === "pending" ||
+                  (unmatchedListState === "loaded" && unmatchedByKind[reviewKind] === 0))
+              ) {
+                return null;
+              }
+              const showReview = item.expandable;
               return (
                 <div
                   key={item.key}
