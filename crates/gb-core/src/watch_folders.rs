@@ -108,6 +108,47 @@ pub fn suggest_watch_folders(video_paths: &[String], existing_folders: &[String]
     kept
 }
 
+/// Drive roots (`D:\`) and UNC share roots (`\\server\share\`) holding at
+/// least one of `video_paths` directly, which `suggest_watch_folders` refuses
+/// to propose. These videos get registered yet sit outside every watch folder,
+/// so the caller can tell the user about them.
+///
+/// - A root is dropped when `existing_folders` already holds that exact root:
+///   only then are its files watched. A watch folder merely inside the drive
+///   does not cover files at its root.
+/// - A path whose parent folder still contains a `?` is ignored, as in
+///   `suggest_watch_folders`.
+/// - Duplicates are collapsed case-insensitively; sorted ascending.
+pub fn skipped_root_folders(video_paths: &[String], existing_folders: &[String]) -> Vec<String> {
+    let mut roots: Vec<(String, String)> = Vec::new();
+    for path in video_paths {
+        let Some(folder) = parent_folder(path) else {
+            continue;
+        };
+        if has_lost_char_marker(&folder) {
+            continue;
+        }
+        let key = crate::paths::normalize_folder_path(&folder).to_lowercase();
+        let Some(root) = crate::paths::extract_drive_root(&folder)
+            .filter(|root| crate::paths::normalize_folder_path(root).to_lowercase() == key)
+        else {
+            continue;
+        };
+        if roots.iter().any(|(k, _)| *k == key) {
+            continue;
+        }
+        let covered = existing_folders
+            .iter()
+            .any(|existing| crate::paths::normalize_folder_path(existing).to_lowercase() == key);
+        if covered {
+            continue;
+        }
+        roots.push((key, root));
+    }
+    roots.sort_by(|a, b| a.0.cmp(&b.0));
+    roots.into_iter().map(|(_, root)| root).collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReorderError {
     #[error("duplicate folder in the requested order: {0}")]
@@ -300,6 +341,59 @@ mod tests {
             &[],
         );
         assert_eq!(got, v(&[r"D:\vids", r"W:\good"]));
+    }
+
+    #[test]
+    fn skipped_roots_reports_drive_roots_sorted_and_deduped() {
+        let got = skipped_root_folders(
+            &v(&[r"E:\a.mp4", r"D:\b.mp4", "d:/c.mp4", r"D:\d.mp4"]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"D:\", r"E:\"]));
+    }
+
+    #[test]
+    fn skipped_roots_reports_unc_share_roots() {
+        let got = skipped_root_folders(&v(&[r"\\nas\share\a.mp4", r"\\NAS\Share\b.mp4"]), &[]);
+        assert_eq!(got, v(&[r"\\nas\share\"]));
+    }
+
+    #[test]
+    fn skipped_roots_ignores_ordinary_folders() {
+        let got = skipped_root_folders(
+            &v(&[r"D:\Videos\a.mp4", r"\\nas\share\v\b.mp4", r"E:\x.mp4"]),
+            &[],
+        );
+        assert_eq!(got, v(&[r"E:\"]));
+        assert!(skipped_root_folders(&v(&[r"D:\Videos\a.mp4"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn skipped_roots_drops_a_root_already_registered() {
+        let got = skipped_root_folders(
+            &v(&[r"E:\a.mp4", r"F:\b.mp4", r"\\nas\share\c.mp4"]),
+            &v(&[r"e:\", r"\\nas\share"]),
+        );
+        assert_eq!(got, v(&[r"F:\"]));
+    }
+
+    #[test]
+    fn skipped_roots_keeps_a_root_when_only_a_folder_inside_it_is_registered() {
+        let got = skipped_root_folders(&v(&[r"E:\a.mp4"]), &v(&[r"E:\Videos"]));
+        assert_eq!(got, v(&[r"E:\"]));
+    }
+
+    #[test]
+    fn skipped_roots_ignores_paths_with_a_question_mark_in_the_folder() {
+        assert!(skipped_root_folders(&v(&[r"\\nas\sh?\a.mp4"]), &[]).is_empty());
+        let got = skipped_root_folders(&v(&[r"E:\a?b.mp4"]), &[]);
+        assert_eq!(got, v(&[r"E:\"]));
+    }
+
+    #[test]
+    fn skipped_roots_ignores_paths_without_a_folder_part_and_empty_input() {
+        assert!(skipped_root_folders(&v(&["a.mp4", "/a.mp4", ""]), &[]).is_empty());
+        assert!(skipped_root_folders(&[], &v(&[r"D:\"])).is_empty());
     }
 
     #[test]

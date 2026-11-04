@@ -334,7 +334,9 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                     ? "import-result-skipped-invalid-name"
                     : item.key === "failed-rows"
                       ? "import-result-failed-rows"
-                      : undefined;
+                      : item.key === "skipped-roots"
+                        ? "import-result-skipped-roots"
+                        : undefined;
               const reviewKind: UnmatchedThumbnailKind =
                 item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
               const isUnmatchedItem = item.key === "unmatched-empty-hash" || item.key === "unmatched";
@@ -367,7 +369,9 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
               );
             })}
 
-            {(resultDisplay.details.length > 0 || resultDisplay.watchFolders.length > 0) && (
+            {(resultDisplay.details.length > 0 ||
+              resultDisplay.watchFolders.length > 0 ||
+              resultDisplay.skippedRoots.length > 0) && (
               <details className="wb-import-result-details">
                 <summary>詳細</summary>
                 <ul className="wb-import-result-details-list">
@@ -380,6 +384,16 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                       <ul className="wb-import-result-watch-folder-list">
                         {resultDisplay.watchFolders.map((folder) => (
                           <li key={folder}>{folder}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  )}
+                  {resultDisplay.skippedRoots.length > 0 && (
+                    <li data-testid="import-result-skipped-root-list">
+                      監視フォルダに追加しなかったルート:
+                      <ul className="wb-import-result-watch-folder-list">
+                        {resultDisplay.skippedRoots.map((root) => (
+                          <li key={root}>{root}</li>
                         ))}
                       </ul>
                     </li>

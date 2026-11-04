@@ -113,6 +113,7 @@ export interface WbImportSummary {
   thumbnails_skipped_online: number;
   /** Folders this import newly added to the watch-folder list. */
   watch_folders_added: string[];
+  watch_folders_skipped_roots: string[];
 }
 
 // Payload of the wb_import:stage event: gb_core::wb_import::WbImportStage::as_str.

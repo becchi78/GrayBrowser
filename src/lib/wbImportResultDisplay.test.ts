@@ -25,6 +25,7 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_unmatched_empty_hash: 0,
     thumbnails_skipped_online: 0,
     watch_folders_added: [],
+    watch_folders_skipped_roots: [],
     ...overrides,
   };
 }
@@ -76,6 +77,22 @@ test("監視フォルダを追加したときだけ件数行が出る", () => {
   );
   assert.equal(d.watchFoldersAddedText, "監視フォルダに追加: 2件");
   assert.deepEqual(d.watchFolders, ["D:\\a", "D:\\b"]);
+});
+
+test("ルート直下で監視フォルダに追加しなかったときだけ、注意項目と一覧が出る", () => {
+  const none = buildWbImportResultDisplay(makeSummary({ registered: 1 }));
+  assert.deepEqual(none.attention, []);
+  assert.deepEqual(none.skippedRoots, []);
+
+  const d = buildWbImportResultDisplay(
+    makeSummary({ registered: 2, watch_folders_skipped_roots: ["E:\\", "\\\\nas\\share\\"] }),
+  );
+  assert.deepEqual(keys(d.attention), ["skipped-roots"]);
+  assert.equal(d.attention[0].tone, "amber");
+  assert.equal(d.attention[0].expandable, false);
+  assert.match(d.attention[0].text, /2か所/);
+  assert.match(d.attention[0].text, /フォルダ管理/);
+  assert.deepEqual(d.skippedRoots, ["E:\\", "\\\\nas\\share\\"]);
 });
 
 test("オンライン動画の旧サムネイルは、件数も注記も一切出さない", () => {

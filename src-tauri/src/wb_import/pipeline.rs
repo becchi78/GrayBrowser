@@ -783,6 +783,15 @@ fn import_all<S, F, N, C, W, D, P, K, L>(
             Vec::new()
         }
     };
+    // Independent of `watch_change`, which is `None` when nothing was added --
+    // exactly the case where only root-level videos were imported. Judged
+    // against the list after registration so a root the user already watches
+    // is not reported.
+    let watch_folders_skipped_roots = if watch.is_some() {
+        gb_core::watch_folders::skipped_root_folders(&registered_movie_paths, &watch_folders)
+    } else {
+        Vec::new()
+    };
     let linking_started = clock.now();
     notifier.notify_stage(WbImportStage::Linking);
     let link_outcome = link_thumbnails(
@@ -859,6 +868,7 @@ fn import_all<S, F, N, C, W, D, P, K, L>(
         thumbnails_unmatched_empty_hash,
         thumbnails_skipped_online,
         watch_folders_added,
+        watch_folders_skipped_roots,
     };
 
     let stage_starts = StageStarts {
@@ -999,6 +1009,9 @@ fn write_import_log<L: WbImportLog>(
     import_log.append(&wb_log::format_name_linked_thumbnails(name_linked));
     import_log.append(&wb_log::format_unmatched_filenames(&still_unmatched));
     import_log.append(&wb_log::format_watch_folders(&summary.watch_folders_added));
+    import_log.append(&wb_log::format_skipped_root_folders(
+        &summary.watch_folders_skipped_roots,
+    ));
     import_log.append(&wb_log::format_summary(&LogSummary {
         total: summary.total,
         registered: summary.registered,
@@ -3223,6 +3236,42 @@ mod tests {
         );
         assert_eq!(stored_watch_folders(&h), summary.watch_folders_added);
         assert_eq!(reconf.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn root_level_videos_are_reported_even_when_no_folder_is_added() {
+        let h = harness();
+        let reconf = FakeWatchReconfigurer::default();
+
+        let summary =
+            import_registering(&h, vec![online_row(1, r"Z:\top.mp4".to_string())], &reconf);
+
+        assert_eq!(summary.registered, 1);
+        assert!(summary.watch_folders_added.is_empty());
+        assert_eq!(
+            summary.watch_folders_skipped_roots,
+            vec![r"Z:\".to_string()]
+        );
+        assert!(stored_watch_folders(&h).is_empty());
+    }
+
+    #[test]
+    fn root_level_videos_are_not_reported_when_opting_out() {
+        let h = harness();
+        let notifier = FakeWbImportNotifier::default();
+        import_all(
+            &h.db,
+            &h.paths,
+            &FakeWbSourceAdapter {
+                movies: Ok(vec![online_row(1, r"Z:\top.mp4".to_string())]),
+                ..Default::default()
+            },
+            &no_op_ffmpeg(),
+            &notifier,
+            &FakeCatalogNotifier::default(),
+        );
+        let summary = notifier.complete_calls.lock().unwrap()[0].clone();
+        assert!(summary.watch_folders_skipped_roots.is_empty());
     }
 
     #[test]
