@@ -205,6 +205,15 @@ pub struct WbImportSummary {
     /// not watched, because a root is never added to the watch folders on its
     /// own. Empty when the user opted out of watch-folder registration.
     pub watch_folders_skipped_roots: Vec<String>,
+    /// Rows whose `::LABEL\...` path was rewritten onto the connected drive of
+    /// that label before registration.
+    pub volume_label_resolved: u32,
+    /// Rows whose `::LABEL\...` path could not be rewritten (the drive is not
+    /// connected, or several drives share the label). They are registered
+    /// offline with the `::` path and never become watch folders.
+    pub volume_label_unresolved: u32,
+    /// The labels behind `volume_label_unresolved`, in the spelling first seen.
+    pub volume_label_unresolved_labels: Vec<String>,
 }
 
 pub struct TauriWbImportNotifier<R: tauri::Runtime> {

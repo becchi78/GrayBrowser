@@ -26,6 +26,9 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_skipped_online: 0,
     watch_folders_added: [],
     watch_folders_skipped_roots: [],
+    volume_label_resolved: 0,
+    volume_label_unresolved: 0,
+    volume_label_unresolved_labels: [],
     ...overrides,
   };
 }
@@ -93,6 +96,37 @@ test("ルート直下で監視フォルダに追加しなかったときだけ�
   assert.match(d.attention[0].text, /2か所/);
   assert.match(d.attention[0].text, /フォルダ管理/);
   assert.deepEqual(d.skippedRoots, ["E:\\", "\\\\nas\\share\\"]);
+});
+
+test("ドライブ文字に直したパスの行は、0件なら出ない", () => {
+  assert.equal(buildWbImportResultDisplay(makeSummary({ registered: 1 })).volumeLabelResolvedText, null);
+  const d = buildWbImportResultDisplay(makeSummary({ registered: 6, volume_label_resolved: 6 }));
+  assert.equal(d.volumeLabelResolvedText, "ドライブ文字に直したパス: 6件");
+  assert.deepEqual(d.attention, []);
+});
+
+test("ドライブ文字に直せなかったときだけ、ラベルと案内つきの注意項目が出る", () => {
+  const none = buildWbImportResultDisplay(makeSummary({ registered: 1 }));
+  assert.ok(!keys(none.attention).includes("volume-label-unresolved"));
+
+  const d = buildWbImportResultDisplay(
+    makeSummary({
+      registered: 3,
+      registered_offline: 3,
+      volume_label_unresolved: 3,
+      volume_label_unresolved_labels: ["ESD-USB", "BACKUP"],
+    }),
+  );
+  assert.deepEqual(keys(d.attention), ["volume-label-unresolved"]);
+  const item = d.attention[0];
+  assert.equal(item.tone, "amber");
+  assert.equal(item.expandable, false);
+  assert.match(item.text, /3件/);
+  assert.match(item.text, /ラベル: ESD-USB、BACKUP/);
+  assert.match(item.text, /最初のインポートの前/);
+  assert.match(item.text, /重複として残ります/);
+  assert.match(item.text, /登録から削除/);
+  assert.ok(!item.text.includes("直りません"));
 });
 
 test("オンライン動画の旧サムネイルは、件数も注記も一切出さない", () => {

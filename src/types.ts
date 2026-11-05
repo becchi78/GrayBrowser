@@ -114,6 +114,12 @@ export interface WbImportSummary {
   /** Folders this import newly added to the watch-folder list. */
   watch_folders_added: string[];
   watch_folders_skipped_roots: string[];
+  /** `::ラベル\…` のパスをドライブ文字に直して登録した行数。 */
+  volume_label_resolved: number;
+  /** 接続されていない、または同名のドライブが複数あるため直せなかった行数。 */
+  volume_label_unresolved: number;
+  /** volume_label_unresolved の原因になったラベル。 */
+  volume_label_unresolved_labels: string[];
 }
 
 // Payload of the wb_import:stage event: gb_core::wb_import::WbImportStage::as_str.

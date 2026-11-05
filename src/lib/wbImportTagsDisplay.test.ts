@@ -29,6 +29,9 @@ function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
     thumbnails_skipped_online: 0,
     watch_folders_added: [],
     watch_folders_skipped_roots: [],
+    volume_label_resolved: 0,
+    volume_label_unresolved: 0,
+    volume_label_unresolved_labels: [],
     ...overrides,
   };
 }

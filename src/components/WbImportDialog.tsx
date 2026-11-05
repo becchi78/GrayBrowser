@@ -318,6 +318,11 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
             {resultDisplay.watchFoldersAddedText && (
               <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
             )}
+            {resultDisplay.volumeLabelResolvedText && (
+              <p className="wb-import-result-line" data-testid="import-result-volume-label-resolved">
+                {resultDisplay.volumeLabelResolvedText}
+              </p>
+            )}
             {resultDisplay.skippedText && (
               <p className="wb-import-result-line" data-testid="import-result-skipped">
                 {resultDisplay.skippedText}
@@ -336,7 +341,9 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
                       ? "import-result-failed-rows"
                       : item.key === "skipped-roots"
                         ? "import-result-skipped-roots"
-                        : undefined;
+                        : item.key === "volume-label-unresolved"
+                          ? "import-result-volume-label-unresolved"
+                          : undefined;
               const reviewKind: UnmatchedThumbnailKind =
                 item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
               const isUnmatchedItem = item.key === "unmatched-empty-hash" || item.key === "unmatched";

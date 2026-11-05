@@ -472,6 +472,51 @@ pub fn format_skipped_root_folders(roots: &[String]) -> String {
     out
 }
 
+/// What became of one volume label (`::LABEL`) found in the `.wb`'s paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VolumeLabelResult {
+    /// Rewritten onto this drive root.
+    Resolved(String),
+    NotConnected,
+    Ambiguous,
+}
+
+/// One volume label with the result of looking it up and the number of rows
+/// whose path used it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeLabelLog {
+    pub label: String,
+    pub rows: u32,
+    pub result: VolumeLabelResult,
+}
+
+/// Per-label result of turning `::LABEL` paths into drive-letter paths. Empty
+/// when the `.wb` has no such path, so a normal import's log gains no line.
+pub fn format_volume_labels(labels: &[VolumeLabelLog]) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("ボリュームラベルのパス: {} 種類\n", labels.len());
+    for l in labels {
+        let result = match &l.result {
+            VolumeLabelResult::Resolved(root) => format!("ドライブ文字に直しました -> {root}"),
+            VolumeLabelResult::NotConnected => {
+                "接続中のドライブに見つからないため、直せませんでした".to_string()
+            }
+            VolumeLabelResult::Ambiguous => {
+                "同じラベルのドライブが複数あるため、直せませんでした".to_string()
+            }
+        };
+        out.push_str(&format!(
+            "  {}: {} ({} 行)\n",
+            quote(&l.label),
+            result,
+            l.rows
+        ));
+    }
+    out
+}
+
 /// The numbers of the result screen, copied from the import's summary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogSummary {
@@ -494,6 +539,8 @@ pub struct LogSummary {
     /// Part of `thumbnails_unmatched` whose file name carries an empty hash.
     pub thumbnails_unmatched_empty_hash: u32,
     pub thumbnails_skipped_online: u32,
+    pub volume_label_resolved: u32,
+    pub volume_label_unresolved: u32,
 }
 
 /// Closing summary, including the two reconciliation equations of the result
@@ -502,7 +549,7 @@ pub fn format_summary(s: &LogSummary) -> String {
     let rows_sum = s.registered + s.skipped + s.skipped_invalid_name + s.failed_rows;
     let registered_sum = s.registered_online + s.registered_offline;
     let verdict = |ok: bool| if ok { "一致" } else { "不一致" };
-    format!(
+    let mut out = format!(
         "\n== サマリー ==\n\
          総数: {total}\n\
          登録: {registered} (オンライン {online} / オフライン {offline})\n\
@@ -539,7 +586,15 @@ pub fn format_summary(s: &LogSummary) -> String {
             .thumbnails_unmatched
             .saturating_sub(s.thumbnails_unmatched_empty_hash),
         skipped_online = s.thumbnails_skipped_online,
-    )
+    );
+    // Only for a `.wb` that has such paths, so a normal import's summary is unchanged.
+    if s.volume_label_resolved > 0 || s.volume_label_unresolved > 0 {
+        out.push_str(&format!(
+            "ボリュームラベルのパス: ドライブ文字に直した {} / 直せなかった {}\n",
+            s.volume_label_resolved, s.volume_label_unresolved
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -891,6 +946,48 @@ mod tests {
             text,
             "\nルート直下のため監視フォルダへ追加しなかったパス: 2 件\n  \"E:\\\"\n  \"\\\\nas\\share\\\"\n"
         );
+    }
+
+    #[test]
+    fn volume_label_section_is_silent_when_there_are_none() {
+        assert_eq!(format_volume_labels(&[]), "");
+    }
+
+    #[test]
+    fn volume_label_section_states_each_result() {
+        let text = format_volume_labels(&[
+            VolumeLabelLog {
+                label: "ESD-USB".into(),
+                rows: 6,
+                result: VolumeLabelResult::Resolved("E:\\".into()),
+            },
+            VolumeLabelLog {
+                label: "GONE".into(),
+                rows: 2,
+                result: VolumeLabelResult::NotConnected,
+            },
+            VolumeLabelLog {
+                label: "TWIN".into(),
+                rows: 1,
+                result: VolumeLabelResult::Ambiguous,
+            },
+        ]);
+        assert!(text.starts_with("ボリュームラベルのパス: 3 種類\n"));
+        assert!(text.contains("\"ESD-USB\": ドライブ文字に直しました -> E:\\ (6 行)\n"));
+        assert!(text
+            .contains("\"GONE\": 接続中のドライブに見つからないため、直せませんでした (2 行)\n"));
+        assert!(text
+            .contains("\"TWIN\": 同じラベルのドライブが複数あるため、直せませんでした (1 行)\n"));
+    }
+
+    #[test]
+    fn summary_mentions_volume_labels_only_when_present() {
+        assert!(!format_summary(&summary()).contains("ボリュームラベル"));
+        let mut s = summary();
+        s.volume_label_resolved = 4;
+        s.volume_label_unresolved = 2;
+        assert!(format_summary(&s)
+            .contains("ボリュームラベルのパス: ドライブ文字に直した 4 / 直せなかった 2\n"));
     }
 
     #[test]

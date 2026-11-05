@@ -11,6 +11,7 @@ pub mod log_source;
 pub mod path_existence;
 pub mod player;
 pub mod trash;
+pub mod volume_label;
 pub mod watcher;
 pub mod wb_file;
 pub mod wb_import_clock;

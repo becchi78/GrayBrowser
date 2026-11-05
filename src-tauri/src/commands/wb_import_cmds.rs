@@ -145,6 +145,7 @@ pub async fn start_wb_import(
         watch_reconfigurer,
         Arc::new(adapters::dir_lister::RealDirLister),
         Arc::new(adapters::folder_probe::RealFolderProbe),
+        Arc::new(adapters::volume_label::RealVolumeLabelResolver),
         clock,
         import_log,
     );
