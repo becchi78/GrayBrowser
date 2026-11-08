@@ -82,6 +82,7 @@ jobs:
           npm run lint
           npm run typecheck
           npm run test:unit
+          npm run test:component
 
   # ---------------------------------------------------------------
   # 1. Lint + ユニットテスト（フル・手動実行専用）
@@ -142,6 +143,7 @@ jobs:
           npm run lint
           npm run typecheck
           npm run test:unit
+          npm run test:component
 
   # ---------------------------------------------------------------
   # 2. ビルド（.msi生成まで確認。手動実行専用）
