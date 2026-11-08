@@ -302,8 +302,7 @@ function DuplicateGroupMemberRow({
     getThumbnails(member.video_id)
       .then((urls) => {
         if (cancelled) return;
-        // 6枚配列の先頭1枚だけを従来どおりの単一サムネイルとして表示する
-        // （複数枚表示には対応していない）。
+        // 6枚配列の先頭1枚だけを表示する（このカードは1枚表示のみ）。
         setDataUrl(urls?.[0] ?? null);
       })
       .catch(console.error);

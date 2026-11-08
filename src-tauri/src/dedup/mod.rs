@@ -79,12 +79,12 @@ pub enum DuplicateGroupKind {
     /// (stage 1) whose `full_hash` also matches (stage 2) --
     /// `gb_core::dedup::confirm_duplicates_by_full_hash`.
     QuickHashConfirmed,
-    /// A `path_collisions` pair -- recorded via either 経路X
-    /// (`register_new_path`'s `BlockedByCollision`) or 経路Y
-    /// (`reconcile_known_path`'s coincidental rehash match) -- whose
-    /// `full_hash` also matches.
+    /// A `path_collisions` pair -- recorded either when a path-follow target
+    /// is already taken (`register_new_path`'s `BlockedByCollision`) or when
+    /// a rehash coincidentally matches an offline row
+    /// (`reconcile_known_path`) -- whose `full_hash` also matches.
     PathCollisionConfirmed,
-    /// A `path_collisions` pair (either route, see `PathCollisionConfirmed`)
+    /// A `path_collisions` pair (recorded either way, see `PathCollisionConfirmed`)
     /// whose `full_hash` is unknown (I/O failure, vanished file) or does not
     /// match. Surfaced identically to
     /// the confirmed case -- a path collision alone is already treated as a
@@ -239,8 +239,9 @@ pub fn refresh_group_members(db: &Db, groups: Vec<DuplicateGroup>) -> Vec<Duplic
 }
 
 /// Runs the full two-stage detection plus the
-/// `path_collisions` pass (populated by both 経路X and 経路Y, see
-/// `queries::record_path_collision`'s doc comment), synchronously. Callers
+/// `path_collisions` pass (populated by both a taken path-follow target and a
+/// coincidental rehash match, see `queries::record_path_collision`),
+/// synchronously. Callers
 /// that don't want to block should use `refresh_duplicate_groups` instead.
 pub fn detect_duplicate_groups(
     db: &Db,
@@ -283,8 +284,8 @@ pub fn detect_duplicate_groups(
         }
     }
 
-    // path_collisions pairs (経路X and 経路Y both land here indistinguishably
-    // -- see queries::record_path_collision's doc comment): always surfaced
+    // path_collisions pairs (both ways of recording one land here
+    // indistinguishably -- see queries::record_path_collision): always surfaced
     // as a group, regardless of whether content verification confirms or
     // refutes the match -- a collision pair is already treated as a
     // duplicate candidate on its own.

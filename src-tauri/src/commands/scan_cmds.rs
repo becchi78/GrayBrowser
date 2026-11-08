@@ -35,13 +35,11 @@ pub struct VideoDto {
 impl VideoDto {
     /// `thumbnail_ready` is read straight off `VideoRow.thumbnail_ready`
     /// (migration 0008) -- **no filesystem `stat()` call happens here**.
-    /// Previously this was instead computed by checking whether
-    /// `thumbnails/[id].webp` exists on disk on every call (up to 100,000
-    /// stat() calls for a 100k-video full-library browse); this was found
-    /// to be the dominant cost of `list_videos`,
-    /// not the LIKE-based search query itself. The DB column is now the
-    /// source of truth for this hot path specifically -- it is *not* a
-    /// blanket replacement of the app's stateless-resume design:
+    /// Checking whether `thumbnails/[id].webp` exists on every call would cost
+    /// up to 100,000 stat() calls for a 100k-video full-library browse, which
+    /// would dominate `list_videos`, not the LIKE-based search query itself.
+    /// The DB column is the source of truth for this hot path specifically --
+    /// it is *not* a blanket replacement of the app's stateless-resume design:
     /// `thumbnail::worker::list_videos_missing_thumbnails` (the "what needs
     /// (re)generating" resume pass that runs once per scan/startup, not on
     /// every browse) still treats the filesystem itself as authoritative,
@@ -429,13 +427,13 @@ mod tests {
     /// Core guarantee: `VideoDto::from_row` performs no
     /// filesystem access at all -- `thumbnail_ready` is `row.thumbnail_ready`
     /// (the DB column), full stop. This test's `VideoRow.id` deliberately
-    /// names a file that is guaranteed not to exist anywhere on disk; before
-    /// this change (`thumbnails_dir.join(...).exists()`), that would have
-    /// forced `thumbnail_ready: false` regardless of the DB value. This is
-    /// intentional, not a bug: this hot path no longer treats the filesystem
-    /// as the source of truth for this flag (see `VideoDto::from_row`'s doc
-    /// comment) -- that responsibility now belongs solely to
-    /// `thumbnail::worker::list_videos_missing_thumbnails`'s resume pass.
+    /// names a file that is guaranteed not to exist anywhere on disk; a
+    /// filesystem check would force `thumbnail_ready: false` regardless of the
+    /// DB value. This is intentional, not a bug: this hot path does not treat
+    /// the filesystem as the source of truth for this flag (see
+    /// `VideoDto::from_row`'s doc comment) -- that responsibility belongs
+    /// solely to `thumbnail::worker::list_videos_missing_thumbnails`'s resume
+    /// pass.
     #[test]
     fn from_row_reports_ready_even_when_no_thumbnail_file_exists_on_disk_at_all() {
         let mut row = video_row(true);

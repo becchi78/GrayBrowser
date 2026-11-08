@@ -155,10 +155,9 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
       unlistenComplete();
       unlistenFailed();
     };
-    // onImportComplete is expected to be referentially stable across
-    // App.tsx's lifetime (a setState updater), so it's intentionally
-    // omitted to avoid re-subscribing on every render (same reasoning the
-    // old WbImportPanel this dialog replaces used).
+    // onImportComplete is intentionally omitted so the listeners are
+    // subscribed once rather than on every render; the parent's callback only
+    // bumps a counter via a setState updater, so a stale closure is harmless.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

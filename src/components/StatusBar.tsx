@@ -8,18 +8,15 @@ import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
 import { SkippedFilesPanel } from "./SkippedFilesPanel";
 
-// The always-visible status bar. Its three badges are the *only* visible
-// trigger for the existing SkippedFilesPanel/DuplicateGroupsPanel/
-// GenerationFailuresPanel content -- each panel's own toggle button was
-// removed in favor of this (see each component's own comment). Only one
-// panel can be open at a time (`openPanel`): a single popover slot, not
-// three independently-toggleable ones.
+// The always-visible status bar. Its three badges are the only trigger for
+// the SkippedFilesPanel/DuplicateGroupsPanel/GenerationFailuresPanel
+// content. Only one panel can be open at a time (`openPanel`): a single
+// popover slot, not three independently-toggleable ones.
 //
-// All three panel components are mounted unconditionally here (not just
-// when open) so their fetch effects / event subscriptions keep the badge
-// counts below current even while their own panel is closed -- each
-// component itself decides whether to render its section markup (`open`
-// prop) or nothing (`null`), per each component's own comment.
+// All three panel components are mounted unconditionally (not just when
+// open) so their fetch effects / event subscriptions keep the badge counts
+// below current even while their own panel is closed; each component
+// decides from its `open` prop whether to render its section markup.
 type PanelKind = "unregistered" | "duplicates" | "failed";
 
 interface Props {

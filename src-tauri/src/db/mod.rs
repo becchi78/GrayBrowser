@@ -94,12 +94,10 @@ fn disable_foreign_keys(conn: &mut rusqlite::Connection) -> rusqlite::Result<()>
 }
 
 /// Shared test-only helpers for standing up a throwaway `Db` and seeding it
-/// with a minimal `videos` row, previously copy-pasted (with minor naming
-/// drift, e.g. `temp_db` vs. `init_temp_db`) across the `#[cfg(test)] mod
-/// tests` of `scan`, `watch`, `thumbnail::worker`, `metadata::worker`,
-/// `dedup`, `wb_import::pipeline`, `db::queries`, and
-/// `commands::generation_retry_cmds`. Consolidated here so every one of
-/// those modules can `use crate::db::test_support::*;` instead.
+/// with a minimal `videos` row. Shared by the `#[cfg(test)] mod tests` of
+/// `scan`, `watch`, `thumbnail::worker`, `metadata::worker`, `dedup`,
+/// `wb_import::pipeline`, `db::queries`, and
+/// `commands::generation_retry_cmds` via `use crate::db::test_support::*;`.
 #[cfg(test)]
 pub mod test_support {
     use super::Db;

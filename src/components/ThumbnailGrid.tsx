@@ -27,16 +27,14 @@ import { BulkTagDialog } from "./BulkTagDialog";
 import { ContextMenu } from "./ContextMenu";
 import { VideoRow } from "./VideoRow";
 
-// A row hosts 6 thumbnails + metadata/rating/tag-editor instead of a
-// single thumbnail cell, so the old 180px grid-cell height no longer
-// fits. Measured via CDP (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=
-// --remote-debugging-port) against real `.video-row-info` content at the
-// "one tag assigned" baseline: 205.890625px + `.video-row`'s own padding
-// (0.5em top+bottom = 16px) + ~4px margin = 226px. Rows with 2+ tags that
-// wrap onto a second line fall back to `.video-row-info`'s own
-// `overflow-y: auto` rather than growing ROW_HEIGHT further. The fixed
-// 150px thumbnail height (+16px padding = 166px) comfortably fits within
-// 226px too.
+// A row hosts 6 thumbnails + metadata/rating/tag-editor. Measured via CDP
+// (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port) against
+// real `.video-row-info` content at the "one tag assigned" baseline:
+// 205.890625px + `.video-row`'s own padding (0.5em top+bottom = 16px) +
+// ~4px margin = 226px. Rows with 2+ tags that wrap onto a second line fall
+// back to `.video-row-info`'s own `overflow-y: auto` rather than growing
+// ROW_HEIGHT further. The fixed 150px thumbnail height (+16px padding =
+// 166px) fits within 226px too.
 const ROW_HEIGHT = 226;
 // Max re-fetch frequency while catalog:changed events are arriving.
 const NOTIFY_THROTTLE_MS = 300;
@@ -85,10 +83,9 @@ export function ThumbnailGrid({
   // Starts false so the "register a folder" hint never flashes before the
   // first fetch resolves; only a confirmed empty list shows it.
   const [noWatchFolders, setNoWatchFolders] = useState(false);
-  // Highlights the selected rows -- the detail panel selection used to open
-  // is gone, so selection has no other effect than the CSS classes VideoRow
-  // applies itself. Held by id so rows scrolled out of the virtualizer's
-  // window stay selected.
+  // Selection only highlights rows (via the CSS classes VideoRow applies
+  // itself). Held by id so rows scrolled out of the virtualizer's window stay
+  // selected.
   const [selection, setSelection] = useState<SelectionState>(clearSelection);
   // 右クリックで開くメニューの位置と対象。対象はメニューを開いた時点の選択で
   // 固定する(メニューを開いている間に選択が変わっても、見せた件数と実行する
@@ -122,26 +119,20 @@ export function ThumbnailGrid({
     };
   }, [refreshKey]);
 
-  // Re-fetches once on mount/refreshKey change, then again on every
-  // catalog:changed event from the backend -- replaces the old finite
-  // POLL_INTERVAL_MS setTimeout loop (no more idle polling once every
-  // video's thumbnail is ready, since there's no timer left to stop).
+  // Re-fetches once on mount/refreshKey change, then on every catalog:changed
+  // event from the backend (no polling).
   //
-  // A burst of events (many files added at once, or many thumbnails
-  // finishing in quick succession) is throttled to at most one re-fetch per
-  // NOTIFY_THROTTLE_MS -- but as a *throttle*, not a trailing-edge debounce:
-  // the first event in a burst fires immediately (leading edge), and while
-  // events keep arriving faster than the throttle window, a re-fetch still
-  // happens roughly every NOTIFY_THROTTLE_MS rather than only once after the
-  // whole burst goes quiet. That's what lets the grid fill in progressively
-  // during a large batch instead of staying frozen until everything finishes.
+  // A burst of events is throttled to at most one re-fetch per
+  // NOTIFY_THROTTLE_MS, as a *throttle* rather than a trailing-edge debounce:
+  // the first event fires immediately and re-fetches keep happening during
+  // the burst, so the grid fills in progressively during a large batch
+  // instead of staying frozen until everything finishes.
   useEffect(() => {
     let cancelled = false;
-    // 一覧の再取得は応答の順序が入れ替わりうる。古い要求の応答（まだ
-    // 生成中の状態）が後から届いて新しい一覧を上書きしないよう、最新の
-    // 要求の応答だけを反映する。依存が変わって effect が再実行されたときの
-    // 古い応答は、上の cancelled で破棄されるので、ガードは effect ごとに
-    // 作れば足りる。
+    // 一覧の再取得は応答の順序が入れ替わりうる。古い要求の応答（まだ生成中の
+    // 状態）が新しい一覧を上書きしないよう、最新の要求の応答だけを反映する。
+    // effect の再実行時の古い応答は cancelled で破棄されるので、ガードは
+    // effect ごとに作れば足りる。
     const guard = createLatestOnlyGuard();
 
     const tick = async () => {
@@ -230,10 +221,8 @@ export function ThumbnailGrid({
     parentRef.current?.scrollTo({ top: 0 });
   }, [search]);
 
-  // One video = one row now, so the virtualizer counts rows 1:1 against
-  // `videos` -- no column-count calculation (the
-  // old ResizeObserver-driven `columns` state) is needed anymore. Any
-  // overflow from the row's own 6 fixed-width thumbnails is handled purely
+  // One video = one row, so the virtualizer counts rows 1:1 against `videos`.
+  // Any overflow from the row's own 6 fixed-width thumbnails is handled purely
   // by `.video-row-thumbnails`'s own `overflow-x: auto` in CSS.
   const rowVirtualizer = useVirtualizer({
     count: videos.length,

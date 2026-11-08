@@ -17,9 +17,9 @@ interface Props {
 // window.confirm は使わない。tauri-plugin-dialog が window.confirm を非同期
 // 関数に差し替えるため Promise が返り、常に真として扱われて確認が効かない。
 //
-// 重複パネルは position の効く祖先を持つポップオーバー内にあり、そこに
-// 描画すると position: fixed のオーバーレイが祖先に引っ張られるおそれが
-// あるため、document.body へ portal で描画する。
+// ステータスバーのパネル（重複・生成失敗）は position の効く祖先を持つ
+// ポップオーバー内にあり、そこに描画すると position: fixed のオーバーレイが
+// 祖先に引っ張られるおそれがあるため、document.body へ portal で描画する。
 export function ConfirmDialog({
   open,
   title,

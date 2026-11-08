@@ -44,17 +44,7 @@ export interface ListVideosOptions {
 // Keys are always present (explicit null rather than omitted) so Tauri's
 // per-argument deserialization never has to guess at a missing key's intent.
 // This matters in particular for `folderPath`: the "すべて" (no filter)
-// selection in FolderSidebar must send an explicit `null`, not omit the key.
-// This follows the same explicit-null pattern as every other optional
-// argument above (design intent, not something newly verified here) -- the
-// real Tauri IPC boundary behavior here is still unverified: a live
-// WebDriver session against a real built app could not get far enough to
-// click through FolderSidebar, because `list_watch_folders`'s invoke() call
-// never resolved within the session. `folder_path`/`folderPath` wiring
-// itself was only confirmed by code review, `cargo test`'s backend
-// coverage (`src-tauri/tests/db_folder_filter.rs`), and a DOM structure
-// check (FolderSidebar/main-area render) -- not by observing this specific
-// null-vs-omitted behavior cross the real IPC boundary end to end.
+// selection must send an explicit `null`, not omit the key.
 export const listVideos = (opts?: ListVideosOptions) =>
   invoke<VideoDto[]>("list_videos", {
     search: opts?.search ?? null,

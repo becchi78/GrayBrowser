@@ -101,11 +101,9 @@ button:disabled {
 }
 
 /* Always-visible header, row 1 (52px budget, search + sort). `flex-shrink:
-   0` is explicit -- unlike the old `.toolbar` this replaces, this row must
-   never compete for the shrink-share `.video-list`'s `flex: 1` depends on,
-   so it deliberately does NOT get a `flex-basis: 0` (no `flex: 1`) and
-   does NOT get its own `overflow: auto` shrink budget the way the
-   temporary panels below still do. */
+   0` keeps this row from competing for the shrink-share `.video-list`'s
+   `flex: 1` depends on, so it deliberately gets no `flex: 1` and no
+   `overflow: auto` shrink budget. */
 .header-row-primary {
   display: flex;
   align-items: center;
@@ -125,8 +123,8 @@ button:disabled {
   font-size: 0.9em;
 }
 
-/* 入力欄の右端に✕を重ねるための相対配置。元の`.search-box`のflex指定は
-   ラッパー側に移し、行内での伸縮は従来どおりにする。 */
+/* 入力欄の右端に✕を重ねるための相対配置。行内での伸縮(flex)は
+   入力欄ではなくこのラッパーが担う。 */
 .search-box-wrap {
   position: relative;
   display: flex;
@@ -265,17 +263,13 @@ button.search-box-clear {
   margin: 0;
 }
 
-/* MainArea, the `flex: 1` body row that hosts LeftPane + the video
-   list side by side (the old 3rd column, the detail panel, is gone --
-   folded into each `.video-row`). `min-height: 0` overrides this item's
-   default `min-height: auto` in `.app`'s *column* flex layout -- without
-   it, this item's automatic
-   minimum height would be based on its children's own content sizes
-   (LeftPane's sections, `.video-list`'s explicit `min-height: 226px`,
-   etc.) rather than being allowed to shrink freely, which would silently
-   reintroduce the same "flex-basis-0 item can't actually get smaller"
-   class of bug this file's other comments document (see `.video-list`
-   below) at this new nesting level. */
+/* The `flex: 1` body row that hosts LeftPane + the video list side by side.
+   `min-height: 0` overrides this item's default `min-height: auto` in
+   `.app`'s *column* flex layout: otherwise its minimum height would come
+   from its children's content sizes (LeftPane's sections, `.video-list`'s
+   explicit `min-height: 226px`) and it could not shrink, the same
+   "flex-basis-0 item can't actually get smaller" problem described at
+   `.video-list`. */
 .main-area {
   display: flex;
   flex: 1;
@@ -581,7 +575,7 @@ button.search-box-clear {
   background-color: #e8f0fe;
 }
 
-/* Only applied with 2+ rows selected, so a lone selection keeps its old look. */
+/* Only applied with 2+ rows selected, so a lone selection keeps the plain selected look. */
 .video-row--multi-selected {
   background-color: #d6e4fd;
   box-shadow: inset 4px 0 0 #3b78e7;
@@ -599,14 +593,12 @@ button.search-box-clear {
   font-weight: 600;
 }
 
-/* This wrap sits one level up from `.video-row-thumbnails` itself, as the
+/* This wrap sits one level up from `.video-row-thumbnails`, as the
    `position: relative` containing block shared by
-   `.thumbnail-offline-badge--overlay`, the
-   new `.video-row-filename-overlay` and `.video-row-play-status` below (see
-   VideoRow.tsx's own comment on why they need a non-scrolling anchor). `min-width` (one thumbnail's
-   width, moved here from `.video-row-thumbnails` below) is what used to
-   keep that inner element from shrinking to nothing; it plays the same role
-   here now that this wrap is the actual flex item of `.video-row`. */
+   `.thumbnail-offline-badge--overlay`, `.video-row-filename-overlay` and
+   `.video-row-play-status` below (see VideoRow.tsx on why they need a
+   non-scrolling anchor). `min-width` (one thumbnail's width) keeps this flex
+   item of `.video-row` from shrinking to nothing. */
 .video-row-thumbnails-wrap {
   position: relative;
   /* 200px, matching `.video-row-thumbnail-wrap`'s own size below
@@ -615,19 +607,14 @@ button.search-box-clear {
 }
 
 /* 6 fixed-width thumbnails in a row; `overflow-x: auto` is the entire
-   mechanism for the "narrow window -> horizontal scrollbar on just this
-   area" behavior -- no JS column-count calculation involved (see
-   ThumbnailGrid.tsx's comment). This area *must* be allowed to shrink
-   (default `flex-shrink: 1`, NOT `0` -- with `flex-shrink: 0` here, this
-   item never shrinks below its 6-thumbnail content width, so *all* of a
-   narrow row's squeeze falls on `.video-row-info` instead until it hits
-   its own floor and then simply overflows `.video-row`'s `overflow:
-   hidden`, hiding the metadata/rating/tag column entirely instead of
-   showing this area's own scrollbar). `position: relative`/`min-width`
-   live on `.video-row-thumbnails-wrap` instead -- this is a plain scroll
-   container filling that wrap via `width`/`height: 100%`, so shrinking
-   still works the same since the wrap itself is the flex item that
-   shrinks and this element just tracks its size. */
+   mechanism for "narrow window -> horizontal scrollbar on just this area".
+   The wrap (the actual flex item) must be allowed to shrink (default
+   `flex-shrink: 1`, NOT `0`): otherwise it never shrinks below its
+   6-thumbnail content width, all of a narrow row's squeeze falls on
+   `.video-row-info`, and the metadata/rating/tag column ends up clipped by
+   `.video-row`'s `overflow: hidden` instead of this area showing its own
+   scrollbar. This element is a plain scroll container that tracks the
+   wrap's size via `width`/`height: 100%`. */
 .video-row-thumbnails {
   display: flex;
   align-items: center;
@@ -704,39 +691,27 @@ button.search-box-clear {
 
 .video-row--offline .video-row-thumbnail-wrap img,
 .video-row--offline .video-row-thumbnail-wrap .thumbnail-placeholder {
-  /* 45% opacity. `filter: grayscale` kept alongside opacity, same as the
-     old `.thumbnail-cell--offline` rule this replaces. */
+  /* 45% opacity, with grayscale so offline rows read as inactive. */
   filter: grayscale(100%);
   opacity: 0.45;
 }
 
 /* Metadata + rating + tag editor, to the right of the thumbnails.
-   `min-width: 0` lets this flex item actually shrink below its content's
-   intrinsic width (this file's usual flex-basis-0 concern) so it never
-   forces the row wider than the window; `overflow-y: auto` is the
-   escape hatch for content taller than `ROW_HEIGHT` (see `.video-row`'s own
-   comment on why that matters for the virtualizer) -- ROW_HEIGHT is sized
-   generously enough that this is a rare fallback, not the normal
-   case, so `justify-content: flex-start` (not `center`) keeps the *top* of
-   the content (再生時間, the first `<dt>`) anchored and visible even when it
-   does engage, rather than centering and pushing the top out of view.
-   `overflow-x: hidden` avoids a second, unwanted horizontal scrollbar that
-   `overflow-y: auto` alone would otherwise trigger (the CSS `overflow-x:
-   visible` + `overflow-y: auto` combination computes `overflow-x` to
-   `auto` automatically per spec) -- children below (`.video-row-properties`
-   grid, `TagEditor`'s form) already wrap/shrink instead of overflowing
+   `overflow-y: auto` is the escape hatch for content taller than
+   `ROW_HEIGHT` (see `.video-row` on why the virtualizer needs that); it is
+   a rare fallback, so `justify-content: flex-start` (not `center`) keeps
+   the top of the content (再生時間) visible when it does engage.
+   `overflow-x: hidden` avoids the second horizontal scrollbar that
+   `overflow-y: auto` alone would trigger (a visible `overflow-x` computes
+   to `auto` per spec); children already wrap/shrink instead of overflowing
    sideways. */
 .video-row-info {
-  /* The info panel must not shrink like a normal flex-basis-0 item: a
-     plain `flex: 1; min-width: 0` (this file's usual shrink-to-zero
-     pattern) would let this column collapse toward 0 width first and use
-     *all* the squeeze before `.video-row-thumbnails` ever needs its own
-     `overflow-x: auto`, collapsing the entire metadata/rating/tag column
-     to nothing at narrow window widths. A fixed `flex: 0 0 300px` avoids
-     that and keeps `.video-row-properties`'s 4-column grid in its
-     intended single-row layout at all times, at the cost of no longer
-     growing to use extra window width (that width goes to
-     `.video-row-thumbnails` instead). */
+  /* A plain `flex: 1; min-width: 0` would let this column absorb *all* the
+     squeeze before `.video-row-thumbnails` needs its own scrollbar,
+     collapsing it to nothing at narrow window widths. A fixed
+     `flex: 0 0 300px` avoids that and keeps `.video-row-properties`'s
+     4-column grid in its single-row layout, at the cost of not growing with
+     extra window width (that goes to `.video-row-thumbnails`). */
   flex: 0 0 300px;
   width: 300px;
   display: flex;
@@ -777,12 +752,10 @@ button.search-box-clear {
   font-size: 0.85em;
 }
 
-/* 2 label/value pairs per line (4 grid columns,
-   `dt`/`dd` alternating in DOM order) instead of PropertiesPanel's original
-   single-column stack -- halves the number of rows (7 -> 4) so the
-   properties block leaves enough of `ROW_HEIGHT`'s vertical budget for
-   `StarRating` + `TagEditor` below it to render without scrolling in the
-   common case. */
+/* 2 label/value pairs per line (4 grid columns, `dt`/`dd` alternating in
+   DOM order) -- halves the number of rows (7 -> 4) so the properties block
+   leaves enough of `ROW_HEIGHT`'s vertical budget for `StarRating` +
+   `TagEditor` below it to render without scrolling in the common case. */
 .video-row-properties {
   display: grid;
   grid-template-columns: auto 1fr auto 1fr;
@@ -813,10 +786,9 @@ button.search-box-clear {
 }
 
 .thumbnail-offline-badge {
-  /* Recolored from red to amber/orange -- red is reserved for the .wb
-     import dialog's real-failure display only, and this badge's original
-     red predates that reservation. This
-     base rule is shared by two different callers with two different
+  /* Amber/orange, not red -- red is reserved for the .wb import dialog's
+     real-failure display only. This base rule is shared by two different
+     callers with two different
      layouts: VideoRow (overlaid on `.video-row-thumbnails` -- see
      `.thumbnail-offline-badge--overlay` below) and
      DuplicateGroupsPanel's `DuplicateGroupMemberRow` (inline, next to the
@@ -1087,18 +1059,12 @@ button.search-box-clear {
   flex: 1;
 }
 
-/* Shared by DuplicateGroupsPanel's `-path` row and
-   GenerationFailuresPanel's `-path` row (`.file-path-*`, not
-   `.duplicate-group-*`/`.generation-failure-*`, since both panels render
-   the identical "directory (shrinks, ellipsis) + file name (never
-   shrinks)" structure via the same `splitDirAndFileName` helper --
-   src/lib/paths.ts). Splitting the previous single `-path` span (plain
-   `text-overflow: ellipsis`, which only ever elides the *end* of the
-   string -- i.e. the file name itself) into these two flex children is
-   what makes the file name immune to truncation regardless of how narrow
-   the panel is: `.file-path-dir` is the only one of the two allowed to
-   shrink/ellipsis, `.file-path-file` holds its full intrinsic width.
-   font-size/opacity carried over unchanged from the old `-path` rule. */
+/* GenerationFailuresPanel's path row: "directory (shrinks, ellipsis) + file
+   name (never shrinks)". A single span with plain `text-overflow: ellipsis`
+   only elides the *end* of the string, i.e. the file name itself; splitting
+   it into two flex children keeps the file name immune to truncation
+   however narrow the panel is: only `.file-path-dir` may shrink/ellipsis,
+   `.file-path-file` holds its full intrinsic width. */
 .file-path-row {
   display: flex;
   min-width: 0;
