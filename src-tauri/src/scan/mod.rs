@@ -12,11 +12,13 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use gb_core::paths;
+use gb_core::ports::path_existence::PathExistence;
 use gb_core::reconcile::{self, DiscoveredFile, FileClassification, KnownFileMeta};
 use gb_core::scan_pipeline::{self, ScannedFile, ValidationOutcome};
 use walkdir::WalkDir;
 
 use crate::adapters::long_path;
+use crate::adapters::path_existence::RealPathExistence;
 use crate::db::{queries, Db};
 use crate::offline_sync::mark_folder_offline;
 use crate::reachability::ReachabilityRegistry;
@@ -74,10 +76,13 @@ pub struct ScanSummary {
     pub unchanged: u32,
     pub skipped: u32,
     /// A known online video confirmed missing this scan (via
-    /// `reconcile_missing_videos`) and flipped to offline. Videos held back
-    /// by `decide_missing_video_ids`'s broken-enumeration guard are *not*
-    /// counted here (they're WARN-logged instead, matching NAS polling's
-    /// convention) -- this field only reflects confirmed transitions.
+    /// `reconcile_missing_videos`) and flipped to offline. This includes
+    /// videos the broken-enumeration guard first withheld but that were then
+    /// checked one by one and reported not found by the OS
+    /// (`confirm_suppressed_candidates`). Videos still held back after that
+    /// are *not* counted here (they're WARN-logged instead, matching NAS
+    /// polling's convention) -- this field only reflects confirmed
+    /// transitions.
     pub went_offline: u32,
     /// A path-follow match (`ProcessOutcome::PathFollowed`): an `offline` row
     /// matched by quick_hash+file_size at a new path and reactivated there
@@ -714,11 +719,33 @@ pub fn mtime_from_metadata(metadata: &std::fs::Metadata) -> Result<i64, String> 
         .map_err(|e| format!("mtime predates the Unix epoch: {e}"))
 }
 
+/// `scan_folders_with_existence` asking the real filesystem about withheld
+/// missing-video candidates -- what every production caller wants.
 pub fn scan_folders(
     folders: &[String],
     db: &Db,
     thumbnails_root: &Path,
     reachability: &dyn FolderReachability,
+) -> anyhow::Result<ScanSummary> {
+    scan_folders_with_existence(
+        folders,
+        db,
+        thumbnails_root,
+        reachability,
+        &RealPathExistence,
+    )
+}
+
+/// The manual full walk. `existence` answers the per-path follow-up for
+/// missing-video candidates the broken-enumeration guard withheld (see
+/// `reconcile_missing_videos`); it is a parameter so a test can make the OS
+/// claim a file still exists, which a real tempdir cannot fake.
+pub fn scan_folders_with_existence(
+    folders: &[String],
+    db: &Db,
+    thumbnails_root: &Path,
+    reachability: &dyn FolderReachability,
+    existence: &dyn PathExistence,
 ) -> anyhow::Result<ScanSummary> {
     let mut summary = ScanSummary::default();
     log::info!("scan started for {} folder(s)", folders.len());
@@ -819,7 +846,7 @@ pub fn scan_folders(
         }
 
         summary.went_offline +=
-            reconcile_missing_videos(db, folder, discovered_paths, inaccessible_dirs)?;
+            reconcile_missing_videos(db, folder, discovered_paths, inaccessible_dirs, existence)?;
     }
 
     log::info!(
@@ -846,18 +873,29 @@ pub fn scan_folders(
 /// included, unchanged here) -- a local `WalkDir`
 /// walk carries the same "enumeration might have partially failed" risk a
 /// network listing does (locked directories, permission errors, AV scanner
-/// interference), so it gets the same protection. A folder that's entirely
-/// gone (the watch folder itself no longer exists) naturally resolves
-/// safely without a separate reachability pre-check: `WalkDir` surfaces
-/// that as an error on/under the root, which either lands every known video
-/// in `inaccessible_dirs` (quietly excluded, no WARN) or leaves
-/// `discovered_paths` empty (the `NothingDiscovered` guard, WARN-logged) --
-/// either way, nothing gets marked offline.
+/// interference), so it gets the same protection.
+///
+/// When the guard withholds only a few candidates,
+/// `confirm_suppressed_candidates` then asks `existence` about each one and
+/// lets through only those the OS reports as not found -- otherwise a folder
+/// holding a single video could never see it go offline. That check cannot
+/// tell "this file was moved" from "the whole folder is gone": a deleted
+/// parent folder, an unassigned drive letter, an unknown host and an unknown
+/// share all come back from the OS as NotFound. So it must never see the
+/// candidates of a folder that is gone, and it doesn't: a missing or
+/// unreachable root makes `WalkDir` fail on the root itself, with the root's
+/// path attached, so `"<folder>\"` lands in `inaccessible_dirs` and
+/// `is_under_folder` removes every known video of the folder from the
+/// candidates before the guard or the check runs (quietly, no WARN). Ahead
+/// of that, `scan_cmds::partition_by_reachability` already leaves folders
+/// known to be unreachable out of the manual scan. Whatever remains withheld
+/// after the check is WARN-logged and stays online.
 fn reconcile_missing_videos(
     db: &Db,
     folder: &str,
     discovered_paths: Vec<String>,
     inaccessible_dirs: Vec<String>,
+    existence: &dyn PathExistence,
 ) -> anyhow::Result<u32> {
     let known_rows = queries::list_online_videos_under(&db.read_pool, folder)?;
     let known_online: Vec<reconcile::KnownOnlineVideo> = known_rows
@@ -872,7 +910,21 @@ fn reconcile_missing_videos(
         inaccessible_dirs,
         discovered_paths,
     };
-    let decision = reconcile::decide_missing_video_ids(&known_online, &diff);
+    let decision = reconcile::confirm_suppressed_candidates(
+        reconcile::decide_missing_video_ids(&known_online, &diff),
+        existence,
+    );
+    if let Some(check) = &decision.individually_checked {
+        if check.confirmed_missing_count > 0 {
+            log::info!(
+                "manual scan for {folder}: {} of {} withheld video(s) confirmed not found \
+                 one by one (guard reason={:?}), marking them offline",
+                check.confirmed_missing_count,
+                check.checked_count,
+                check.reason
+            );
+        }
+    }
     if let Some(guard) = &decision.suppressed {
         log::warn!(
             "manual scan for {folder}: holding {} video(s) online (known={}, discovered={}, \
@@ -2120,5 +2172,90 @@ mod tests {
         assert_eq!((summary.reactivated, summary.registered), (1, 0));
         assert_eq!(fx.id_at(&new), id);
         assert_eq!(fx.rows().len(), 1);
+    }
+
+    /// The only video of a folder moved somewhere no watch folder covers:
+    /// the walk finds nothing (the `NothingDiscovered` guard), but the
+    /// one-by-one check gets NotFound from the real filesystem, so the old
+    /// row still goes offline.
+    #[test]
+    fn a_manual_scan_offlines_the_only_video_moved_out_of_its_folder() {
+        let fx = MoveFixture::new(1);
+        let old = fx.register_at(0, "only.mp4");
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::rename(&old, elsewhere.path().join("only.mp4")).unwrap();
+
+        let summary = scan_folders(
+            &[fx.folder(0).to_string()],
+            &fx.db,
+            fx.thumbs.path(),
+            &fx.registry,
+        )
+        .unwrap();
+
+        assert_eq!(summary.went_offline, 1);
+        assert_eq!(fx.rows(), vec![(path_str(&old), "offline".to_string())]);
+    }
+
+    /// The per-path check answers NotFound for every file of a deleted
+    /// folder, so a folder that is gone must be kept away from it. With the
+    /// real filesystem, a watch folder deleted outright leaves all of its
+    /// videos online, for every count up to the check's limit.
+    #[test]
+    fn a_manual_scan_keeps_the_videos_of_a_deleted_watch_folder_online() {
+        for count in [
+            1,
+            3,
+            gb_core::reconcile::MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK,
+        ] {
+            let fx = MoveFixture::new(1);
+            for i in 1..count {
+                fx.write_at(0, &format!("v{i}.mp4"));
+            }
+            // Registers every file written so far in one scan.
+            fx.register_at(0, "v0.mp4");
+            assert_eq!(fx.rows().len(), count);
+            fs::remove_dir_all(fx.dirs[0].path()).unwrap();
+
+            let summary = scan_folders(
+                &[fx.folder(0).to_string()],
+                &fx.db,
+                fx.thumbs.path(),
+                &fx.registry,
+            )
+            .unwrap();
+
+            assert_eq!(summary.went_offline, 0, "count={count}");
+            assert!(
+                fx.rows().iter().all(|(_, status)| status == "online"),
+                "count={count}"
+            );
+        }
+    }
+
+    /// Stand-in for a listing that missed a file which is in fact still
+    /// there: the walk finds nothing, and the OS says the path exists, so
+    /// the guard's hold stands.
+    #[test]
+    fn a_manual_scan_keeps_the_only_video_online_when_the_os_says_it_exists() {
+        use gb_core::testing::fake_path_existence::FakePathExistence;
+
+        let fx = MoveFixture::new(1);
+        let old = fx.register_at(0, "only.mp4");
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::rename(&old, elsewhere.path().join("only.mp4")).unwrap();
+        let existence = FakePathExistence::with_paths(&[&path_str(&old)]);
+
+        let summary = scan_folders_with_existence(
+            &[fx.folder(0).to_string()],
+            &fx.db,
+            fx.thumbs.path(),
+            &fx.registry,
+            &existence,
+        )
+        .unwrap();
+
+        assert_eq!(summary.went_offline, 0);
+        assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
     }
 }

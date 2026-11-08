@@ -3,11 +3,17 @@
 //! whether a path-follow match should be applied, and deciding which known
 //! online videos should transition offline after a scan/poll pass.
 //!
-//! No I/O, no DB, no filesystem access -- callers in `src-tauri` gather the
-//! inputs (via `rusqlite` queries, `WalkDir`, `notify` events, etc.) and pass
-//! plain data in here, per this crate's OS-independence rule.
+//! No direct I/O, no DB -- callers in `src-tauri` gather the inputs (via
+//! `rusqlite` queries, `WalkDir`, `notify` events, etc.) and pass plain data
+//! in here, per this crate's OS-independence rule. The one exception is
+//! `confirm_suppressed_candidates`, which asks the OS about individual paths,
+//! but only through the `PathExistence` port, so the decision stays testable
+//! with a fake.
 
 use std::collections::HashSet;
+use std::path::Path;
+
+use crate::ports::path_existence::PathExistence;
 
 pub struct DiscoveredFile {
     pub file_size: u64,
@@ -97,6 +103,7 @@ pub fn decide_path_follow(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownOnlineVideo {
     pub video_id: String,
     pub file_path: String,
@@ -108,8 +115,10 @@ pub struct EnumerationResult {
     pub discovered_paths: Vec<String>,
 }
 
-/// A missing-video candidate is only suppressed (all-or-nothing, for the
-/// whole cycle) when the enumeration itself looks broken:
+/// Within `decide_missing_video_ids`, missing-video candidates are only
+/// suppressed (all-or-nothing, for the whole cycle) when the enumeration
+/// itself looks broken -- `confirm_suppressed_candidates` may afterwards
+/// still let some of a small suppressed set through, one by one:
 /// - `NothingDiscovered`: the walk returned zero files *and* zero
 ///   inaccessible-directory errors, despite the root being reachable and at
 ///   least one known video existing under it. Nothing was actually seen,
@@ -133,14 +142,34 @@ pub struct SuppressedGuard {
     pub candidate_count: usize,
     pub known_online_count: usize,
     pub discovered_count: usize,
+    /// The withheld candidates themselves, so a follow-up check can ask
+    /// about exactly these paths without the caller re-deriving them from
+    /// the enumeration. Always `candidate_count` long.
+    pub candidates: Vec<KnownOnlineVideo>,
+}
+
+/// What `confirm_suppressed_candidates` found when it actually queried the
+/// OS, for the caller's log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndividualCheck {
+    /// The guard that had withheld the candidates before they were checked.
+    pub reason: SuppressReason,
+    pub checked_count: usize,
+    /// How many of the checked candidates the OS reported as not found and
+    /// were therefore moved into `missing_ids`.
+    pub confirmed_missing_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingVideoDecision {
-    /// Video ids to transition to `offline` this cycle. Always empty when
-    /// `suppressed` is `Some`.
+    /// Video ids to transition to `offline` this cycle. Straight out of
+    /// `decide_missing_video_ids` this is always empty when `suppressed` is
+    /// `Some`; after `confirm_suppressed_candidates` both can be non-empty
+    /// (some candidates confirmed gone, the rest still withheld).
     pub missing_ids: Vec<String>,
     pub suppressed: Option<SuppressedGuard>,
+    /// `Some` only when `confirm_suppressed_candidates` queried the OS.
+    pub individually_checked: Option<IndividualCheck>,
 }
 
 /// Below this many known-online videos in a folder, the ratio guard never
@@ -158,6 +187,15 @@ const MIN_KNOWN_COUNT_FOR_RATIO_GUARD: usize = 5;
 /// collapse, not full collapse -- the `NothingDiscovered` floor already
 /// catches that) gets held instead of mass-flipping the folder offline.
 const MISSING_RATIO_THRESHOLD: f64 = 0.8;
+
+/// Upper bound on how many withheld candidates `confirm_suppressed_candidates`
+/// checks one by one. Unrelated to `MIN_KNOWN_COUNT_FOR_RATIO_GUARD` despite
+/// the equal value: that one is about when a percentage starts to mean
+/// something, this one is about cost -- every check is its own metadata
+/// round trip, which on a slow network share can take a noticeable time, so
+/// only a handful per folder per cycle are affordable. Above this, the
+/// guard's suppression stands as-is.
+pub const MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK: usize = 5;
 
 /// The full-enumeration missing-video guard, shared by both the NAS poller
 /// (`src-tauri::watch::nas_poll`) and the manual/local folder scan
@@ -184,6 +222,7 @@ pub fn decide_missing_video_ids(
     let none_missing = MissingVideoDecision {
         missing_ids: Vec::new(),
         suppressed: None,
+        individually_checked: None,
     };
 
     if !diff.root_reachable {
@@ -218,6 +257,7 @@ pub fn decide_missing_video_ids(
             candidate_count: candidates.len(),
             known_online_count: known_count,
             discovered_count,
+            candidates: candidates.iter().map(|v| (*v).clone()).collect(),
         })
     };
 
@@ -225,6 +265,7 @@ pub fn decide_missing_video_ids(
         return MissingVideoDecision {
             missing_ids: Vec::new(),
             suppressed: suppress(SuppressReason::NothingDiscovered),
+            individually_checked: None,
         };
     }
 
@@ -233,12 +274,84 @@ pub fn decide_missing_video_ids(
         return MissingVideoDecision {
             missing_ids: Vec::new(),
             suppressed: suppress(SuppressReason::RatioExceeded),
+            individually_checked: None,
         };
     }
 
     MissingVideoDecision {
         missing_ids: candidates.into_iter().map(|v| v.video_id.clone()).collect(),
         suppressed: None,
+        individually_checked: None,
+    }
+}
+
+/// Rescues a guard-suppressed decision when only a few candidates were
+/// withheld. Without this, a folder holding a single video can never see
+/// that video go offline (moving it away always trips `NothingDiscovered`),
+/// and a small folder that loses most of its files keeps tripping
+/// `RatioExceeded`.
+///
+/// Each withheld candidate is asked about individually, and only the ones
+/// the OS reports as not found move into `missing_ids`. That holds even
+/// when other candidates come back as present (i.e. the listing really did
+/// miss something): a NotFound answer is an OS-confirmed fact about that
+/// one path -- the same kind of evidence as the realtime watcher's
+/// `Removed` event (see `decide_removal_outcome`) -- so the broken-listing
+/// suspicion that justified the guard doesn't extend to it. Should it still
+/// be wrong, the offline row comes back by itself via path-follow or by
+/// reappearing at the same path. Candidates answered as present, or as
+/// indeterminate (the port answers `true` for anything but NotFound), stay
+/// withheld under the original guard.
+///
+/// Decisions without a suppression, or with more than
+/// `MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK` withheld candidates, are returned
+/// unchanged without querying the OS.
+pub fn confirm_suppressed_candidates(
+    decision: MissingVideoDecision,
+    fs: &dyn PathExistence,
+) -> MissingVideoDecision {
+    let guard = match decision.suppressed {
+        Some(g) if g.candidates.len() <= MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK => g,
+        suppressed => {
+            return MissingVideoDecision {
+                suppressed,
+                ..decision
+            }
+        }
+    };
+
+    let checked_count = guard.candidates.len();
+    let mut missing_ids = decision.missing_ids;
+    let mut still_withheld = Vec::new();
+    for candidate in guard.candidates {
+        if fs.exists(Path::new(&candidate.file_path)) {
+            still_withheld.push(candidate);
+        } else {
+            missing_ids.push(candidate.video_id);
+        }
+    }
+    let confirmed_missing_count = checked_count - still_withheld.len();
+
+    let suppressed = if still_withheld.is_empty() {
+        None
+    } else {
+        Some(SuppressedGuard {
+            reason: guard.reason,
+            candidate_count: still_withheld.len(),
+            known_online_count: guard.known_online_count,
+            discovered_count: guard.discovered_count,
+            candidates: still_withheld,
+        })
+    };
+
+    MissingVideoDecision {
+        missing_ids,
+        suppressed,
+        individually_checked: Some(IndividualCheck {
+            reason: guard.reason,
+            checked_count,
+            confirmed_missing_count,
+        }),
     }
 }
 
@@ -495,6 +608,7 @@ mod tests {
                 candidate_count: 3,
                 known_online_count: 3,
                 discovered_count: 0,
+                candidates: known,
             })
         );
     }
@@ -521,6 +635,7 @@ mod tests {
                 candidate_count: 81,
                 known_online_count: 100,
                 discovered_count: 19,
+                candidates: known[19..].to_vec(),
             })
         );
     }
@@ -635,5 +750,216 @@ mod tests {
     #[test]
     fn removal_of_an_already_offline_video_is_a_no_op() {
         assert_eq!(decide_removal_outcome("offline"), None);
+    }
+}
+
+// The fake lives behind the `testing` feature, so this module only compiles
+// with it enabled; a featureless build/clippy would otherwise fail here.
+#[cfg(all(test, feature = "testing"))]
+mod confirm_tests {
+    use super::*;
+    use crate::testing::fake_path_existence::FakePathExistence;
+
+    fn known_videos(count: usize) -> Vec<KnownOnlineVideo> {
+        (0..count)
+            .map(|i| KnownOnlineVideo {
+                video_id: format!("v{i}"),
+                file_path: format!("\\\\nas\\share\\video{i}.mp4"),
+            })
+            .collect()
+    }
+
+    fn listing(present: &[&KnownOnlineVideo]) -> EnumerationResult {
+        EnumerationResult {
+            root_reachable: true,
+            inaccessible_dirs: vec![],
+            discovered_paths: present.iter().map(|v| v.file_path.clone()).collect(),
+        }
+    }
+
+    #[test]
+    fn single_video_folder_goes_missing_when_os_reports_not_found() {
+        let known = known_videos(1);
+        let decision = decide_missing_video_ids(&known, &listing(&[]));
+        assert_eq!(
+            decision.suppressed.as_ref().map(|g| g.reason),
+            Some(SuppressReason::NothingDiscovered)
+        );
+
+        let confirmed = confirm_suppressed_candidates(decision, &FakePathExistence::default());
+        assert_eq!(confirmed.missing_ids, vec!["v0"]);
+        assert!(confirmed.suppressed.is_none());
+        assert_eq!(
+            confirmed.individually_checked,
+            Some(IndividualCheck {
+                reason: SuppressReason::NothingDiscovered,
+                checked_count: 1,
+                confirmed_missing_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn single_video_folder_stays_suppressed_when_os_reports_present() {
+        let known = known_videos(1);
+        let decision = decide_missing_video_ids(&known, &listing(&[]));
+        let fs = FakePathExistence::with_paths(&["\\\\nas\\share\\video0.mp4"]);
+
+        let confirmed = confirm_suppressed_candidates(decision, &fs);
+        assert!(confirmed.missing_ids.is_empty());
+        assert_eq!(
+            confirmed.suppressed,
+            Some(SuppressedGuard {
+                reason: SuppressReason::NothingDiscovered,
+                candidate_count: 1,
+                known_online_count: 1,
+                discovered_count: 0,
+                candidates: known.clone(),
+            })
+        );
+        assert_eq!(
+            confirmed.individually_checked,
+            Some(IndividualCheck {
+                reason: SuppressReason::NothingDiscovered,
+                checked_count: 1,
+                confirmed_missing_count: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn nothing_discovered_at_the_limit_is_still_checked() {
+        let known = known_videos(MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK);
+        let decision = decide_missing_video_ids(&known, &listing(&[]));
+
+        let confirmed = confirm_suppressed_candidates(decision, &FakePathExistence::default());
+        assert_eq!(
+            confirmed.missing_ids.len(),
+            MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK
+        );
+        assert!(confirmed.suppressed.is_none());
+    }
+
+    #[test]
+    fn nothing_discovered_above_the_limit_is_left_untouched() {
+        let known = known_videos(MAX_CANDIDATES_FOR_INDIVIDUAL_CHECK + 1);
+        let decision = decide_missing_video_ids(&known, &listing(&[]));
+        let before = decision.clone();
+
+        // An empty fake answers NotFound for every path, so any query at all
+        // would have moved candidates into `missing_ids`.
+        let confirmed = confirm_suppressed_candidates(decision, &FakePathExistence::default());
+        assert_eq!(confirmed, before);
+        assert!(confirmed.missing_ids.is_empty());
+        assert_eq!(
+            confirmed.suppressed.map(|g| (g.reason, g.candidate_count)),
+            Some((SuppressReason::NothingDiscovered, 6))
+        );
+        assert!(confirmed.individually_checked.is_none());
+    }
+
+    #[test]
+    fn small_folder_ratio_exceeded_offlines_the_not_found_candidates() {
+        // 4 of 5 missing = 80% with known=5 -> RatioExceeded.
+        let known = known_videos(5);
+        let decision = decide_missing_video_ids(&known, &listing(&[&known[0]]));
+        assert_eq!(
+            decision.suppressed.as_ref().map(|g| g.reason),
+            Some(SuppressReason::RatioExceeded)
+        );
+        let fs = FakePathExistence::with_paths(&["\\\\nas\\share\\video0.mp4"]);
+
+        let confirmed = confirm_suppressed_candidates(decision, &fs);
+        assert_eq!(confirmed.missing_ids, vec!["v1", "v2", "v3", "v4"]);
+        assert!(confirmed.suppressed.is_none());
+        assert_eq!(
+            confirmed.individually_checked,
+            Some(IndividualCheck {
+                reason: SuppressReason::RatioExceeded,
+                checked_count: 4,
+                confirmed_missing_count: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn mixed_answers_offline_the_not_found_and_keep_the_rest_suppressed() {
+        let known = known_videos(5);
+        let decision = decide_missing_video_ids(&known, &listing(&[&known[0]]));
+        // The listing missed video2 and video4; they are actually still there.
+        let fs = FakePathExistence::with_paths(&[
+            "\\\\nas\\share\\video0.mp4",
+            "\\\\nas\\share\\video2.mp4",
+            "\\\\nas\\share\\video4.mp4",
+        ]);
+
+        let confirmed = confirm_suppressed_candidates(decision, &fs);
+        assert_eq!(confirmed.missing_ids, vec!["v1", "v3"]);
+        assert_eq!(
+            confirmed.suppressed,
+            Some(SuppressedGuard {
+                reason: SuppressReason::RatioExceeded,
+                candidate_count: 2,
+                known_online_count: 5,
+                discovered_count: 1,
+                candidates: vec![known[2].clone(), known[4].clone()],
+            })
+        );
+        assert_eq!(
+            confirmed.individually_checked,
+            Some(IndividualCheck {
+                reason: SuppressReason::RatioExceeded,
+                checked_count: 4,
+                confirmed_missing_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn large_folder_ratio_exceeded_stays_suppressed() {
+        let known = known_videos(100);
+        let present: Vec<&KnownOnlineVideo> = known[..19].iter().collect();
+        let decision = decide_missing_video_ids(&known, &listing(&present));
+        let before = decision.clone();
+
+        let confirmed = confirm_suppressed_candidates(decision, &FakePathExistence::default());
+        assert_eq!(confirmed, before);
+        assert!(confirmed.missing_ids.is_empty());
+        assert_eq!(
+            confirmed.suppressed.map(|g| (g.reason, g.candidate_count)),
+            Some((SuppressReason::RatioExceeded, 81))
+        );
+    }
+
+    #[test]
+    fn unsuppressed_decision_is_returned_unchanged() {
+        // 1 of 3 missing, no guard trips. The fake claims the missing one is
+        // present, which must not pull it back: unsuppressed decisions are
+        // never re-checked.
+        let known = known_videos(3);
+        let decision = decide_missing_video_ids(&known, &listing(&[&known[0], &known[1]]));
+        assert_eq!(decision.missing_ids, vec!["v2"]);
+        let before = decision.clone();
+        let fs = FakePathExistence::with_paths(&["\\\\nas\\share\\video2.mp4"]);
+
+        let confirmed = confirm_suppressed_candidates(decision, &fs);
+        assert_eq!(confirmed, before);
+        assert!(confirmed.individually_checked.is_none());
+    }
+
+    #[test]
+    fn unreachable_root_decision_is_returned_unchanged() {
+        let decision = decide_missing_video_ids(
+            &known_videos(2),
+            &EnumerationResult {
+                root_reachable: false,
+                inaccessible_dirs: vec![],
+                discovered_paths: vec![],
+            },
+        );
+        let before = decision.clone();
+
+        let confirmed = confirm_suppressed_candidates(decision, &FakePathExistence::default());
+        assert_eq!(confirmed, before);
     }
 }

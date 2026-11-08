@@ -5,6 +5,9 @@
 
 use std::fs;
 
+use gb_core::ports::path_existence::PathExistence;
+use gb_core::testing::fake_path_existence::FakePathExistence;
+use graybrowser_lib::adapters::path_existence::RealPathExistence;
 use graybrowser_lib::{db, scan};
 
 fn init_temp_db() -> (tempfile::TempDir, db::Db) {
@@ -273,41 +276,67 @@ fn rescanning_an_offline_rows_original_path_reconnects_it_to_online() {
     assert_eq!(status_after, "online");
 }
 
-/// Manual scan's missing-video detection is
-/// the escape hatch for videos the NAS-polling ratio guard can't
-/// self-resolve. This mirrors nas_poll.rs's
-/// `a_lone_known_videos_disappearance_is_held_online_not_flipped_offline` --
-/// with only one known video in the folder, its disappearance makes
-/// discovered_paths empty, tripping decide_missing_video_ids'
-/// NothingDiscovered guard rather than being treated as confirmed deletion.
-#[test]
-fn rescanning_after_a_lone_known_video_disappears_holds_it_online() {
+/// Registers a lone `movie.mp4` in a fresh folder, deletes it, and rescans.
+/// The rescan's per-path follow-up check asks the real filesystem, or, with
+/// `os_still_reports_it`, a fake that claims the file is still there.
+/// Returns the rescan's `went_offline` and the row's `(status, row count)`.
+fn rescan_after_deleting_a_lone_video(os_still_reports_it: bool) -> (u32, String, i64) {
     let (_db_dir, db) = init_temp_db();
     let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     let video_path = scan_dir.path().join("movie.mp4");
     fs::write(&video_path, b"bytes").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
+    let fake = FakePathExistence::with_paths(&[&video_path.to_string_lossy()]);
+    let existence: &dyn PathExistence = if os_still_reports_it {
+        &fake
+    } else {
+        &RealPathExistence
+    };
 
     scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();
     fs::remove_file(&video_path).unwrap();
-    let second =
-        scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();
-
-    assert_eq!(second.went_offline, 0);
-    let conn = db.writer.lock().unwrap();
+    let second = scan::scan_folders_with_existence(
+        &folders,
+        &db,
+        thumbs_root.path(),
+        &scan::AssumeReachable,
+        existence,
+    )
+    .unwrap();
     assert_eq!(second.reactivated, 0);
-    let (status, count): (String, i64) = (
+
+    let conn = db.writer.lock().unwrap();
+    (
+        second.went_offline,
         conn.query_row("SELECT status FROM videos", [], |r| r.get(0))
             .unwrap(),
         conn.query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
             .unwrap(),
-    );
-    assert_eq!(
-        status, "online",
-        "a lone missing file must be held, not flipped offline"
-    );
-    assert_eq!(count, 1, "the row must be kept regardless");
+    )
+}
+
+/// Mirrors nas_poll.rs's
+/// `a_lone_known_videos_deletion_is_confirmed_and_flipped_offline` -- with
+/// only one known video in the folder, its disappearance makes
+/// discovered_paths empty and trips the NothingDiscovered guard, but the
+/// follow-up check of that one path gets NotFound, so it goes offline.
+#[test]
+fn rescanning_after_a_lone_known_video_is_deleted_flips_it_offline() {
+    let (went_offline, status, count) = rescan_after_deleting_a_lone_video(false);
+    assert_eq!(went_offline, 1);
+    assert_eq!(status, "offline");
+    assert_eq!(count, 1, "the row must be kept, only its status changes");
+}
+
+/// Same empty listing, but the OS claims the file is still there (what a
+/// broken listing looks like): the NothingDiscovered guard's hold stands.
+#[test]
+fn rescanning_holds_a_lone_known_video_online_while_the_os_still_reports_it() {
+    let (went_offline, status, count) = rescan_after_deleting_a_lone_video(true);
+    assert_eq!(went_offline, 0);
+    assert_eq!(status, "online");
+    assert_eq!(count, 1);
 }
 
 /// The flip side: a single file missing out of a large-enough library (1 of
