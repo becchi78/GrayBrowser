@@ -135,112 +135,17 @@ pub fn run_nas_diff_scan_with_existence(
     }
 
     let known_rows = queries::list_online_videos_under(&db.read_pool, folder)?;
-    let known_by_path: HashMap<&str, &queries::VideoRow> = known_rows
-        .iter()
-        .map(|r| (r.file_path.as_str(), r))
-        .collect();
+    let ctx = ScanContext {
+        db,
+        thumbnails_root,
+        stop_flag,
+        notifier,
+        follow_up,
+        reachability,
+    };
+    let walk = walk_folder(&ctx, folder, &known_rows);
 
-    let mut discovered_paths = Vec::new();
-    let mut inaccessible_dirs = Vec::new();
-    let mut aborted = false;
-
-    for entry in WalkDir::new(long_path::to_long_path(Path::new(folder))) {
-        if stop_flag.load(Ordering::SeqCst) {
-            aborted = true;
-            break;
-        }
-        match entry {
-            Ok(e) => {
-                if !e.file_type().is_file() {
-                    continue;
-                }
-                let file_name = e.file_name().to_string_lossy().to_string();
-                if !scan_pipeline::is_video_file(&file_name) {
-                    continue;
-                }
-                // Stripped back to plain form immediately (see this fn's
-                // doc comment) -- path_str is used both as the
-                // known_by_path lookup key (must match the DB's plain
-                // file_path exactly) and as the discovered_paths entry fed
-                // into decide_missing_video_ids's prefix match.
-                let entry_path = long_path::strip_long_path_prefix(e.path());
-                let path_str = entry_path.to_string_lossy().to_string();
-
-                let metadata = match e.metadata() {
-                    Ok(m) => m,
-                    Err(err) => {
-                        log::warn!("skipping {path_str} during NAS diff scan: {err}");
-                        continue;
-                    }
-                };
-                let file_size = metadata.len();
-                let mtime = match mtime_from_metadata(&metadata) {
-                    Ok(t) => t,
-                    Err(err) => {
-                        log::warn!("skipping {path_str} during NAS diff scan: {err}");
-                        continue;
-                    }
-                };
-                // Discovered *after* a successful stat, so a file that
-                // vanished between the walk and here isn't counted as
-                // "still present" -- it'll simply be absent from
-                // discovered_paths and picked up by decide_missing_video_ids
-                // like any other genuinely-gone file.
-                discovered_paths.push(path_str.clone());
-
-                let known_meta = known_by_path.get(path_str.as_str()).map(|r| KnownFileMeta {
-                    file_size: r.file_size as u64,
-                    mtime: r.mtime,
-                });
-                let classification = reconcile::classify_discovered_file(
-                    &DiscoveredFile { file_size, mtime },
-                    known_meta.as_ref(),
-                );
-                // Unchanged: the whole point of the cheap filter is to stop
-                // here without ever calling process_detected_file (which
-                // would do its own DB lookup per file) -- this is the
-                // two-stage diff's whole point.
-                if !matches!(classification, FileClassification::Unchanged) {
-                    match scan::process_detected_file(
-                        db,
-                        thumbnails_root,
-                        &entry_path,
-                        file_size,
-                        mtime,
-                        reachability,
-                    ) {
-                        Ok(
-                            scan::ProcessOutcome::Registered
-                            | scan::ProcessOutcome::Reconciled
-                            | scan::ProcessOutcome::PathFollowed { .. },
-                        ) => {
-                            notifier.notify_changed();
-                            follow_up.trigger();
-                        }
-                        // Same reasoning as watch::handle_watch_event: the
-                        // remaining outcomes (Unchanged shouldn't occur here
-                        // given the classification check above,
-                        // SkippedInvalidName/SkippedUnreadable/
-                        // BlockedByCollision) never write, so nothing to
-                        // notify the frontend about.
-                        Ok(_) => {}
-                        Err(err) => {
-                            log::error!("failed to process NAS file {path_str}: {err}");
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                if let Some(path) = err.path() {
-                    let path = long_path::strip_long_path_prefix(path);
-                    inaccessible_dirs.push(format!("{}\\", path.to_string_lossy()));
-                }
-                log::warn!("failed to access a path during NAS diff scan: {err}");
-            }
-        }
-    }
-
-    if aborted {
+    if walk.aborted {
         // discovered_paths is necessarily incomplete here -- running
         // missing-video determination against it would risk exactly the
         // mass-offline failure the broken-enumeration guard exists to
@@ -257,6 +162,170 @@ pub fn run_nas_diff_scan_with_existence(
         return Ok(());
     }
 
+    mark_missing_offline(&ctx, folder, &known_rows, walk, existence)
+}
+
+/// The references every step of one diff-scan pass shares, bundled so the
+/// walk and per-file helpers don't each take the whole argument list again.
+struct ScanContext<'a> {
+    db: &'a Db,
+    thumbnails_root: &'a Path,
+    stop_flag: &'a AtomicBool,
+    notifier: &'a dyn CatalogNotifier,
+    follow_up: &'a FollowUp,
+    reachability: &'a ReachabilityRegistry,
+}
+
+/// What the walk saw. `aborted` means a stop was noticed mid-walk, so the two
+/// lists are incomplete and must not feed the missing-video verdict.
+struct WalkOutcome {
+    discovered_paths: Vec<String>,
+    inaccessible_dirs: Vec<String>,
+    aborted: bool,
+}
+
+/// The walk itself, separate from the per-file work so the stop check and
+/// the collection of inaccessible directories read as one loop.
+fn walk_folder(
+    ctx: &ScanContext<'_>,
+    folder: &str,
+    known_rows: &[queries::VideoRow],
+) -> WalkOutcome {
+    let known_by_path: HashMap<&str, &queries::VideoRow> = known_rows
+        .iter()
+        .map(|r| (r.file_path.as_str(), r))
+        .collect();
+
+    let mut discovered_paths = Vec::new();
+    let mut inaccessible_dirs = Vec::new();
+    let mut aborted = false;
+
+    for entry in WalkDir::new(long_path::to_long_path(Path::new(folder))) {
+        if ctx.stop_flag.load(Ordering::SeqCst) {
+            aborted = true;
+            break;
+        }
+        match entry {
+            Ok(e) => {
+                if let Some(path_str) = handle_walked_file(ctx, &e, &known_by_path) {
+                    discovered_paths.push(path_str);
+                }
+            }
+            Err(err) => {
+                if let Some(path) = err.path() {
+                    let path = long_path::strip_long_path_prefix(path);
+                    inaccessible_dirs.push(format!("{}\\", path.to_string_lossy()));
+                }
+                log::warn!("failed to access a path during NAS diff scan: {err}");
+            }
+        }
+    }
+
+    WalkOutcome {
+        discovered_paths,
+        inaccessible_dirs,
+        aborted,
+    }
+}
+
+/// One walked entry: filter, stat, cheap classification, and the real work
+/// for anything not unchanged. Returns the plain path when the entry counts
+/// as discovered (a video file whose stat succeeded), `None` otherwise.
+fn handle_walked_file(
+    ctx: &ScanContext<'_>,
+    e: &walkdir::DirEntry,
+    known_by_path: &HashMap<&str, &queries::VideoRow>,
+) -> Option<String> {
+    if !e.file_type().is_file() {
+        return None;
+    }
+    let file_name = e.file_name().to_string_lossy().to_string();
+    if !scan_pipeline::is_video_file(&file_name) {
+        return None;
+    }
+    // Stripped back to plain form immediately (see
+    // `run_nas_diff_scan_with_existence`'s doc comment) -- path_str is used
+    // both as the known_by_path lookup key (must match the DB's plain
+    // file_path exactly) and as the discovered_paths entry fed into
+    // decide_missing_video_ids's prefix match.
+    let entry_path = long_path::strip_long_path_prefix(e.path());
+    let path_str = entry_path.to_string_lossy().to_string();
+
+    let metadata = match e.metadata() {
+        Ok(m) => m,
+        Err(err) => {
+            log::warn!("skipping {path_str} during NAS diff scan: {err}");
+            return None;
+        }
+    };
+    let file_size = metadata.len();
+    let mtime = match mtime_from_metadata(&metadata) {
+        Ok(t) => t,
+        Err(err) => {
+            log::warn!("skipping {path_str} during NAS diff scan: {err}");
+            return None;
+        }
+    };
+
+    let known_meta = known_by_path.get(path_str.as_str()).map(|r| KnownFileMeta {
+        file_size: r.file_size as u64,
+        mtime: r.mtime,
+    });
+    let classification = reconcile::classify_discovered_file(
+        &DiscoveredFile { file_size, mtime },
+        known_meta.as_ref(),
+    );
+    // Unchanged: the whole point of the cheap filter is to stop
+    // here without ever calling process_detected_file (which
+    // would do its own DB lookup per file) -- this is the
+    // two-stage diff's whole point.
+    if !matches!(classification, FileClassification::Unchanged) {
+        match scan::process_detected_file(
+            ctx.db,
+            ctx.thumbnails_root,
+            &entry_path,
+            file_size,
+            mtime,
+            ctx.reachability,
+        ) {
+            Ok(
+                scan::ProcessOutcome::Registered
+                | scan::ProcessOutcome::Reconciled
+                | scan::ProcessOutcome::PathFollowed { .. },
+            ) => {
+                ctx.notifier.notify_changed();
+                ctx.follow_up.trigger();
+            }
+            // Same reasoning as watch::handle_watch_event: the
+            // remaining outcomes (Unchanged shouldn't occur here
+            // given the classification check above,
+            // SkippedInvalidName/SkippedUnreadable/
+            // BlockedByCollision) never write, so nothing to
+            // notify the frontend about.
+            Ok(_) => {}
+            Err(err) => {
+                log::error!("failed to process NAS file {path_str}: {err}");
+            }
+        }
+    }
+
+    // Discovered *after* a successful stat, so a file that
+    // vanished between the walk and here isn't counted as
+    // "still present" -- it'll simply be absent from
+    // discovered_paths and picked up by decide_missing_video_ids
+    // like any other genuinely-gone file.
+    Some(path_str)
+}
+
+/// The missing-video verdict over a complete walk, and its write. Kept apart
+/// from the walk so it only ever sees a walk that was not aborted.
+fn mark_missing_offline(
+    ctx: &ScanContext<'_>,
+    folder: &str,
+    known_rows: &[queries::VideoRow],
+    walk: WalkOutcome,
+    existence: &dyn PathExistence,
+) -> anyhow::Result<()> {
     let known_online: Vec<KnownOnlineVideo> = known_rows
         .iter()
         .map(|r| KnownOnlineVideo {
@@ -266,8 +335,8 @@ pub fn run_nas_diff_scan_with_existence(
         .collect();
     let diff = EnumerationResult {
         root_reachable: true,
-        inaccessible_dirs,
-        discovered_paths,
+        inaccessible_dirs: walk.inaccessible_dirs,
+        discovered_paths: walk.discovered_paths,
     };
     let decision = reconcile::confirm_suppressed_candidates(
         reconcile::decide_missing_video_ids(&known_online, &diff),
@@ -297,12 +366,12 @@ pub fn run_nas_diff_scan_with_existence(
     }
     if !decision.missing_ids.is_empty() {
         {
-            let conn = db.writer.lock().unwrap();
+            let conn = ctx.db.writer.lock().unwrap();
             for id in &decision.missing_ids {
                 queries::update_video_status(&conn, id, "offline")?;
             }
         }
-        notifier.notify_changed();
+        ctx.notifier.notify_changed();
         log::info!(
             "NAS diff scan: {} video(s) went offline under {folder}",
             decision.missing_ids.len()
