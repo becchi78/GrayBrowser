@@ -36,6 +36,18 @@
 use gb_core::wb_import::WbImportStage;
 use tauri::Emitter;
 
+/// Emit failures are only logged: a notification the frontend misses must not
+/// fail the backend operation that triggered it.
+fn emit_or_log<R: tauri::Runtime, S: serde::Serialize + Clone>(
+    app: &tauri::AppHandle<R>,
+    event: &str,
+    payload: S,
+) {
+    if let Err(e) = app.emit(event, payload) {
+        log::error!("failed to emit {event}: {e}");
+    }
+}
+
 pub trait CatalogNotifier: Send + Sync {
     /// Notifies the frontend that `list_videos`'s result may have changed.
     fn notify_changed(&self);
@@ -61,9 +73,7 @@ impl<R: tauri::Runtime> CatalogNotifier for TauriCatalogNotifier<R> {
     /// (`src/components/ThumbnailGrid.tsx`) rather than trying to reconcile
     /// a diff, so there's nothing useful to carry beyond "something changed".
     fn notify_changed(&self) {
-        if let Err(e) = self.app.emit("catalog:changed", ()) {
-            log::error!("failed to emit catalog:changed: {e}");
-        }
+        emit_or_log(&self.app, "catalog:changed", ());
     }
 
     fn notify_thumbnail_progress(&self, done: u32, total: u32) {
@@ -72,12 +82,7 @@ impl<R: tauri::Runtime> CatalogNotifier for TauriCatalogNotifier<R> {
             done: u32,
             total: u32,
         }
-        if let Err(e) = self
-            .app
-            .emit("thumbnail:progress", Progress { done, total })
-        {
-            log::error!("failed to emit thumbnail:progress: {e}");
-        }
+        emit_or_log(&self.app, "thumbnail:progress", Progress { done, total });
     }
 }
 
@@ -228,34 +233,27 @@ impl<R: tauri::Runtime> WbImportNotifier for TauriWbImportNotifier<R> {
             processed: u32,
             total: Option<u32>,
         }
-        if let Err(e) = self.app.emit(
+        emit_or_log(
+            &self.app,
             "wb_import:progress",
             Progress {
                 stage: stage.as_str(),
                 processed,
                 total,
             },
-        ) {
-            log::error!("failed to emit wb_import:progress: {e}");
-        }
+        );
     }
 
     fn notify_complete(&self, summary: &WbImportSummary) {
-        if let Err(e) = self.app.emit("wb_import:complete", summary) {
-            log::error!("failed to emit wb_import:complete: {e}");
-        }
+        emit_or_log(&self.app, "wb_import:complete", summary);
     }
 
     fn notify_failed(&self, reason: &str) {
-        if let Err(e) = self.app.emit("wb_import:failed", reason) {
-            log::error!("failed to emit wb_import:failed: {e}");
-        }
+        emit_or_log(&self.app, "wb_import:failed", reason);
     }
 
     fn notify_stage(&self, stage: WbImportStage) {
-        if let Err(e) = self.app.emit("wb_import:stage", stage.as_str()) {
-            log::error!("failed to emit wb_import:stage: {e}");
-        }
+        emit_or_log(&self.app, "wb_import:stage", stage.as_str());
     }
 }
 
@@ -342,9 +340,7 @@ impl<R: tauri::Runtime> TauriDedupNotifier<R> {
 
 impl<R: tauri::Runtime> DedupNotifier for TauriDedupNotifier<R> {
     fn notify_updated(&self, groups: &[crate::dedup::DuplicateGroup]) {
-        if let Err(e) = self.app.emit("dedup:updated", groups) {
-            log::error!("failed to emit dedup:updated: {e}");
-        }
+        emit_or_log(&self.app, "dedup:updated", groups);
     }
 }
 
@@ -378,9 +374,7 @@ impl<R: tauri::Runtime> TauriReachabilityNotifier<R> {
 
 impl<R: tauri::Runtime> ReachabilityNotifier for TauriReachabilityNotifier<R> {
     fn notify_changed(&self, unreachable: &[String]) {
-        if let Err(e) = self.app.emit("reachability:changed", unreachable) {
-            log::error!("failed to emit reachability:changed: {e}");
-        }
+        emit_or_log(&self.app, "reachability:changed", unreachable);
     }
 }
 

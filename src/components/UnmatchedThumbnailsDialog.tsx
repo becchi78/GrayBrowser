@@ -7,6 +7,8 @@ import {
 } from "../api";
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
+import { withoutKey } from "../lib/withoutKey";
+import { useEscapeKey } from "../useEscapeKey";
 import {
   filterUnmatchedByKind,
   overwriteNotice,
@@ -171,27 +173,12 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
     };
   }, []);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
-  function withoutError(errors: Record<string, string>, key: string) {
-    const next = { ...errors };
-    delete next[key];
-    return next;
-  }
+  useEscapeKey(onClose);
 
   function removeRow(key: string) {
     setRows((prev) => prev && prev.filter((r) => unmatchedRowKey(r) !== key));
     setOpenKey((prev) => (prev === key ? null : prev));
-    setRowErrors((prev) => withoutError(prev, key));
+    setRowErrors((prev) => withoutKey(prev, key));
   }
 
   async function runRowAction(row: UnmatchedThumbnailDto, action: () => Promise<void>) {
@@ -199,7 +186,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
     inFlightRef.current = true;
     const key = unmatchedRowKey(row);
     setBusyKey(key);
-    setRowErrors((prev) => withoutError(prev, key));
+    setRowErrors((prev) => withoutKey(prev, key));
     try {
       await action();
       removeRow(key);

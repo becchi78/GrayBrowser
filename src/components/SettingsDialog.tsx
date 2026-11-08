@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../useEscapeKey";
 import {
   getNasPollIntervalMinutes,
   getRestoreViewStateEnabled,
@@ -85,16 +86,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   }, [loading]);
 
   // 保存中は閉じない(結果が見えないまま閉じて、二重実行や中途半端な状態を作らない)。
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && !saving) {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, saving]);
+  useEscapeKey(onClose, !saving);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

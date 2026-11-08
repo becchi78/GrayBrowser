@@ -33,6 +33,7 @@ import {
 import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
 import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
+import { useMenuOpen } from "./useMenuOpen";
 import { INITIAL_VIEW_STATE, fromSaved, isSameViewState, toSaved, type ViewState } from "./lib/viewState";
 
 // Only "default" exists today. New styles (e.g. "grid") get added here as
@@ -157,39 +158,13 @@ function AppContent({ initialView }: { initialView: ViewState }) {
     saveInfoPaneCollapsed(next).catch((e) => console.error(e));
   };
 
-  useEffect(() => {
-    const unlistenFolder = onMenuOpenFolderDialog(() => setFolderDialogOpen(true));
-    const unlistenWbImport = onMenuOpenWbImportDialog(() => setWbImportDialogOpen(true));
-    return () => {
-      unlistenFolder();
-      unlistenWbImport();
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onMenuOpenTagBarDialog(() => setTagBarDialogOpen(true));
-    return () => unlisten();
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onMenuOpenSettingsDialog(() => setSettingsDialogOpen(true));
-    return () => unlisten();
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onMenuCheckUpdate(() => setUpdateDialogOpen(true));
-    return () => unlisten();
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onMenuAbout(() => setAboutDialogOpen(true));
-    return () => unlisten();
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onMenuOpenLogDialog(() => setLogDialogOpen(true));
-    return () => unlisten();
-  }, []);
+  useMenuOpen(onMenuOpenFolderDialog, setFolderDialogOpen);
+  useMenuOpen(onMenuOpenWbImportDialog, setWbImportDialogOpen);
+  useMenuOpen(onMenuOpenTagBarDialog, setTagBarDialogOpen);
+  useMenuOpen(onMenuOpenSettingsDialog, setSettingsDialogOpen);
+  useMenuOpen(onMenuCheckUpdate, setUpdateDialogOpen);
+  useMenuOpen(onMenuAbout, setAboutDialogOpen);
+  useMenuOpen(onMenuOpenLogDialog, setLogDialogOpen);
 
   useEffect(() => {
     const unlistenStyle = onMenuStyleSelected((style) => {

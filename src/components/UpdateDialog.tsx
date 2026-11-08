@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../useEscapeKey";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate } from "../api";
@@ -89,16 +90,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
 
   const dismissible = canDismiss(state);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && dismissible) {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, dismissible]);
+  useEscapeKey(onClose, dismissible);
 
   // 状態が変わって主ボタンが現れたら、キーボードですぐ押せるようにする。
   useEffect(() => {

@@ -112,7 +112,7 @@ pub fn normalize_folder_path(folder_path: &str) -> String {
 /// *not* conflict (different folders that merely share a string prefix),
 /// while `C:\Videos` and `C:\Videos\Sub` (either direction) do. Comparison
 /// is case-insensitive (ASCII-folded), matching NTFS path semantics --
-/// same convention `reconcile::is_under` already uses for path comparison.
+/// same convention `reconcile` already uses for path comparison.
 pub fn folder_paths_conflict(a: &str, b: &str) -> bool {
     let a = normalize_folder_path(a).to_lowercase();
     let b = normalize_folder_path(b).to_lowercase();

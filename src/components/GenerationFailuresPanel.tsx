@@ -11,6 +11,7 @@ import {
 import { onCatalogChanged } from "../events";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { splitDirAndFileName } from "../lib/paths";
+import { withoutItem } from "../lib/withoutKey";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "../types";
 
 const EMPTY: GenerationFailuresDto = { thumbnail_failures: [], metadata_failures: [] };
@@ -96,11 +97,10 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
     return `${kind}:${id}`;
   }
 
-  async function handleRetryThumbnail(video: ExhaustedThumbnailDto) {
-    const key = retryKey("thumbnail", video.id);
+  async function runRetry(key: string, retry: () => Promise<unknown>) {
     setRetrying((prev) => new Set(prev).add(key));
     try {
-      await retryThumbnailGeneration(video.id);
+      await retry();
       // The success/failure of the retry itself surfaces via catalog:changed
       // (which triggers refresh() above), so this list is not updated
       // optimistically here.
@@ -108,29 +108,16 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
       console.error(e);
       setError(String(e));
     } finally {
-      setRetrying((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
+      setRetrying((prev) => withoutItem(prev, key));
     }
   }
 
-  async function handleRetryMetadata(video: ExhaustedMetadataDto) {
-    const key = retryKey("metadata", video.id);
-    setRetrying((prev) => new Set(prev).add(key));
-    try {
-      await retryMetadataProbe(video.id);
-    } catch (e) {
-      console.error(e);
-      setError(String(e));
-    } finally {
-      setRetrying((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-    }
+  function handleRetryThumbnail(video: ExhaustedThumbnailDto) {
+    return runRetry(retryKey("thumbnail", video.id), () => retryThumbnailGeneration(video.id));
+  }
+
+  function handleRetryMetadata(video: ExhaustedMetadataDto) {
+    return runRetry(retryKey("metadata", video.id), () => retryMetadataProbe(video.id));
   }
 
   async function handleBulkClick(kind: BulkKind) {

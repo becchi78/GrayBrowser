@@ -194,11 +194,15 @@ pub fn decide_missing_video_ids(
     let candidates: Vec<&KnownOnlineVideo> = known_online
         .iter()
         .filter(|v| !discovered.contains(v.file_path.as_str()))
+        // Shares `is_under_folder` with the unreachable-folder check so the two
+        // cannot drift apart on case or separator handling. `dir` always ends
+        // in a separator already (see `nas_poll`'s inaccessible-dir
+        // collection), which that function accepts as-is.
         .filter(|v| {
             !diff
                 .inaccessible_dirs
                 .iter()
-                .any(|dir| is_under(&v.file_path, dir))
+                .any(|dir| crate::paths::is_under_folder(&v.file_path, dir))
         })
         .collect();
 
@@ -236,14 +240,6 @@ pub fn decide_missing_video_ids(
         missing_ids: candidates.into_iter().map(|v| v.video_id.clone()).collect(),
         suppressed: None,
     }
-}
-
-/// Shares `paths::is_under_folder` with the unreachable-folder check so the
-/// two cannot drift apart on case or separator handling. `dir` here always
-/// ends in a separator already (see `nas_poll`'s inaccessible-dir
-/// collection), which that function accepts as-is.
-fn is_under(file_path: &str, dir: &str) -> bool {
-    crate::paths::is_under_folder(file_path, dir)
 }
 
 /// The local realtime watcher's per-event removal decision. Unlike
