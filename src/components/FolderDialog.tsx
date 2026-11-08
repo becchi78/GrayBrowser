@@ -423,7 +423,7 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
             <p>
               このフォルダの登録を解除します。配下の{" "}
               <strong>{deleteTarget.count}</strong>{" "}
-              件の動画について、GrayBrowser上のタグ・評価・登録日の情報が失われます（動画ファイル自体は削除されません）。
+              件の動画について、GrayBrowser上のタグ・レーティング・登録日の情報が失われます（動画ファイル自体は削除されません）。
             </p>
             <p className="folder-delete-confirm-path">{deleteTarget.path}</p>
             <div className="dialog-footer">

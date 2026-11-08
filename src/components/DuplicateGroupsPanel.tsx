@@ -196,7 +196,7 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
             <p>このカタログ登録を解除します。</p>
             <p className="confirm-dialog-path">{pending.member.file_path}</p>
             <p>
-              元の動画ファイルは削除されません。GrayBrowser上のタグ・評価などカタログの情報は失われます。
+              元の動画ファイルは削除されません。GrayBrowser上のタグ・レーティングなどカタログの情報は失われます。
             </p>
           </>
         )}

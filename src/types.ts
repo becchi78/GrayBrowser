@@ -30,7 +30,7 @@ export interface SkippedFileDto {
 }
 
 export interface MissingRegistrationResult {
-  /** `false` のとき、.wbの情報がなくタグ・評価は付いていない。 */
+  /** `false` のとき、.wbの情報がなくタグ・レーティングは付いていない。 */
   carried_wb_data: boolean;
 }
 

@@ -34,7 +34,7 @@ interface Props {
 }
 
 // Left pane: resizable, vertically scrollable column of the three
-// collapsible filter sections (フォルダ / 評価 / タグ).
+// collapsible filter sections (フォルダ / レーティング / タグ).
 export function LeftPane({
   folderPath,
   onFolderPathChange,
@@ -125,7 +125,7 @@ export function LeftPane({
         <SidebarSection
           id="rating"
           icon={<StarIcon className="sidebar-section-icon sidebar-section-icon--rating" />}
-          title="評価"
+          title="レーティング"
           collapsed={collapsed.rating}
           onToggle={() => handleToggle("rating")}
         >

@@ -562,7 +562,7 @@ pub fn format_summary(s: &LogSummary) -> String {
          (合計 {registered_sum}: {reg_verdict})\n\
          スコアを5に丸めた行: {clamped}\n\
          タグ: 割り当て {tags_assigned} / 元データ {source_tags}\n\
-         星タグから決めた評価: {stars}\n\
+         星タグから決めたレーティング: {stars}\n\
          旧サムネイル: 紐付け {linked} (うち名前の一致で自動 {by_name}) / 失敗 {thumb_failed} / 対応なし {unmatched} (ハッシュが空 {empty_hash} / 対応する動画なし {no_video}) / 動画から生成するため未使用 {skipped_online}\n",
         total = s.total,
         registered = s.registered,

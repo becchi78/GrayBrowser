@@ -1301,11 +1301,12 @@ button.search-box-clear {
   gap: 0.2em;
 }
 
-/* ★の色は背景の明暗で変えるため変数にしておく(ダーク側は下の
-   prefers-color-scheme ブロックで上書き)。未選択は同じ黄色を薄くして、
-   色相は揃えたまま選択状態だけ区別する。 */
+/* ★の色は左ペインのレーティング見出しのアイコン(.sidebar-section-icon--rating)
+   と同じ青にそろえる。ライト/ダークどちらの背景でも沈まない明度の固定色なので、
+   ダーク側での上書きはしない。未選択は同じ青を薄くして、色相は揃えたまま
+   選択状態だけ区別する。 */
 :root {
-  --star-color: #f5c518;
+  --star-color: #3b82f6;
 }
 
 .star {
@@ -2011,7 +2012,6 @@ button.link-button:focus-visible {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
-    --star-color: #ffd54a;
   }
 
   input,

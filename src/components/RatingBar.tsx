@@ -11,7 +11,7 @@ interface Props {
 export function RatingBar({ value, onChange }: Props) {
   const allActive = value.length === 0;
   return (
-    <div className="rating-bar" data-testid="rating-bar" role="group" aria-label="評価で絞り込み">
+    <div className="rating-bar" data-testid="rating-bar" role="group" aria-label="レーティングで絞り込み">
       <button
         type="button"
         className={allActive ? "rating-bar-item rating-bar-item--active" : "rating-bar-item"}
