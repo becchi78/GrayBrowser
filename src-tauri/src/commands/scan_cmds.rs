@@ -193,7 +193,7 @@ fn scan_reachable_folders(
     thumbnails_root: &std::path::Path,
 ) -> anyhow::Result<scan::ScanSummary> {
     let (reachable, unreachable) = partition_by_reachability(folders, reachability);
-    let mut summary = scan::scan_folders(&reachable, db, thumbnails_root)?;
+    let mut summary = scan::scan_folders(&reachable, db, thumbnails_root, reachability)?;
     summary.unreachable_folders = unreachable;
     Ok(summary)
 }
@@ -667,7 +667,7 @@ mod tests {
         let down_path = down.path().to_string_lossy().to_string();
         let up_path = up.path().to_string_lossy().to_string();
         let folders = vec![down_path.clone(), up_path.clone()];
-        scan::scan_folders(&folders, &db, thumbs.path()).unwrap();
+        scan::scan_folders(&folders, &db, thumbs.path(), &crate::scan::AssumeReachable).unwrap();
 
         // The share looks empty, as a dead mount can.
         std::fs::remove_file(down.path().join("a.mp4")).unwrap();

@@ -354,6 +354,126 @@ fn list_online_videos_under_filters_by_prefix_case_insensitively() {
 }
 
 #[test]
+fn list_online_videos_under_stops_at_the_folder_boundary() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+    for (id, path) in [
+        ("in", "D:\\video\\a.mp4"),
+        ("deep", "D:\\video\\sub\\b.mp4"),
+        ("sibling", "D:\\video2\\c.mp4"),
+        ("prefix-name", "D:\\videos-old\\d.mp4"),
+        ("slashes", "D:/video/e.mp4"),
+    ] {
+        insert_test_video(
+            &conn,
+            id,
+            path,
+            id,
+            1,
+            "online",
+            None,
+            "2026-01-01 00:00:00",
+        );
+    }
+    drop(conn);
+
+    for folder in ["D:\\video", "D:\\video\\", "d:\\VIDEO"] {
+        let rows = queries::list_online_videos_under(&db.read_pool, folder).unwrap();
+        let mut ids: Vec<&str> = rows.iter().map(|v| v.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["deep", "in", "slashes"], "folder {folder:?}");
+    }
+}
+
+#[test]
+fn mark_videos_offline_flips_only_online_rows_and_counts_them() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    insert_test_video(
+        &conn,
+        "a",
+        "D:\\a.mp4",
+        "ha",
+        1,
+        "online",
+        None,
+        "2026-01-01 00:00:00",
+    );
+    insert_test_video(
+        &conn,
+        "b",
+        "D:\\b.mp4",
+        "hb",
+        1,
+        "offline",
+        None,
+        "2026-01-01 00:00:00",
+    );
+    insert_test_video(
+        &conn,
+        "c",
+        "D:\\c.mp4",
+        "hc",
+        1,
+        "online",
+        None,
+        "2026-01-01 00:00:00",
+    );
+
+    let changed = queries::mark_videos_offline(
+        &mut conn,
+        &["a".to_string(), "b".to_string(), "missing".to_string()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        changed, 1,
+        "b was already offline and missing does not exist"
+    );
+    let status = |id: &str| -> String {
+        conn.query_row("SELECT status FROM videos WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(status("a"), "offline");
+    assert_eq!(status("b"), "offline");
+    assert_eq!(status("c"), "online");
+    assert_eq!(queries::mark_videos_offline(&mut conn, &[]).unwrap(), 0);
+}
+
+#[test]
+fn mark_videos_offline_handles_more_ids_than_a_statement_can_bind() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    let tx = conn.transaction().unwrap();
+    let mut ids = Vec::new();
+    for i in 0..40_000 {
+        let id = format!("id{i}");
+        tx.execute(
+            "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
+             VALUES (?1, ?2, 'v.mp4', 1, ?3, 'online')",
+            params![id, format!("D:\\v\\{i}.mp4"), format!("h{i}")],
+        )
+        .unwrap();
+        ids.push(id);
+    }
+    tx.commit().unwrap();
+
+    let changed = queries::mark_videos_offline(&mut conn, &ids).unwrap();
+
+    assert_eq!(changed, 40_000);
+    let online: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM videos WHERE status = 'online'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(online, 0);
+}
+
+#[test]
 fn update_video_scan_metadata_updates_size_mtime_and_hash() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();

@@ -5,6 +5,7 @@ pub mod dedup;
 pub mod events;
 pub mod logging;
 pub mod metadata;
+pub mod offline_sync;
 pub mod paths;
 pub mod reachability;
 pub mod scan;
@@ -105,6 +106,7 @@ pub fn run() {
 
             let dedup_state = dedup::DuplicateGroupsState::default();
             app.manage(dedup_state.clone());
+            let dedup_state_for_sync = dedup_state.clone();
 
             // Which watch folders cannot be reached right now. Nothing is
             // probed here: the first probe of a folder happens on whichever
@@ -223,9 +225,46 @@ pub fn run() {
             // A folder coming back resumes the work that was skipped while
             // it was down. The registry and the follow-up reference each
             // other, which is fine: both live for the whole process.
+            //
+            // The stored status follows the confirmed transitions too: the
+            // folder's videos go offline when it is lost, and its own diff
+            // scan brings back the files that are still there when it returns.
+            // Both only enqueue; the worker does the writes and the scan.
+            let folder_sync = std::sync::Arc::new(offline_sync::FolderStateSync::start(
+                offline_sync::SyncContext {
+                    db: db.clone(),
+                    thumbnails_root: thumbnails_root.clone(),
+                    notifier: notifier.clone(),
+                    follow_up: std::sync::Arc::clone(&follow_up),
+                    reachability: reachability.clone(),
+                    refresh_duplicates: {
+                        let db = db.clone();
+                        let reachability = reachability.clone();
+                        let handle = app.handle().clone();
+                        std::sync::Arc::new(move || {
+                            dedup::refresh_duplicate_groups(
+                                db.clone(),
+                                dedup_state_for_sync.clone(),
+                                std::sync::Arc::new(events::TauriDedupNotifier::new(
+                                    handle.clone(),
+                                )),
+                                reachability.clone(),
+                            );
+                        })
+                    },
+                },
+            ));
             {
                 let follow_up = std::sync::Arc::clone(&follow_up);
-                reachability.set_on_recovered(move || follow_up.trigger());
+                let folder_sync = std::sync::Arc::clone(&folder_sync);
+                reachability.set_on_recovered(move |folder| {
+                    follow_up.trigger();
+                    folder_sync.on_recovered(folder);
+                });
+            }
+            {
+                let folder_sync = std::sync::Arc::clone(&folder_sync);
+                reachability.set_on_unreachable(move |folder| folder_sync.on_unreachable(folder));
             }
             // Detached on purpose: it runs for the life of the process.
             let _ = reachability.start_recheck(reachability::DEFAULT_RECHECK_INTERVAL);

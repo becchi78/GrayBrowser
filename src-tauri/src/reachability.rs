@@ -1,12 +1,25 @@
 //! In-memory record of which watch folders can be reached right now.
 //!
-//! A video's `status` is deliberately left alone when its folder goes
-//! unreachable: "cannot list the share" is not "the files were deleted", and
-//! flipping rows offline on a transient outage would be the mass-offline
-//! failure the scan guards exist to prevent. This registry carries the
-//! "unreachable right now" fact separately, in memory only, so the screens can
-//! show it and the background workers can avoid opening files on a dead share
-//! (each attempt blocks for tens of seconds and burns a retry).
+//! This registry carries the "unreachable right now" fact in memory so the
+//! screens can show it and the background workers can avoid opening files on a
+//! dead share (each attempt blocks for tens of seconds and burns a retry).
+//!
+//! The stored `status` follows the fact only at its confirmed transitions, via
+//! the `set_on_unreachable` / `set_on_recovered` hooks, so that what is stored
+//! matches what the screens show. Without that, a video whose folder was
+//! renamed or unplugged would still be `online` in the catalog, and moving it
+//! to another watch folder would be registered as a second video instead of
+//! being followed (only `offline` rows are move candidates).
+//!
+//! Only a confirmed answer is acted on. The provisional flag (raised while a
+//! slow probe is still running) is a display aid that the answer may retract,
+//! and rows flipped on it would have to be flipped back for nothing. Going
+//! unreachable is not "the files were deleted", so the hook only flips rows
+//! to `offline` and never deletes or unregisters anything. Coming back is
+//! deliberately not a bulk "set online" either: whether each file is still
+//! there (and unchanged) is for the regular scan to decide, which also keeps
+//! rows that were never backed by a real file (imported placeholders) from
+//! being marked online.
 //!
 //! Probing a dead share blocks inside the OS, so every probe happens on the
 //! caller's thread and the registry makes sure a folder is never probed by two
@@ -40,6 +53,10 @@ enum Slot {
     Probing {
         token: u64,
         shown: bool,
+        /// The folder had settled as unreachable before this probe began (a
+        /// re-probe), as opposed to a first probe, a probe of a folder that
+        /// was reachable, or one of a folder that was forgotten.
+        was_unreachable: bool,
     },
     Reachable,
     Unreachable,
@@ -80,8 +97,14 @@ struct Inner {
     /// Called when a folder comes back. A hook rather than a `FollowUp` field
     /// because the follow-up's own action needs this registry to filter what
     /// it enqueues, so the two cannot be built in either order otherwise.
-    on_recovered: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    on_recovered: Mutex<Option<FolderHook>>,
+    /// Called when a folder is confirmed unreachable (see the module doc for
+    /// what "confirmed" excludes).
+    on_unreachable: Mutex<Option<FolderHook>>,
 }
+
+/// A transition callback; it receives the folder as registered.
+type FolderHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 impl Inner {
     fn unreachable_folders(&self) -> Vec<String> {
@@ -185,7 +208,7 @@ impl Drop for ProbeGuard<'_> {
         let was_shown = {
             let mut slots = lock(&self.inner.slots);
             let shown = match slots.get(self.folder).copied() {
-                Some(Slot::Probing { token, shown }) if token == self.token => {
+                Some(Slot::Probing { token, shown, .. }) if token == self.token => {
                     if self.restore_unreachable {
                         // Published before and after: nothing to announce.
                         slots.insert(self.folder.to_string(), Slot::Unreachable);
@@ -225,7 +248,7 @@ impl ReachabilityRegistry {
         Self::with_provisional_after(probe, notifier, DEFAULT_PROVISIONAL_AFTER)
     }
 
-    fn with_provisional_after(
+    pub(crate) fn with_provisional_after(
         probe: Arc<dyn FolderProbe>,
         notifier: Arc<dyn ReachabilityNotifier>,
         provisional_after: Duration,
@@ -245,14 +268,29 @@ impl ReachabilityRegistry {
                 waiters: std::sync::atomic::AtomicUsize::new(0),
                 emit_gate: Mutex::new(()),
                 on_recovered: Mutex::new(None),
+                on_unreachable: Mutex::new(None),
             }),
         }
     }
 
     /// Registers what to run when a previously unreachable folder is reachable
-    /// again (used to resume the thumbnail/metadata work that was skipped).
-    pub fn set_on_recovered(&self, hook: impl Fn() + Send + Sync + 'static) {
+    /// again (used to resume the thumbnail/metadata work that was skipped and
+    /// to bring the folder's videos back online).
+    ///
+    /// The hook runs synchronously on the thread that finished the probe, which
+    /// may be a worker that other threads are waiting behind: it must only hand
+    /// the work to another thread, never do it.
+    pub fn set_on_recovered(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
         *lock(&self.inner.on_recovered) = Some(Arc::new(hook));
+    }
+
+    /// Registers what to run when a folder is confirmed unreachable: a probe
+    /// answered "unreachable" and had not already said so. The provisional flag
+    /// raised while a slow probe is still running does not count, and neither
+    /// does a re-probe of a folder that was already unreachable. Same threading
+    /// rule as `set_on_recovered`.
+    pub fn set_on_unreachable(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
+        *lock(&self.inner.on_unreachable) = Some(Arc::new(hook));
     }
 
     /// Whether `folder` is reachable, probing it only if it has never been
@@ -310,6 +348,21 @@ impl ReachabilityRegistry {
     /// flagged provisionally.
     pub fn unreachable_folders(&self) -> Vec<String> {
         self.inner.unreachable_folders()
+    }
+
+    /// Whether `folder`'s last settled answer is "unreachable", also while a
+    /// re-probe of such a folder is running. Unlike `unreachable_folders` this
+    /// leaves out the provisional flag of a first probe, which its answer may
+    /// retract; it never probes.
+    pub fn is_settled_unreachable(&self, folder: &str) -> bool {
+        matches!(
+            lock(&self.inner.slots).get(folder),
+            Some(Slot::Unreachable)
+                | Some(Slot::Probing {
+                    was_unreachable: true,
+                    ..
+                })
+        )
     }
 
     /// Starts the one thread that probes the currently unreachable folders
@@ -423,6 +476,7 @@ impl ReachabilityRegistry {
             Slot::Probing {
                 token,
                 shown: already_published,
+                was_unreachable: already_published,
             },
         );
         drop(slots);
@@ -448,7 +502,9 @@ impl ReachabilityRegistry {
             // forgotten mid-probe; the answer is still returned to the caller
             // but not recorded.
             let shown = match slots.get(folder).copied() {
-                Some(Slot::Probing { token: t, shown }) if t == token => Some(shown),
+                Some(Slot::Probing {
+                    token: t, shown, ..
+                }) if t == token => Some(shown),
                 _ => None,
             };
             if shown.is_some() {
@@ -479,10 +535,14 @@ impl ReachabilityRegistry {
                 log::info!("folder is reachable again: {folder}");
                 let hook = lock(&inner.on_recovered).clone();
                 if let Some(hook) = hook {
-                    hook();
+                    hook(folder);
                 }
             } else if !reachable && !was_unreachable {
                 log::warn!("folder is unreachable: {folder}");
+                let hook = lock(&inner.on_unreachable).clone();
+                if let Some(hook) = hook {
+                    hook(folder);
+                }
             }
         }
         reachable
@@ -538,7 +598,14 @@ impl ReachabilityRegistry {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
-        slots.insert(folder.to_string(), Slot::Probing { token, shown: true });
+        slots.insert(
+            folder.to_string(),
+            Slot::Probing {
+                token,
+                shown: true,
+                was_unreachable: false,
+            },
+        );
         drop(slots);
         self.emit_current();
     }
@@ -681,7 +748,7 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -702,13 +769,158 @@ mod tests {
         );
     }
 
+    type Calls = Arc<Mutex<Vec<String>>>;
+
+    /// Registers recording hooks and returns what they were called with, as
+    /// `(unreachable, recovered)`.
+    fn record_hooks(registry: &ReachabilityRegistry) -> (Calls, Calls) {
+        let unreachable: Calls = Arc::default();
+        let recovered: Calls = Arc::default();
+        {
+            let unreachable = unreachable.clone();
+            registry.set_on_unreachable(move |folder| {
+                unreachable.lock().unwrap().push(folder.to_string());
+            });
+        }
+        {
+            let recovered = recovered.clone();
+            registry.set_on_recovered(move |folder| {
+                recovered.lock().unwrap().push(folder.to_string());
+            });
+        }
+        (unreachable, recovered)
+    }
+
+    fn names(calls: &Calls) -> Vec<String> {
+        calls.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn a_confirmed_unreachable_answer_runs_the_hook_once_with_the_folder() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
+        let (unreachable, recovered) = record_hooks(&registry);
+
+        assert!(!registry.is_reachable(NAS));
+        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
+
+        // Still down: neither a cached read nor a re-probe is a new transition.
+        assert!(!registry.is_reachable(NAS));
+        assert!(!registry.refresh(NAS));
+        assert!(!registry.refresh(NAS));
+        assert_eq!(probe.call_count_for(NAS), 3);
+        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
+        assert!(names(&recovered).is_empty());
+    }
+
+    #[test]
+    fn a_first_probe_that_finds_the_folder_up_does_not_run_the_unreachable_hook() {
+        let (registry, _, _) = registry_with(FakeFolderProbe::default());
+        let (unreachable, _) = record_hooks(&registry);
+
+        assert!(registry.is_reachable(NAS));
+        assert!(registry.refresh(NAS));
+
+        assert!(names(&unreachable).is_empty());
+    }
+
+    #[test]
+    fn going_down_after_being_up_runs_the_unreachable_hook_each_time() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::default());
+        let (unreachable, recovered) = record_hooks(&registry);
+        registry.is_reachable(NAS);
+
+        probe.set_reachable(NAS, false);
+        registry.refresh(NAS);
+        probe.set_reachable(NAS, true);
+        registry.refresh(NAS);
+        probe.set_reachable(NAS, false);
+        registry.refresh(NAS);
+
+        assert_eq!(names(&unreachable), vec![NAS.to_string(), NAS.to_string()]);
+        assert_eq!(names(&recovered), vec![NAS.to_string()]);
+    }
+
+    #[test]
+    fn concurrent_callers_sharing_one_unreachable_probe_run_the_hook_once() {
+        let probe =
+            FakeFolderProbe::with_unreachable(&[NAS]).with_delay(Duration::from_millis(150));
+        let (registry, _, _) = registry_with(probe);
+        let (unreachable, _) = record_hooks(&registry);
+
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let registry = registry.clone();
+                thread::spawn(move || registry.is_reachable(NAS))
+            })
+            .collect();
+        for t in threads {
+            assert!(!t.join().unwrap());
+        }
+
+        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
+    }
+
+    #[test]
+    fn a_first_probe_after_startup_that_is_slow_and_unreachable_runs_the_hook_after_the_answer() {
+        let (registry, probe, notifier) = gated_registry(false);
+        let (unreachable, _) = record_hooks(&registry);
+
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+        assert!(
+            names(&unreachable).is_empty(),
+            "the provisional flag is not a confirmation"
+        );
+
+        probe.release();
+        assert!(!t.join().unwrap());
+
+        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
+    }
+
+    #[test]
+    fn a_hook_runs_without_the_registry_locks_held() {
+        let (registry, _, _) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        {
+            let registry = registry.clone();
+            let seen = seen.clone();
+            registry.clone().set_on_unreachable(move |folder| {
+                // Would deadlock if the hook ran under the slot lock.
+                seen.lock().unwrap().push((
+                    registry.is_reachable(folder),
+                    registry.unreachable_folders(),
+                ));
+            });
+        }
+
+        registry.is_reachable(NAS);
+
+        assert_eq!(*seen.lock().unwrap(), vec![(false, vec![NAS.to_string()])]);
+    }
+
+    #[test]
+    fn recovery_passes_the_folder_to_the_hook() {
+        let (registry, probe, _) = registry_with(FakeFolderProbe::with_unreachable(&[NAS, LOCAL]));
+        let (_, recovered) = record_hooks(&registry);
+        registry.is_reachable(NAS);
+        registry.is_reachable(LOCAL);
+
+        probe.set_reachable(LOCAL, true);
+        registry.refresh(LOCAL);
+        probe.set_reachable(NAS, true);
+        registry.refresh(NAS);
+        registry.refresh(NAS);
+
+        assert_eq!(names(&recovered), vec![LOCAL.to_string(), NAS.to_string()]);
+    }
+
     #[test]
     fn a_first_probe_that_finds_the_folder_up_is_not_a_recovery() {
         let (registry, _, _) = registry_with(FakeFolderProbe::default());
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -795,7 +1007,7 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -943,7 +1155,7 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -1075,13 +1287,64 @@ mod tests {
     }
 
     #[test]
+    fn settled_unreachable_is_true_only_for_a_confirmed_answer() {
+        let (registry, probe, notifier) = gated_registry(false);
+        assert!(!registry.is_settled_unreachable(NAS), "never probed");
+
+        let t = start_slow_probe_until_flagged(&registry, &notifier);
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert!(
+            !registry.is_settled_unreachable(NAS),
+            "the provisional flag is not a settled answer"
+        );
+
+        probe.release();
+        assert!(!t.join().unwrap());
+        assert!(registry.is_settled_unreachable(NAS));
+
+        let (registry, _, _) = registry_with(FakeFolderProbe::default());
+        registry.is_reachable(NAS);
+        assert!(!registry.is_settled_unreachable(NAS), "reachable");
+    }
+
+    #[test]
+    fn a_recheck_of_a_settled_unreachable_folder_stays_settled_but_a_forgotten_one_does_not() {
+        let (registry, probe, _) = registry_with_known_unreachable_nas();
+        let t = start_recheck_in_flight(&registry, &probe);
+        assert!(registry.is_settled_unreachable(NAS), "re-probe in flight");
+        probe.release();
+        assert!(!t.join().unwrap());
+        assert!(registry.is_settled_unreachable(NAS));
+
+        // Forgotten, then probed afresh past the provisional delay: the
+        // earlier answer no longer counts.
+        registry.retain_folders(&[]);
+        probe.reset_gate();
+        let r = registry.clone();
+        let t = thread::spawn(move || r.refresh(NAS));
+        assert!(wait_until(|| registry
+            .unreachable_folders()
+            .contains(&NAS.to_string())));
+        assert!(!registry.is_settled_unreachable(NAS));
+        probe.release();
+        assert!(!t.join().unwrap());
+    }
+
+    #[test]
     fn a_slow_probe_that_ends_reachable_retracts_the_flag_without_a_recovery() {
         let (registry, probe, notifier) = gated_registry(true);
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        let went_down = Arc::new(AtomicUsize::new(0));
+        {
+            let went_down = went_down.clone();
+            registry.set_on_unreachable(move |_| {
+                went_down.fetch_add(1, Ordering::SeqCst);
             });
         }
 
@@ -1107,6 +1370,11 @@ mod tests {
             vec![vec![NAS.to_string()], Vec::<String>::new()]
         );
         assert_eq!(fired.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            went_down.load(Ordering::SeqCst),
+            0,
+            "a retracted flag was never confirmed"
+        );
         assert_eq!(probe.entered.load(Ordering::SeqCst), 1, "one shared probe");
         assert!(wait_until(|| watchers_alive(&registry) == 0));
     }
@@ -1133,6 +1401,7 @@ mod tests {
     #[test]
     fn forgetting_a_flagged_folder_unflags_it_and_the_late_answer_is_not_recorded() {
         let (registry, probe, notifier) = gated_registry(false);
+        let (unreachable, _) = record_hooks(&registry);
         let t = start_slow_probe_until_flagged(&registry, &notifier);
 
         registry.retain_folders(&[]);
@@ -1145,6 +1414,10 @@ mod tests {
 
         probe.release();
         assert!(!t.join().unwrap());
+        assert!(
+            names(&unreachable).is_empty(),
+            "an answer that was not recorded confirms nothing"
+        );
 
         assert!(registry.unreachable_folders().is_empty());
         assert_eq!(events(&notifier).len(), 2, "no event from the late answer");
@@ -1264,7 +1537,7 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -1484,6 +1757,7 @@ mod tests {
             Slot::Probing {
                 token: 7,
                 shown: false,
+                was_unreachable: false,
             },
         );
 
@@ -1493,7 +1767,8 @@ mod tests {
             slot_of(&registry, NAS),
             Some(Slot::Probing {
                 token: 7,
-                shown: false
+                shown: false,
+                was_unreachable: false
             })
         );
         assert!(events(&notifier).is_empty());
@@ -1664,7 +1939,7 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
-            registry.set_on_recovered(move || {
+            registry.set_on_recovered(move |_| {
                 fired.fetch_add(1, Ordering::SeqCst);
             });
         }
