@@ -579,7 +579,7 @@ pub fn scan_folders(
         // whatever root it was given), so it's stripped back to plain form
         // immediately below -- discovered_paths/inaccessible_dirs and the
         // DB's file_path column must always agree on the unprefixed
-        // representation (see gb_core::reconcile's is_under prefix match).
+        // representation (see gb_core::reconcile's is_under_folder prefix match).
         for entry in WalkDir::new(long_path::to_long_path(Path::new(folder))) {
             let entry = match entry {
                 Ok(e) => e,

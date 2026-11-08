@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../useEscapeKey";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { getLogDir, readLog } from "../api";
 import {
@@ -94,16 +95,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
     closeRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const visible = useMemo(
     () => rows.filter((r) => entryMatches(r, levels, query)),

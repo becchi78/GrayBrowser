@@ -10,6 +10,7 @@ import {
 import { ConfirmDialog } from "./ConfirmDialog";
 import { onDedupUpdated } from "../events";
 import { fileDeleteDisabledReason } from "../lib/duplicateDelete";
+import { withoutKey } from "../lib/withoutKey";
 import { computeDuplicateDiff, type DuplicateDiff } from "../lib/duplicateDiff";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
@@ -107,11 +108,7 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
   }
 
   function requestFileDelete(member: DuplicateGroupMember) {
-    setFileDeleteErrors((prev) => {
-      const next = { ...prev };
-      delete next[member.video_id];
-      return next;
-    });
+    setFileDeleteErrors((prev) => withoutKey(prev, member.video_id));
     setPending({ kind: "file", member });
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../useEscapeKey";
 import { assignTagToVideos, listAllTags } from "../api";
 import { filterTagCandidates } from "../lib/bulkTag";
 import type { TagDto } from "../types";
@@ -49,17 +50,7 @@ function BulkTagDialogBody({
     };
   }, []);
 
-  useEffect(() => {
-    if (busy) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [busy, onClose]);
+  useEscapeKey(onClose, !busy);
 
   const candidates = useMemo(() => filterTagCandidates(allTags, input), [allTags, input]);
 
