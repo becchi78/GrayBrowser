@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:unit": "node --experimental-strip-types --test src/lib/boundedCache.test.ts src/lib/abbreviatePath.test.ts src/lib/wbImportTagsDisplay.test.ts src/lib/wbImportResultDisplay.test.ts src/lib/wbImportAttentionTestId.test.ts src/lib/wbImportSteps.test.ts src/lib/unmatchedThumbnails.test.ts src/lib/paths.test.ts src/lib/sidebarResize.test.ts src/lib/sidebarSections.test.ts src/lib/reorderablePinnedTags.test.ts src/lib/ratingBar.test.ts src/lib/duplicateDiff.test.ts src/lib/duplicateDelete.test.ts src/lib/videoProperties.test.ts src/lib/thumbnailProgress.test.ts src/lib/thumbnailPlaceholder.test.ts src/lib/jumpToPercent.test.ts src/lib/latestRequest.test.ts src/lib/nasInterval.test.ts src/lib/multiSelect.test.ts src/lib/contextMenu.test.ts src/lib/editMenu.test.ts src/lib/bulkTag.test.ts src/lib/logFilter.test.ts src/lib/updateState.test.ts src/lib/reachability.test.ts src/lib/skippedFileMissing.test.ts src/lib/tagDeleteMessage.test.ts src/lib/scanSummaryMessage.test.ts src/lib/scanTargets.test.ts src/lib/withoutKey.test.ts src/lib/viewState.test.ts e2e/sandboxGuard.test.mjs scripts/release/release-notes.test.mjs scripts/release/check-version.test.mjs scripts/release/update-manifest.test.mjs",
+    "test:component": "vitest run",
     "test:e2e": "node --test --test-concurrency=1 e2e/specs/tag-management.e2e.mjs e2e/specs/incremental-search.e2e.mjs e2e/specs/grid-visible-after-scan.e2e.mjs e2e/specs/layout-shrink-regression.e2e.mjs e2e/specs/tag-bar.e2e.mjs"
   },
   "dependencies": {
@@ -23,6 +24,10 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
     "@types/node": "^20.19.43",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
@@ -31,9 +36,11 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
+    "jsdom": "29.1.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.64.0",
     "vite": "^7.0.4",
+    "vitest": "4.1.12",
     "webdriverio": "^9.30.0"
   }
 }
