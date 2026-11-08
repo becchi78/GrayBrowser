@@ -264,12 +264,9 @@ export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Pro
   );
 }
 
-// Shared by both the thumbnail-failure and metadata-failure `<li>`
-// blocks above (identical markup, just a different source array), so the
-// splitDirAndFileName call site exists once rather than twice. See
-// DuplicateGroupsPanel's own (single-use, so left inline as an IIFE) call
-// site for the same pattern and App.css's `.file-path-row` comment for why
-// the split happens at all.
+// Shared by both the thumbnail-failure and metadata-failure `<li>` blocks
+// above (identical markup, different source array). See App.css's
+// `.file-path-row` comment for why the path is split at all.
 function FilePathRow({ filePath }: { filePath: string }) {
   const { dir, name } = splitDirAndFileName(filePath);
   return (

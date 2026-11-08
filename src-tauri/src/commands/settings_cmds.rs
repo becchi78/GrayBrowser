@@ -332,10 +332,8 @@ pub fn remove_watch_folder(
 
     let (remaining, nas_poll_interval_secs) = {
         let mut conn = db.writer.lock().unwrap();
-        // The deleted ids themselves are no longer needed here (see
-        // `delete_videos_under_folder_cascade`'s doc comment) -- thumbnail
-        // cleanup below removes the whole per-folder subdirectory in one
-        // shot instead of looping per id.
+        // The returned ids are unused: thumbnail cleanup below removes the
+        // whole per-folder subdirectory in one shot instead of per id.
         let _ = queries::delete_videos_under_folder_cascade(&mut conn, &folder_path)
             .map_err(|e| e.to_string())?;
         let existing = queries::get_watch_folders(&conn).map_err(|e| e.to_string())?;

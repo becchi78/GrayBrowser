@@ -161,19 +161,13 @@ pub struct WbImportSummary {
     /// Newly registered videos whose rating came from a star-only tag
     /// instead of `score`. Skipped (already registered) rows are not counted.
     pub ratings_from_star_tags: u32,
-    /// **Offline rows only.** Legacy JPG thumbnails successfully converted
-    /// to WebP and linked to their video
-    /// (`gb_core::wb_import::match_thumbnail_files`'s `matched` set, minus
-    /// any that failed conversion/rename). An *online* row's video file is
-    /// available, so it never goes through this legacy-JPG path at all --
-    /// its thumbnail is instead generated from the real video by the
-    /// existing background pipeline
-    /// (`thumbnail::enqueue_missing_thumbnails`, kicked off by
-    /// `wb_import::pipeline::run_wb_import` right after this summary is
-    /// built) and is therefore not reflected in this count, or in
-    /// `thumbnails_failed`/`thumbnails_unmatched` below -- that pipeline
-    /// reports its own progress via `catalog:changed`, not via
-    /// `WbImportSummary`.
+    /// **Offline rows only.** Legacy JPG thumbnails converted to WebP and
+    /// linked to their video (`gb_core::wb_import::match_thumbnail_files`'s
+    /// `matched` set, minus any that failed conversion/rename). An *online*
+    /// row's thumbnail is generated from the real video by the background
+    /// pipeline (`thumbnail::enqueue_missing_thumbnails`), which reports via
+    /// `catalog:changed`, so it is not reflected in this count or in
+    /// `thumbnails_failed`/`thumbnails_unmatched`.
     pub thumbnails_linked: u32,
     /// Part of `thumbnails_linked` attached by name: empty-hash legacy JPGs
     /// whose name matched exactly one offline video that had no thumbnails.

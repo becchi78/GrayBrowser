@@ -79,16 +79,13 @@ function AppContent({ initialView }: { initialView: ViewState }) {
   // tagIds -- see RatingBar's own comment.
   const [ratings, setRatings] = useState(initialView.ratings);
   // FolderDialog/WbImportDialog are reached only via the native menu
-  // ("ファイル > フォルダ管理.../.wbインポート..." -- see the two
-  // onMenuOpen*Dialog subscriptions below).
+  // ("ファイル > フォルダ管理.../.wbインポート...").
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
-  // TagBarEditDialog is reached only via the native menu ("タグ > タグの
-  // 編集..." -- its own top-level submenu, not nested under
-  // "ファイル", see lib.rs). tagBarRefreshKey mirrors `refreshKey`'s own
-  // role, scoped to just TagBar: bumped once the dialog saves a new tag
-  // order or deletes a tag, so TagBar re-fetches it (via its own `refreshKey` prop) without a
-  // full remount.
+  // TagBarEditDialog is reached only via the native menu ("タグ > タグの編集...").
+  // tagBarRefreshKey is `refreshKey` scoped to just TagBar: bumped when the
+  // dialog saves a new tag order or deletes a tag, so TagBar re-fetches
+  // without a full remount.
   const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
@@ -210,8 +207,8 @@ function AppContent({ initialView }: { initialView: ViewState }) {
 
   return (
     <div className="app">
-      {/* No more <h1> -- the native menu bar (Tauri v2, rendered outside
-          the DOM) is the title-bar equivalent now. */}
+      {/* No <h1>: the native menu bar (rendered outside the DOM) serves as the
+          title bar. */}
       <div className="header-row-primary" data-testid="header-row-primary">
         <SearchBox value={search} onChange={setSearch} />
         <SortControl
@@ -267,8 +264,7 @@ function AppContent({ initialView }: { initialView: ViewState }) {
         }
       </div>
       {/* The always-visible status bar. The 未登録/重複/生成失敗 badges and
-          their panels now live inside StatusBar itself -- see that
-          component's own comment. */}
+          their panels live inside StatusBar itself. */}
       <StatusBar
         refreshKey={refreshKey}
         videoCount={videoCount}
@@ -276,15 +272,12 @@ function AppContent({ initialView }: { initialView: ViewState }) {
         onJump={(percent) => setJumpRequest((prev) => ({ percent, seq: (prev?.seq ?? 0) + 1 }))}
       />
 
-      {/* FfmpegNotice is not part of the dialog list, so it stays a
-          top-level, always-visible notice (unlike FolderControls/
-          WbImportPanel below, both of which moved into modals). */}
+      {/* FfmpegNotice is a top-level, always-visible notice, not a dialog. */}
       <FfmpegNotice />
       <UpdateNotice onOpenDetails={() => setUpdateDialogOpen(true)} />
 
-      {/* FolderControls/WbImportPanel's former direct App.tsx mounts are
-          gone -- their logic now lives inside these two modals, reachable
-          only via the menu/sidebar link above, not always-visible. */}
+      {/* FolderDialog/WbImportDialog are modals reachable only via the menu,
+          not always-visible. */}
       <FolderDialog
         open={folderDialogOpen}
         onClose={() => setFolderDialogOpen(false)}

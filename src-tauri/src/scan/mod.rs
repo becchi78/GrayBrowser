@@ -180,19 +180,14 @@ fn reconcile_known_path(
 
     match reconcile::classify_discovered_file(&discovered, Some(&known_meta)) {
         FileClassification::Unchanged => {
-            // Known, accepted limitation: matching on mtime+file_size alone
-            // means content replaced while its mtime is deliberately
-            // preserved (e.g. `robocopy /COPY:DAT`, restoring a backup that
-            // keeps original timestamps) is *not* detected -- the DB's
-            // quick_hash silently goes stale until something else forces a
-            // rehash. This is intentional (recomputing quick_hash on every
-            // unchanged file would defeat the whole point of the cheap
-            // mtime/size filter), not an oversight. It matters most for
-            // path-follow, which matches by quick_hash+file_size: a stale
-            // quick_hash here can make a later move of *this* file fail to
-            // auto-follow, or in principle match the wrong offline row.
-            // Strict same-content verification is deferred to full_hash-based
-            // duplicate detection.
+            // Known, accepted limitation: content replaced while its mtime is
+            // preserved (e.g. `robocopy /COPY:DAT`, a backup restore) is not
+            // detected, so the stored quick_hash goes stale. Rehashing every
+            // unchanged file would defeat the cheap mtime/size filter. A stale
+            // quick_hash can make a later move of this file fail to
+            // auto-follow, or match the wrong offline row; strict verification
+            // is left to full_hash-based duplicate detection. The partial-copy
+            // counterpart is noted in `watch::process_changed_file`.
             if known.status == "offline" {
                 let conn = db.writer.lock().unwrap();
                 queries::update_video_status(&conn, &known.id, "online")?;
@@ -202,27 +197,18 @@ fn reconcile_known_path(
             }
         }
         FileClassification::NeedsRehash => {
-            // This is where a collision scenario (経路Y) actually lands, not
-            // `register_new_path`'s `BlockedByCollision` (経路X): content
-            // matching some *other* offline row (R1) can appear at a path
-            // (P2) that's already `known`'s own row (R2, online) here. Since
-            // `find_video_by_path` in `process_detected_file` already
-            // resolved `known = Some(R2)` before this function was ever
-            // called, that's exactly what routes this case here instead of
-            // to `register_new_path`'s candidate/collision check. R2's
-            // newly-computed quick_hash+file_size is checked against
-            // `offline` candidates (the same lookup `register_new_path`
-            // uses) before/alongside the metadata write below, so a
-            // coincidental match with some other offline row R1 is surfaced
-            // as a duplicate candidate via `path_collisions`, instead of
-            // leaving R1 offline forever with no trace. R1 itself is not
-            // reactivated here -- this function only ever reconciles
-            // `known` (R2) in place -- but the pair becomes visible to
-            // `dedup::detect_duplicate_groups` for the user to resolve
-            // (delete one side, or nothing further happens automatically).
-            // See `register_new_path`'s `BlockedByCollision` branch for
-            // 経路X (a structurally different case: a *path*, not a content
-            // hash, already claimed by another online row).
+            // Content matching some *other* offline row can appear at a path
+            // that already has its own online row (`known`). Such a file
+            // never reaches `register_new_path`, because `find_video_by_path`
+            // already resolved `known`. So the rehashed quick_hash+file_size
+            // is checked against offline candidates here (the same lookup
+            // `register_new_path` uses), and a coincidental match is recorded
+            // in `path_collisions` as a duplicate candidate instead of
+            // leaving that offline row without a trace. The offline row is
+            // not reactivated; only `known` is reconciled in place, and the
+            // user resolves the pair via `dedup::detect_duplicate_groups`.
+            // `register_new_path`'s `BlockedByCollision` is a different case:
+            // a *path* already claimed by another online row.
             let quick_hash = match hash_file(&scanned_file.file_path, scanned_file.file_size) {
                 Ok(h) => h,
                 Err(e) => {
@@ -236,44 +222,27 @@ fn reconcile_known_path(
             let quick_hash_str = quick_hash.to_string();
             let conn = db.writer.lock().unwrap();
 
-            // Look up any `offline` row whose quick_hash+file_size now
-            // coincidentally matches R2's freshly-computed content -- the
-            // same query `register_new_path` uses for path-follow, reused
-            // here for detection only (no reactivation: `known`/R2 keeps
-            // its own path and id, only its stale metadata is refreshed
-            // below). Each match is persisted into `path_collisions` via
-            // `record_path_collision`: that table was originally named for
-            // 経路X's UNIQUE-collision case (a *path* contested between two
-            // rows), but its actual structure -- "an offline candidate and
-            // an online row whose content may coincide, pending full_hash
-            // confirmation" -- is exactly what a 経路Y coincidental rehash
-            // match is too, so reusing it (rather than adding a parallel
-            // table) is the right call; `dedup::detect_duplicate_groups`
-            // already reads every row in `path_collisions` uniformly,
-            // regardless of which route produced it.
+            // Detection only (no reactivation): look up any `offline` row
+            // whose quick_hash+file_size now matches the freshly computed
+            // content. Each match is stored via `record_path_collision`.
+            // `path_collisions` holds "an offline candidate and an online row
+            // whose content may coincide, pending full_hash confirmation",
+            // which fits this case too, and `dedup::detect_duplicate_groups`
+            // reads every row in it uniformly.
             match queries::find_offline_candidates_by_quick_hash_and_size(
                 &conn,
                 &quick_hash_str,
                 scanned_file.file_size as i64,
             ) {
                 Ok(candidates) => {
-                    // Self-collision guard: `known` (R2) is itself still
-                    // `status='offline'` at this point whenever it's being
-                    // reconnected from offline in the same pass (the
-                    // `update_video_status` call below hasn't run yet), so
-                    // if R2's freshly-computed quick_hash+file_size happen
-                    // to still equal its own *stale* stored values (content
-                    // unchanged, only mtime drifted -- e.g. a backup
-                    // restore/reconnect that preserves bytes but not
-                    // timestamps), this query matches `known` against
-                    // itself. Left unfiltered, that would record a
-                    // `path_collisions` row pairing `known.id` with itself,
-                    // which `dedup::detect_duplicate_groups` would then
-                    // surface as a nonsensical "duplicate of itself" group.
-                    // `register_new_path`'s identical query never needs this
-                    // filter: it has no `known` row at all (that's what
-                    // routes here vs. there), so its own row can never be a
-                    // candidate for its own path-follow lookup.
+                    // Self-collision guard: `known` may still be `offline` here
+                    // (reconnecting; the status update below hasn't run) and
+                    // its hash may equal its own stored values when only the
+                    // mtime drifted, so the query can match `known` itself.
+                    // Unfiltered, that records a self-pair that
+                    // `dedup::detect_duplicate_groups` would show as a
+                    // "duplicate of itself". `register_new_path` has no
+                    // `known` row, so it never needs this filter.
                     for candidate in candidates.iter().filter(|c| c.id != known.id) {
                         if let Err(e) = queries::record_path_collision(
                             &conn,
@@ -403,33 +372,14 @@ fn register_new_path(
             file_path: r.file_path.clone(),
         })
         .collect();
-    // When can this actually return `Some` (i.e. when is `BlockedByCollision`
-    // a live branch, not dead code)? `process_detected_file`'s own
-    // `find_video_by_path` already ruled out any row -- online or offline --
-    // at this exact `file_path` *before* `register_new_path` was called. If
-    // nothing else could write to the DB in between, that alone would make
-    // an online collision here provably impossible (any row at this path
-    // would have already been `known`, routing to `reconcile_known_path`
-    // instead).
-    //
-    // But that earlier check runs against `db.read_pool` -- *not* under
-    // `db.writer.lock()` -- and `hash_file` above does real disk I/O before
-    // this function ever reaches the lock acquired a few lines up. That gap
-    // is a genuine window, not a closed one: if another thread (this app
-    // genuinely runs NAS-poll and realtime-watch callbacks concurrently)
-    // registers a brand-new online row at this *exact* `file_path` during
-    // that window, this check -- running after we've since acquired
-    // `db.writer.lock()` -- will see it and correctly report a collision.
-    // In practice that requires two detection paths to be racing over the
-    // identical path, which shouldn't happen for an ordinary single watched
-    // folder, but can if the user registers nested/overlapping watch
-    // folders (e.g. both `C:\Videos` and `C:\Videos\2024`) that both end up
-    // observing the same physical file. So: low-frequency, but a real,
-    // reachable race, not merely a defensive stub -- and once we're inside
-    // `db.writer.lock()`, the check-then-write below (this call through
-    // `decide_path_follow` to whichever branch runs) is atomic, so this
-    // holds regardless of how this state was reached (no panic, R1 stays
-    // offline, R2 untouched).
+    // `BlockedByCollision` is reachable despite the caller's
+    // `find_video_by_path`: that check uses `db.read_pool` outside the writer
+    // lock, and `hash_file` does disk I/O before the lock is taken. Another
+    // detection path (NAS poll / realtime watch) can register an online row
+    // at this exact path in that window, e.g. with nested watch folders that
+    // observe the same file. Rare, but the check-then-write below runs under
+    // the writer lock, so the collision is handled without a panic and
+    // without touching either row.
     let collision = match candidates.first() {
         Some(candidate) => queries::is_path_used_by_online_video(
             &conn,
@@ -800,17 +750,17 @@ mod tests {
     /// both existing rows exactly as they were.
     ///
     /// Also proves a corollary of `file_path` being `UNIQUE`: the "new file"
-    /// can never actually be registered as a separate row at the same path
-    /// R2 already occupies (an insert there is structurally impossible, not
-    /// merely undesirable) -- the DB ends up with exactly the original two
-    /// rows, unchanged, not three.
+    /// can never actually be registered as a separate row at the path the
+    /// online row (`r2_id`) already occupies (an insert there is structurally
+    /// impossible, not merely undesirable) -- the DB ends up with exactly the
+    /// original two rows, unchanged, not three.
     #[test]
     fn register_new_path_leaves_both_rows_untouched_when_the_target_path_collides_with_an_online_row(
     ) {
         let (_db_dir, db) = init_temp_db();
         let thumbs_root = temp_thumbs_root();
 
-        // R1: an offline candidate for path-follow.
+        // `r1_id`: an offline candidate for path-follow.
         let old_dir = tempfile::tempdir().unwrap();
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
@@ -824,7 +774,7 @@ mod tests {
                 .unwrap()
         };
 
-        // R2: an online row already claiming the path we're about to target.
+        // `r2_id`: an online row already claiming the path we're about to target.
         let new_dir = tempfile::tempdir().unwrap();
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"different content, a different length").unwrap();
@@ -841,8 +791,8 @@ mod tests {
         };
 
         // Overwrite new.mp4's bytes so its quick_hash+file_size now match
-        // R1's -- the physical trigger for a path-follow match -- while its
-        // path is still R2's already-registered online path.
+        // the offline row's -- the physical trigger for a path-follow match --
+        // while its path is still the online row's already-registered path.
         fs::write(&new_path, b"shared content").unwrap();
         let metadata = fs::metadata(&new_path).unwrap();
         let scanned_file = ScannedFile {
@@ -916,22 +866,21 @@ mod tests {
         );
     }
 
-    /// The true 経路Y scenario (see `reconcile_known_path`'s `NeedsRehash`
-    /// doc comment): R2 is a `known` (already-registered) row whose on-disk
-    /// content is overwritten so that its *new* quick_hash+file_size happen
-    /// to coincide with an unrelated `offline` row R1's. `reconcile_known_path`
-    /// rehashes R2 in place as always (never reactivates R1 -- that's not
-    /// this function's job), but must now also persist the pair to
-    /// `path_collisions` so `dedup::detect_duplicate_groups` can surface it
-    /// as a duplicate candidate, instead of silently leaving R1 offline
-    /// forever with no trace of the coincidence.
+    /// A `known` (already-registered) row (`r2_id`) has its on-disk content
+    /// overwritten so that its *new* quick_hash+file_size coincide with an
+    /// unrelated `offline` row's (`r1_id`; see `reconcile_known_path`'s
+    /// `NeedsRehash` arm). `reconcile_known_path` rehashes the known row in
+    /// place (never reactivating the offline one) and must also persist the
+    /// pair to `path_collisions` so `dedup::detect_duplicate_groups` can
+    /// surface it as a duplicate candidate, instead of silently leaving the
+    /// offline row with no trace of the coincidence.
     #[test]
     fn reconcile_known_path_records_a_path_collision_when_the_rehash_coincidentally_matches_an_offline_row(
     ) {
         let (_db_dir, db) = init_temp_db();
         let thumbs_root = temp_thumbs_root();
 
-        // R1: an unrelated offline row, content "shared content".
+        // `r1_id`: an unrelated offline row, content "shared content".
         let old_dir = tempfile::tempdir().unwrap();
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
@@ -945,8 +894,8 @@ mod tests {
                 .unwrap()
         };
 
-        // R2: a known, online row -- registered with different content, so
-        // its initial quick_hash/file_size do *not* match R1's.
+        // `r2_id`: a known, online row -- registered with different content,
+        // so its initial quick_hash/file_size do *not* match `r1_id`'s.
         let new_dir = tempfile::tempdir().unwrap();
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"original R2 content, a different length").unwrap();
@@ -962,10 +911,11 @@ mod tests {
             .unwrap()
         };
 
-        // Overwrite R2's file in place (same path, still `known`) with bytes
-        // identical to R1's -- the physical trigger for both NeedsRehash
-        // (file_size differs from R2's own stored metadata) and the
-        // coincidental-match check (new quick_hash+file_size equal R1's).
+        // Overwrite the known row's file in place (same path) with bytes
+        // identical to the offline row's -- the physical trigger for both
+        // NeedsRehash (file_size differs from the stored metadata) and the
+        // coincidental-match check (new quick_hash+file_size equal the
+        // offline row's).
         fs::write(&new_path, b"shared content").unwrap();
         let metadata = fs::metadata(&new_path).unwrap();
         let scanned_file = ScannedFile {

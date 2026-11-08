@@ -1487,14 +1487,11 @@ pub fn list_video_ids_and_paths(conn: &Connection) -> anyhow::Result<Vec<(String
 /// by that last statement, so every earlier statement's subquery still sees
 /// the full untouched set.
 ///
-/// Returns the deleted video ids. The caller (`commands::settings_cmds::
-/// remove_watch_folder`) does not actually need them for thumbnail cleanup
-/// any more -- since every video under `folder_path` is gone, its entire
-/// cached-thumbnail subdirectory can be removed in one shot via
-/// `thumbnail::paths::remove_folder_thumbnail_dir(thumbnails_root,
-/// folder_path)` instead of looping per id -- but the ids are kept in the
-/// return value for callers/tests that still want per-video confirmation of
-/// what was deleted. This function itself never touches the filesystem.
+/// Returns the deleted video ids, mainly for confirmation in tests.
+/// `commands::settings_cmds::remove_watch_folder` ignores them: it removes the
+/// whole cached-thumbnail subdirectory via
+/// `thumbnail::paths::remove_folder_thumbnail_dir`. This function itself
+/// never touches the filesystem.
 ///
 /// `skipped_files` rows under `folder_path` are deleted in the same
 /// transaction, with the same prefix predicate. Once the folder is no longer
@@ -1814,15 +1811,14 @@ pub struct PathCollisionRow {
 }
 
 /// Records a duplicate-candidate pair pending full_hash confirmation
-/// (`dedup::detect_duplicate_groups` reads these back uniformly). Used by two
-/// distinct routes in `scan::mod`, both funneling into this same table
-/// because both produce the identical "offline candidate `video_id` /
-/// online row `colliding_video_id` may share content" shape:
-/// - 経路X (`register_new_path`'s `BlockedByCollision`): `video_id` (the
-///   offline row) tried to follow its path to
-///   `attempted_path`, but `colliding_video_id` (an online row) already
-///   occupies that exact path.
-/// - 経路Y (`reconcile_known_path`'s `NeedsRehash` arm):
+/// (`dedup::detect_duplicate_groups` reads these back uniformly). Used in two
+/// situations in `scan::mod`, both producing the same "offline candidate
+/// `video_id` / online row `colliding_video_id` may share content" shape:
+/// - A path-follow target is taken (`register_new_path`'s
+///   `BlockedByCollision`): `video_id` (the offline row) tried to follow its
+///   path to `attempted_path`, but `colliding_video_id` (an online row)
+///   already occupies that exact path.
+/// - A rehash matches an offline row (`reconcile_known_path`'s `NeedsRehash` arm):
 ///   `colliding_video_id` (an online row, rehashed in place) happens to now
 ///   share quick_hash+file_size with `video_id` (an unrelated offline row);
 ///   `attempted_path` is `colliding_video_id`'s own current path, not a path
@@ -1986,7 +1982,7 @@ fn find_or_create_tag_folding_case(
     Ok(get_or_create_tag(tx, &normalized)?)
 }
 
-/// Imports one `.wb` video (Stage 1's `ImportCandidate`, minus the caller-
+/// Imports one `.wb` video (the parsed `ImportCandidate`, minus the caller-
 /// assembled `NewVideo`) in a single transaction, mirroring
 /// `assign_tag_to_video`'s app-layer referential-integrity pattern:
 ///

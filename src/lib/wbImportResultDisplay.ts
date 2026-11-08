@@ -68,7 +68,7 @@ export interface WbImportResultDisplay {
 export function buildWbImportResultDisplay(s: WbImportSummary): WbImportResultDisplay {
   const attention: AttentionItem[] = [];
   // 「自動対応できなかった」の合計（thumbnails_unmatched）を原因別に分けて出す。
-  // 2つの件数を足すと、従来の合計とちょうど一致する。
+  // 2つの件数を足すと、合計とちょうど一致する。
   const emptyHash = Math.min(s.thumbnails_unmatched_empty_hash, s.thumbnails_unmatched);
   const noMatchingVideo = s.thumbnails_unmatched - emptyHash;
   if (emptyHash > 0) {

@@ -79,8 +79,11 @@ export interface VideoPropertiesDto {
   probed_at: string | null;
 }
 
+// "Wb" / "wb" throughout the frontend abbreviates WhiteBrowser (its `.wb`
+// database files are what the import reads).
+//
 // Mirrors src-tauri/src/events.rs's WbImportSummary, the payload of the
-// wb_import:complete event emitted once by wb_import::pipeline::run_wb_import.
+// wb_import:complete event emitted once when an import finishes.
 export interface WbImportSummary {
   /** Number of movie rows in the `.wb`. Equals
    * `registered + skipped + skipped_invalid_name + failed_rows`. */

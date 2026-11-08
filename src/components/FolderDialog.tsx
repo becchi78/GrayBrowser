@@ -17,10 +17,9 @@ import { rescanState } from "../lib/scanTargets";
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Bumped by the parent (mirrors the old FolderControls' onScanComplete/
-   * WbImportPanel's onImportComplete callbacks) whenever a folder is added,
-   * removed, or (re-)scanned, so the sidebar/grid/status bar pick it up
-   * without a full remount. */
+  /** Called whenever a folder is added, removed, or (re-)scanned, so the
+   * parent can bump its refresh key and the sidebar/grid/status bar pick it
+   * up without a full remount. */
   onChanged: () => void;
 }
 
@@ -166,14 +165,11 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
     setEditError(null);
   }
 
-  // Persists the rewritten `path` via `rename_watch_folder`, which rewrites
-  // every `videos.file_path` under the old folder path while keeping each
-  // row's id/tags/rating/created_at intact
-  // (`queries::rename_watch_folder_videos`), then replaces the folder
-  // entry itself. Frontend-side validation is limited to "non-empty"
-  // -- duplicate/containment rejection is `validate_rename_target`'s job on
-  // the backend, so any such rejection surfaces here only as the error
-  // string it returns.
+  // The backend rewrites every video path under the old folder path while
+  // keeping each video's id/tags/rating/created_at intact, then replaces the
+  // folder entry itself. Frontend-side validation is limited to "non-empty";
+  // the backend rejects duplicates and containment, so any such rejection
+  // surfaces here only as the error string it returns.
   async function saveEdit() {
     if (!editingPath) {
       return;

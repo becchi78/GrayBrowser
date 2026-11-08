@@ -551,42 +551,32 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
     let mut skipped_invalid_name = 0u32;
     let mut tags_assigned = 0u32;
     let mut ratings_from_star_tags = 0u32;
-    // (video_id, thumbnail_hash, file_path) for every row that was actually
-    // inserted and carries a thumbnail hash -- the input to
-    // match_thumbnail_files below. `file_path` is carried alongside so
-    // `link_thumbnails` can resolve each video's own registered-folder
-    // thumbnail subdirectory without a second DB round trip. Rows that were
-    // skipped (already registered) are deliberately excluded: their
-    // thumbnail, if any, was already linked (or not) by whatever earlier
-    // import/scan first registered them.
+    // (video_id, thumbnail_hash, file_path) of inserted rows with a thumbnail
+    // hash, the input to match_thumbnail_files. `file_path` lets
+    // `link_thumbnails` find each video's thumbnail subdirectory without
+    // another DB query. Already-registered rows are excluded: whatever first
+    // registered them already handled their thumbnail.
     let mut registered_movies: Vec<(String, String, String)> = Vec::new();
     // Thumbnail hashes of inserted online rows. Their legacy JPGs are not
-    // migrated (a fresh thumbnail is generated from the video), but the
-    // hashes are needed so those JPGs are not reported as unmatched.
+    // migrated (a thumbnail is generated from the video), but the hashes keep
+    // those JPGs from being reported as unmatched.
     let mut online_hashes: Vec<String> = Vec::new();
-    // Thumbnail hashes of rows refused for a machine-dependent file name. The
-    // video is not registered, so its legacy JPG has nothing to attach to and
-    // nothing to report either: `link_thumbnails` drops these JPGs instead of
-    // counting them as needing manual attention.
+    // Hashes of rows refused for a machine-dependent file name: the JPG has
+    // nothing to attach to, and `link_thumbnails` drops it unreported.
     let mut invalid_name_hashes: HashSet<String> = HashSet::new();
-    // Thumbnail hashes of already-registered offline rows (re-import). Their
-    // legacy JPG was linked, or deliberately left, when the row was first
-    // registered; it is neither a new link target nor something the user must
-    // handle, so `link_thumbnails` drops it instead of counting it unmatched.
+    // Hashes of already-registered offline rows (re-import): the JPG was
+    // handled at first registration, so `link_thumbnails` drops it unreported.
     let mut already_registered_offline_hashes: HashSet<String> = HashSet::new();
-    // Path of every row newly registered by this run, online or offline: the
-    // folders to register as watch folders. Offline rows are included so that
-    // their folders (e.g. a stopped NAS) can still be reached from the
-    // sidebar; a folder that is unreachable now is merely skipped by scans.
-    // Skipped rows are excluded (not registered by this run), so a re-import
-    // does not add the same folders twice.
+    // Paths of rows newly registered by this run, online or offline, to become
+    // watch folders. Offline rows count so a stopped NAS folder stays
+    // reachable from the sidebar; skipped rows don't, so a re-import adds no
+    // duplicates.
     let mut registered_movie_paths: Vec<String> = Vec::new();
     // Shared by every row so a parent folder is listed once per import, even
     // when it cannot be listed at all (see `CachingDirLister`).
     let dir_lister = CachingDirLister::new(dir_lister);
-    // One entry per row, written out after linking so each can state what
-    // became of its legacy thumbnail. Every way out of the row loop pushes
-    // exactly one.
+    // One entry per row (every exit of the row loop pushes exactly one),
+    // written after linking so each can state what became of its thumbnail.
     let mut row_logs: Vec<RowLog> = Vec::with_capacity(rows.len());
 
     let registering_started = clock.now();
@@ -1261,59 +1251,41 @@ struct LinkOutcome {
     folder_error: Option<String>,
 }
 
-/// Legacy-thumbnail linking pass (`match_thumbnail_files` +
-/// `generate_thumbnail_for_video`'s atomic-rename pattern applied to
-/// `FfmpegAdapter::convert_image_to_webp` instead of `extract_thumbnail`).
+/// Links legacy `.wb` JPG thumbnails to the matched offline videos by
+/// converting each JPG to WebP and writing it into all `THUMBNAILS_PER_VIDEO`
+/// slots (`{video_id}_0.webp` .. `{video_id}_{THUMBNAILS_PER_VIDEO - 1}.webp`),
+/// atomically (`.tmp` then rename). Only writes files; the caller marks
+/// `LinkOutcome::linked_video_ids` ready in the DB afterwards.
 ///
-/// Converts the legacy JPG once, then duplicates the resulting WebP into
-/// all `THUMBNAILS_PER_VIDEO` slots (`{video_id}_0.webp` ..
-/// `{video_id}_{THUMBNAILS_PER_VIDEO - 1}.webp`). This is a deliberate
-/// quality downgrade for offline videos: the normal worker
-/// (`thumbnail::worker::generate_thumbnail_for_video`) extracts 6 distinct
-/// frames from the source video, but a `.wb` legacy thumbnail is the only
-/// image available when the source video file can't be reached, so there's
-/// no way to produce 6 distinct frames -- every slot gets the same image
-/// instead of leaving the video without any thumbnail at all (which is what
-/// would happen if only slot 0 were written, since `get_thumbnails` /
-/// `list_videos_missing_thumbnails` require all
-/// `THUMBNAILS_PER_VIDEO` slots to exist).
+/// Every slot gets the same image by default because the source video is
+/// unreachable, so the 6 distinct frames the normal worker extracts cannot be
+/// produced, and `get_thumbnails` / `list_videos_missing_thumbnails` require
+/// all slots to exist. When `layout` describes the JPG (exact pixel size,
+/// exactly `THUMBNAILS_PER_VIDEO` frames), the JPG is instead cut into its
+/// frames and slot `i` receives frame `i`, as a normal scan would; with no
+/// layout, a size mismatch or a probe failure it falls back to the default.
 ///
-/// When `layout` is given and describes the JPG (exact pixel size, exactly
-/// `THUMBNAILS_PER_VIDEO` frames), the JPG is instead cut into its frames and
-/// slot `i` receives frame `i`, matching what a normal scan produces. Any
-/// other case -- no layout, a size that does not match, a probe failure --
-/// falls back to the whole-image behavior above.
+/// Returns a [`LinkOutcome`]: `linked`/`failed` count videos, while
+/// `unmatched`/`skipped_online` count JPG files.
 ///
-/// Returns a [`LinkOutcome`], where `linked`/`failed` count videos, not
-/// individual slot files, and `unmatched`/`skipped_online` count legacy JPG
-/// files. `online_hashes` separates JPGs of online videos (intentionally not
-/// migrated) from truly unmatched ones.
-///
-/// This function only writes files and never touches the DB; the caller
-/// marks `LinkOutcome::linked_video_ids` ready afterwards.
-///
-/// `invalid_name_hashes` are thumbnail hashes of rows refused for a
-/// machine-dependent file name. Their JPGs are dropped before matching, so they
-/// count as neither unmatched nor skipped-online -- unless the same hash also
-/// belongs to a registered video, which still takes it.
-///
-/// `already_registered_offline_hashes` are the thumbnail hashes of offline rows
-/// that were already in the library (re-import). Their JPGs are dropped the
-/// same way, so a repeat import does not report already-linked thumbnails as
-/// unmatched; a hash shared with a video registered by this run still goes to
-/// that video.
-///
-/// `thumbnails_root` is the `thumbnails/` root, not a per-video directory --
-/// `watch_folders` (fetched once by the caller, `import_all`) is used
-/// together with each matched video's own `file_path` (carried in
-/// `registered_movies`) to resolve its registered-folder subdirectory
-/// (`thumbnail::paths::video_thumbnail_dir`) before writing anything into
-/// it.
-///
-/// `on_progress(processed, total)` is called once before the first conversion
-/// with `(0, matched)`, then at the [`is_progress_tick`] cadence, and finally
-/// with `(matched, matched)`. Nothing is reported while the folder is listed
-/// and matched (the total is unknown), nor when the folder cannot be listed.
+/// - `thumbnails_root`: the `thumbnails/` root, not a per-video directory.
+///   Each video's subdirectory is resolved from `watch_folders` (fetched once
+///   by `import_all`) and its own `file_path` in `registered_movies`
+///   (`thumbnail::paths::video_thumbnail_dir`).
+/// - `online_hashes`: JPGs of online videos, intentionally not migrated, kept
+///   apart from truly unmatched ones.
+/// - `invalid_name_hashes`: hashes of rows refused for a machine-dependent
+///   file name. Their JPGs are dropped before matching, so they count as
+///   neither unmatched nor skipped-online, unless the same hash also belongs
+///   to a registered video, which still takes it.
+/// - `already_registered_offline_hashes`: hashes of offline rows already in
+///   the library (re-import). Dropped the same way, so a repeat import does
+///   not report already-linked thumbnails as unmatched; a hash shared with a
+///   video registered by this run still goes to that video.
+/// - `on_progress(processed, total)`: called once with `(0, matched)` before
+///   the first conversion, then at the [`is_progress_tick`] cadence, and
+///   finally with `(matched, matched)`. Nothing is reported while listing and
+///   matching (the total is unknown) or when the folder cannot be listed.
 // One argument over clippy's limit: the hash lists and registered videos are
 // independent inputs, and grouping them would only rename the problem.
 #[allow(clippy::too_many_arguments)]

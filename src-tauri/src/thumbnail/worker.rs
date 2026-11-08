@@ -42,13 +42,11 @@ pub fn generate_thumbnail_for_video(
     video_id: &str,
     video_path: &Path,
 ) -> anyhow::Result<()> {
-    // Previously the caller created the flat `thumbnails/` root once,
-    // up front, for the whole app lifetime. Now that each video's
-    // thumbnails live under a per-registered-folder subdirectory (see
-    // `thumbnail::paths::video_thumbnail_dir`), `thumbnails_dir` can be a
-    // subdirectory that doesn't exist yet the first time a video under a
-    // newly-registered folder is processed, so this function guarantees it
-    // itself rather than relying on a one-time setup step.
+    // Each video's thumbnails live under a per-registered-folder
+    // subdirectory (see `thumbnail::paths::video_thumbnail_dir`), which may
+    // not exist yet the first time a video under a newly-registered folder
+    // is processed, so this function creates it rather than relying on a
+    // one-time setup step.
     std::fs::create_dir_all(thumbnails_dir)?;
 
     // A probe failure just means "duration unknown" --

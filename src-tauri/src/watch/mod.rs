@@ -222,10 +222,10 @@ impl RealtimeWatchManager {
 /// against at the DB layer, is clamped to 0 rather than panicking on the
 /// `as u64` cast).
 ///
-/// Previously this exact wiring -- adapters and all -- was copy-pasted at
-/// every call site: `lib.rs`'s startup `.setup()` and each of
+/// Shared by `lib.rs`'s startup `.setup()` and each of
 /// `commands::settings_cmds`'s three watch-folder-mutating commands
-/// (`pick_watch_folders`/`remove_watch_folder`/`rename_watch_folder`).
+/// (`pick_watch_folders`/`remove_watch_folder`/`rename_watch_folder`), so the
+/// adapter wiring lives in one place.
 ///
 /// `folders` is narrowed here to the folders whose update check is on, so every
 /// caller gets the same behavior without passing the disabled list around.
@@ -327,22 +327,15 @@ fn process_changed_file(
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
 ) -> RetryOutcome {
-    // Known, accepted limitation: a large file still being written
-    // (a copy in progress) can fire several Created/Modified events
-    // before it's complete. Each one that reaches here computes
-    // quick_hash (head 1MB + tail 1MB + file_size) against whatever
-    // bytes exist *at that instant* -- necessarily different from
-    // the final value while the tail is still being written. This
-    // self-corrects on the *next* event once the copy finishes: no
-    // debounce is implemented, `process_detected_file` is
-    // idempotent and simply re-classifies/rehashes on each call.
-    // But if the final Created/Modified event for a given copy is
-    // ever missed (e.g. the app closes mid-copy, or a burst of
-    // events gets dropped upstream), a stale/incomplete quick_hash
-    // can persist in the DB -- this then undermines path-follow
-    // (which matches moved files by quick_hash+file_size). Same
-    // category of known limitation as the mtime-preserving-copy gap
-    // in `scan::reconcile_known_path`.
+    // Known, accepted limitation: a copy in progress fires several
+    // Created/Modified events, and each one hashes whatever bytes exist at
+    // that instant, so quick_hash is incomplete until the tail is written.
+    // There is no debounce; the next event after the copy finishes rehashes
+    // (`process_detected_file` is idempotent). If that final event is missed
+    // (app closed mid-copy, events dropped), the incomplete quick_hash stays
+    // and can break path-follow, which matches by quick_hash+file_size. The
+    // mtime-preserving-copy gap in `scan::reconcile_known_path` is the same
+    // kind of limitation.
     //
     // A copy that holds the destination exclusively (Explorer does) makes the
     // file unreadable instead, so it surfaces as `SkippedUnreadable`; the

@@ -13,9 +13,8 @@ import {
 import { splitDirAndFileName } from "../lib/paths";
 import type { SkippedFileDto } from "../types";
 
-// The only reason code emitted today (crates/gb-core/src/scan_pipeline.rs),
-// but kept as a lookup with a fallback so a future reason doesn't render
-// blank.
+// The only reason code the backend emits today, but kept as a lookup with a
+// fallback so a future reason doesn't render blank.
 const REASON_LABELS: Record<string, string> = {
   machine_dependent_char: "機種依存文字を含むファイル名",
 };

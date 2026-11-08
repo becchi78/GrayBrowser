@@ -27,8 +27,7 @@ interface Props {
   onContextMenu: (video: VideoDto, e: MouseEvent) => void;
 }
 
-// Every video shows exactly 6 evenly-spaced thumbnails (replaces the old
-// grid's single thumbnail-per-cell).
+// Every video shows exactly 6 evenly-spaced thumbnails.
 const THUMBNAILS_PER_VIDEO = 6;
 
 function formatBitrate(bps: number | null): string {
@@ -40,19 +39,14 @@ function formatFps(fps: number | null): string {
   return fps === null ? "不明" : `${fps.toFixed(2)} fps`;
 }
 
-// Replaces both ThumbnailCell (single-thumbnail grid cell) and
-// PropertiesPanel (separate detail sidebar). One VideoRow = one video =
-// one list row: 6 thumbnails on the left, metadata/rating/tags on the
-// right, no file-name heading and no explicit play button (ダブルクリック
+// One VideoRow = one video = one list row: 6 thumbnails on the left,
+// metadata/rating/tags on the right, no explicit play button (ダブルクリック
 // が再生の唯一の手段).
 //
-// Rendered with `key={video.id}` by its caller (ThumbnailGrid, same
-// convention as the old PropertiesPanel) -- TanStack Virtual's row
-// virtualization here maps one virtual row to exactly one video (no
-// per-row grouping, unlike the old multi-column grid), so keying the
-// component itself by video id lets React remount it fresh whenever the
-// video shown at a given scroll position changes, resyncing `rating`'s
-// lazy initializer without a manual effect.
+// The caller renders it with `key={video.id}`. The virtualizer maps one
+// virtual row to exactly one video, so keying by video id makes React remount
+// the row whenever the video at a given scroll position changes, resyncing
+// `rating`'s lazy initializer without a manual effect.
 export function VideoRow({
   video,
   thumbnailVersion,
@@ -103,15 +97,12 @@ export function VideoRow({
   const stillProbing = needsPropertiesRefresh(properties);
 
   // バックグラウンドのメタデータ取得は1件終わるごとに一覧の更新通知を出すが、
-  // 行は再マウントされないため、マウント時に一度取得するだけでは、その時点で
+  // 行は再マウントされないため、マウント時の一度きりの取得では、その時点で
   // 未取得だった行が「取得中...」のまま固まる。そこで一覧の更新（catalogVersion）
-  // を契機に、取得が終わっていない行だけ取り直す。取得済みなら何もしないので、
-  // 取得済みの行で再取得は増えない。stillProbing（boolean）を依存に使うのは、
-  // 未取得のまま応答が返っても値が変わらず、effectが再実行されてループしない
-  // ようにするため。
-  // ffprobeに永続的に失敗した行はprobed_atが入らないため一覧の更新のたびに
-  // 取り直すが、対象は仮想スクロールで描画中の数行に限られ負荷は小さい。
-  // ポーリングはせず、既存のイベント駆動に合わせる。
+  // を契機に、未取得の行だけ取り直す。stillProbing（boolean）を依存に使うのは、
+  // 未取得のまま応答が返っても値が変わらず、effectがループしないようにするため。
+  // ffprobeに永続的に失敗した行は更新のたびに取り直すが、対象は仮想スクロールで
+  // 描画中の数行に限られ負荷は小さい。ポーリングはせずイベント駆動にそろえる。
   useEffect(() => {
     if (!stillProbing) return;
     let cancelled = false;
@@ -130,14 +121,11 @@ export function VideoRow({
   const isOffline = video.status === "offline" || folderUnreachable;
   const placeholderState = thumbnailPlaceholderState(video, isOffline);
 
-  // サムネイルは元動画のアスペクト比を保ったまま表示する（バックエンドの
-  // `extract_thumbnail`は`-vf
-  // scale={width}:-1`で幅指定・高さ自動計算のため、生成されたWebP自体は既に
-  // 正しい比率を保持している -- クロップしていたのはこのフロント側の固定
-  // 200x150枠+`object-fit: cover`のみだった）。高さ150pxは固定のまま、幅を
-  // 動画の実際の width/height 比から算出する。メタデータ未取得時
-  // (`stillProbing`)は現行の200px（4:3相当）をフォールバックとして使う --
-  // 6枚とも同一動画のサムネイルなので、算出した幅を全スロットに適用する。
+  // サムネイルは元動画のアスペクト比を保って表示する。生成されたWebP自体が
+  // 既に正しい比率なので、高さ150pxを固定し、幅を動画の width/height 比から
+  // 算出する（固定枠+`object-fit: cover`だとクロップされる）。メタデータ未取得時
+  // (`stillProbing`)は200px（4:3相当）をフォールバックにする。6枚とも同一動画の
+  // サムネイルなので、算出した幅を全スロットに適用する。
   const THUMBNAIL_HEIGHT_PX = 150;
   const DEFAULT_THUMBNAIL_WIDTH_PX = 200;
   const thumbnailWidth =
@@ -178,20 +166,15 @@ export function VideoRow({
       data-testid="video-row"
       onContextMenu={(e) => onContextMenu(video, e)}
     >
-      {/* Single click selects (highlight only,
-          no panel to open anymore); double click plays via the external
-          player (disabled while offline). Both handlers live on the
+      {/* Single click selects (highlight only); double click plays via the
+          external player (disabled while offline). Both handlers live on the
           thumbnail area itself, not the row as a whole -- the metadata/
           rating/tag-editor side has its own interactive controls that must
           not also trigger row selection or playback. */}
-      {/* `.video-row-thumbnails-wrap` is the
-          non-scrolling `position: relative` containing block, shared by two
-          absolutely-positioned overlays that must NOT move when the inner
-          `.video-row-thumbnails` scrolls horizontally: the offline badge
-          (moved here from `.video-row-thumbnails` itself, which used to be
-          both the scroll container AND the badge's containing block -- the
-          badge drifted out of view whenever a user scrolled the 6
-          thumbnails sideways) and the new file-name label below. */}
+      {/* `.video-row-thumbnails-wrap` is the non-scrolling
+          `position: relative` containing block for the overlays (offline
+          badge, file-name label) that must NOT move when the inner
+          `.video-row-thumbnails` scrolls horizontally. */}
       <div className="video-row-thumbnails-wrap" data-testid="video-row-thumbnails-wrap">
         <div
           className="video-row-thumbnails"
