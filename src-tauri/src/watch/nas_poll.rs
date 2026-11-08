@@ -166,6 +166,7 @@ pub fn run_nas_diff_scan(
                         &entry_path,
                         file_size,
                         mtime,
+                        reachability,
                     ) {
                         Ok(
                             scan::ProcessOutcome::Registered
@@ -493,7 +494,7 @@ mod tests {
         ));
         {
             let follow_up = Arc::clone(&follow_up);
-            registry.set_on_recovered(move || follow_up.trigger());
+            registry.set_on_recovered(move |_| follow_up.trigger());
         }
         let scan = |follow_up: &FollowUp| {
             run_nas_diff_scan(
@@ -523,5 +524,29 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn a_diff_scan_follows_a_move_out_of_a_vanished_folder() {
+        let fx = crate::scan::move_fixture::MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let id = fx.id_at(&old);
+        fx.probe.set_reachable(fx.folder(0), false);
+        let new = fx.dirs[1].path().join("new.mp4");
+        std::fs::rename(&old, &new).unwrap();
+
+        run_nas_diff_scan(
+            &fx.db,
+            fx.thumbs.path(),
+            fx.folder(1),
+            &AtomicBool::new(false),
+            &FakeCatalogNotifier::default(),
+            &FollowUp::noop(),
+            &fx.registry,
+        )
+        .unwrap();
+
+        assert_eq!(fx.id_at(&new), id);
+        assert_eq!(fx.rows().len(), 1);
     }
 }

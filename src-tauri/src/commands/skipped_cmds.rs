@@ -312,6 +312,7 @@ pub fn rename_skipped_file(
     let notifier = Arc::new(TauriCatalogNotifier::new(app));
     let register_db = db.inner().clone();
     let register_root = thumbnails_root.clone();
+    let register_reachability = reachability.inner().clone();
     // Same stat-then-`process_detected_file` path as the file watcher, so the
     // outcome is identical whichever of the two sees the renamed file first.
     let register = move |path: &Path| -> anyhow::Result<()> {
@@ -323,6 +324,7 @@ pub fn rename_skipped_file(
             path,
             metadata.len(),
             mtime,
+            &register_reachability,
         )? {
             scan::ProcessOutcome::SkippedUnreadable => {
                 anyhow::bail!("the file is locked or unreadable")

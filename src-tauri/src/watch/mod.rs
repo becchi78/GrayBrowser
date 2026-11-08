@@ -27,7 +27,7 @@ use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
 use crate::reachability::ReachabilityRegistry;
-use crate::scan::{self, mtime_from_metadata};
+use crate::scan::{self, mtime_from_metadata, FolderReachability};
 use follow_up::FollowUp;
 use nas_poll::NasPollHandle;
 use unreadable_retry::{RetryOutcome, UnreadableRetry};
@@ -169,6 +169,7 @@ impl RealtimeWatchManager {
             watcher,
             Arc::clone(&notifier),
             Arc::clone(&self.follow_up),
+            Arc::new(self.reachability.clone()),
         );
         // After start_watching, so a file created between the scan's walk and
         // the watch becoming active cannot be missed.
@@ -279,12 +280,21 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
     watcher: &impl FileWatcher,
     notifier: Arc<N>,
     follow_up: Arc<FollowUp>,
+    reachability: Arc<dyn FolderReachability>,
 ) -> (Vec<Box<dyn WatchHandle>>, Arc<UnreadableRetry>) {
     let retry = {
         let (db, thumbnails_root) = (db.clone(), thumbnails_root.clone());
         let (notifier, follow_up) = (Arc::clone(&notifier), Arc::clone(&follow_up));
+        let reachability = Arc::clone(&reachability);
         Arc::new(UnreadableRetry::new(move |path| {
-            process_changed_file(&db, &thumbnails_root, path, notifier.as_ref(), &follow_up)
+            process_changed_file(
+                &db,
+                &thumbnails_root,
+                path,
+                notifier.as_ref(),
+                &follow_up,
+                reachability.as_ref(),
+            )
         }))
     };
     let handles = folders
@@ -295,6 +305,7 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
             let notifier = Arc::clone(&notifier);
             let follow_up = Arc::clone(&follow_up);
             let retry = Arc::clone(&retry);
+            let reachability = Arc::clone(&reachability);
             let on_event: Box<dyn Fn(WatchEvent) + Send + Sync> = Box::new(move |event| {
                 handle_watch_event(
                     &db,
@@ -303,6 +314,7 @@ pub fn start_watching<N: CatalogNotifier + 'static>(
                     notifier.as_ref(),
                     &follow_up,
                     &retry,
+                    reachability.as_ref(),
                 )
             });
             match watcher.watch(Path::new(folder), on_event) {
@@ -326,6 +338,7 @@ fn process_changed_file(
     path: &Path,
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
+    reachability: &dyn FolderReachability,
 ) -> RetryOutcome {
     // Known, accepted limitation: a copy in progress fires several
     // Created/Modified events, and each one hashes whatever bytes exist at
@@ -352,7 +365,7 @@ fn process_changed_file(
             return RetryOutcome::Done;
         }
     };
-    match scan::process_detected_file(db, thumbnails_root, path, file_size, mtime) {
+    match scan::process_detected_file(db, thumbnails_root, path, file_size, mtime, reachability) {
         Ok(
             scan::ProcessOutcome::Registered
             | scan::ProcessOutcome::Reconciled
@@ -390,6 +403,7 @@ fn handle_watch_event(
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
     retry: &UnreadableRetry,
+    reachability: &dyn FolderReachability,
 ) {
     let file_name = match event.path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
@@ -404,8 +418,14 @@ fn handle_watch_event(
 
     match event.kind {
         WatchEventKind::Created | WatchEventKind::Modified => {
-            if process_changed_file(db, thumbnails_root, &event.path, notifier, follow_up)
-                == RetryOutcome::StillUnreadable
+            if process_changed_file(
+                db,
+                thumbnails_root,
+                &event.path,
+                notifier,
+                follow_up,
+                reachability,
+            ) == RetryOutcome::StillUnreadable
             {
                 retry.defer(&event.path);
             }
@@ -491,6 +511,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let conn = db.writer.lock().unwrap();
@@ -518,6 +539,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let conn = db.writer.lock().unwrap();
@@ -545,6 +567,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         handle_watch_event(
@@ -557,6 +580,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let conn = db.writer.lock().unwrap();
@@ -587,6 +611,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let conn = db.writer.lock().unwrap();
@@ -618,6 +643,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
@@ -643,6 +669,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         // A second event for the exact same, unchanged file must classify
@@ -655,6 +682,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert_eq!(
@@ -681,6 +709,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert_eq!(
@@ -707,6 +736,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let notifier = FakeCatalogNotifier::default();
@@ -720,6 +750,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert_eq!(
@@ -755,6 +786,7 @@ mod tests {
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
             Arc::new(FollowUp::noop()),
+            Arc::new(scan::AssumeReachable),
         );
 
         let event = |kind| WatchEvent {
@@ -816,6 +848,7 @@ mod tests {
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
             Arc::new(FollowUp::noop()),
+            Arc::new(scan::AssumeReachable),
         );
 
         assert_eq!(handles.len(), 1);
@@ -1128,6 +1161,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &follow_up,
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert!(follow_up.has_pending());
@@ -1148,6 +1182,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let follow_up = parked_follow_up();
@@ -1158,6 +1193,7 @@ mod tests {
             &notifier,
             &follow_up,
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert!(!follow_up.has_pending());
@@ -1178,6 +1214,7 @@ mod tests {
             &notifier,
             &FollowUp::noop(),
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         let follow_up = parked_follow_up();
@@ -1191,6 +1228,7 @@ mod tests {
             &notifier,
             &follow_up,
             &UnreadableRetry::noop(),
+            &scan::AssumeReachable,
         );
 
         assert!(!follow_up.has_pending());
@@ -1239,6 +1277,7 @@ mod tests {
                     path,
                     notifier.as_ref(),
                     &FollowUp::noop(),
+                    &scan::AssumeReachable,
                 )
             },
         )
@@ -1268,6 +1307,7 @@ mod tests {
             notifier.as_ref(),
             &FollowUp::noop(),
             &retry,
+            &scan::AssumeReachable,
         );
         assert_eq!(retry.pending_count(), 1);
 
@@ -1315,6 +1355,7 @@ mod tests {
             notifier.as_ref(),
             &FollowUp::noop(),
             &retry,
+            &scan::AssumeReachable,
         );
         assert_eq!(retry.pending_count(), 1);
 
@@ -1328,6 +1369,7 @@ mod tests {
             notifier.as_ref(),
             &FollowUp::noop(),
             &retry,
+            &scan::AssumeReachable,
         );
 
         assert_eq!(retry.pending_count(), 0);
@@ -1350,6 +1392,7 @@ mod tests {
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &retry,
+            &scan::AssumeReachable,
         );
 
         assert_eq!(retry.pending_count(), 0);
@@ -1459,5 +1502,30 @@ mod tests {
         );
 
         assert!(registry.unreachable_folders().is_empty());
+    }
+
+    #[test]
+    fn a_file_event_for_a_move_out_of_a_vanished_folder_is_followed() {
+        let fx = crate::scan::move_fixture::MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let id = fx.id_at(&old);
+        fx.probe.set_reachable(fx.folder(0), false);
+        let new = fx.dirs[1].path().join("new.mp4");
+        fs::rename(&old, &new).unwrap();
+        let notifier = FakeCatalogNotifier::default();
+
+        let outcome = process_changed_file(
+            &fx.db,
+            fx.thumbs.path(),
+            &new,
+            &notifier,
+            &FollowUp::noop(),
+            &fx.registry,
+        );
+
+        assert_eq!(outcome, RetryOutcome::Done);
+        assert_eq!(notifier.calls(), 1);
+        assert_eq!(fx.id_at(&new), id);
+        assert_eq!(fx.rows().len(), 1);
     }
 }

@@ -392,28 +392,82 @@ pub fn find_offline_candidates_by_quick_hash_and_size(
     Ok(rows)
 }
 
-/// `status='online'` rows whose `file_path` falls under `folder_prefix`,
-/// used to build the "known" side of a NAS diff-scan pass
-/// (`gb_core::reconcile::decide_missing_video_ids`'s `known_online`). Prefix
-/// matching is done in Rust (not SQL `LIKE`) to sidestep `LIKE` wildcard
-/// escaping entirely, and case-insensitively since NTFS/Windows paths are
-/// case-insensitive.
+/// `status='online'` rows sharing `quick_hash`+`file_size` with a newly
+/// discovered file, other than the row (if any) at `excluding_path` itself.
+/// These are either genuine duplicates or the same file seen before its old
+/// folder was noticed to be gone; the caller tells them apart by checking
+/// whether the old location is still reachable.
+pub fn find_online_lookalikes_at_other_paths(
+    conn: &Connection,
+    quick_hash: &str,
+    file_size: i64,
+    excluding_path: &str,
+) -> rusqlite::Result<Vec<VideoRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {VIDEO_COLUMNS} FROM videos
+         WHERE status = 'online' AND quick_hash = ?1 AND file_size = ?2 AND file_path <> ?3
+         ORDER BY created_at ASC"
+    ))?;
+    let rows = stmt
+        .query_map(
+            params![quick_hash, file_size, excluding_path],
+            map_video_row,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// `status='online'` rows whose `file_path` lies under `folder`, used to build
+/// the "known" side of a NAS diff-scan pass
+/// (`gb_core::reconcile::decide_missing_video_ids`'s `known_online`) and to
+/// find the rows to flip offline when a folder becomes unreachable. Matching
+/// is done in Rust (not SQL `LIKE`) to sidestep `LIKE` wildcard escaping, and
+/// goes through `gb_core::paths::is_under_folder` so it is case-insensitive
+/// (NTFS) and stops at a separator: `D:\video` must not pick up
+/// `D:\video2\a.mp4`, or a sibling folder's rows would be treated as this
+/// folder's (and flipped offline when this folder is scanned or goes down).
 pub fn list_online_videos_under(
     pool: &r2d2::Pool<SqliteConnectionManager>,
-    folder_prefix: &str,
+    folder: &str,
 ) -> anyhow::Result<Vec<VideoRow>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(&format!(
         "SELECT {VIDEO_COLUMNS} FROM videos WHERE status = 'online'"
     ))?;
-    let prefix_lower = folder_prefix.to_lowercase();
     let rows = stmt
         .query_map([], map_video_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
-        .filter(|v| v.file_path.to_lowercase().starts_with(&prefix_lower))
+        .filter(|v| gb_core::paths::is_under_folder(&v.file_path, folder))
         .collect();
     Ok(rows)
+}
+
+/// Ids per `UPDATE ... IN (...)`. SQLite's default bound-parameter limit is
+/// 999 on older builds (32766 since 3.32); staying under the smaller one keeps
+/// this independent of how SQLite was compiled.
+const MARK_OFFLINE_CHUNK: usize = 500;
+
+/// Flips the given rows from `online` to `offline` in one transaction, so a
+/// failure part-way leaves no folder half-updated. Rows that are no longer
+/// `online` (already offline, or removed meanwhile) are left alone and not
+/// counted. Returns how many rows changed. Only `status` is written: tags,
+/// rating and thumbnails stay attached to the row.
+pub fn mark_videos_offline(conn: &mut Connection, ids: &[String]) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    let mut changed = 0;
+    for chunk in ids.chunks(MARK_OFFLINE_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        changed += tx.execute(
+            &format!(
+                "UPDATE videos SET status = 'offline'
+                 WHERE status = 'online' AND id IN ({placeholders})"
+            ),
+            rusqlite::params_from_iter(chunk.iter()),
+        )?;
+    }
+    tx.commit()?;
+    Ok(changed)
 }
 
 /// Overwrites `status` only (online/offline transitions and the

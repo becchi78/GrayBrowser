@@ -4,20 +4,61 @@
 //!
 //! `process_detected_file` is the shared per-file entry point: reused as-is
 //! by this module's `scan_folders` (manual full walk), the local realtime
-//! watcher, and the NAS diff-scan/poll without any signature change expected
-//! across those additions.
+//! watcher, and the NAS diff-scan/poll. Each caller passes a
+//! `FolderReachability` so a moved file can be told apart from a copy.
 
 use std::fs::File;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
+use gb_core::paths;
 use gb_core::reconcile::{self, DiscoveredFile, FileClassification, KnownFileMeta};
 use gb_core::scan_pipeline::{self, ScannedFile, ValidationOutcome};
 use walkdir::WalkDir;
 
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
+use crate::offline_sync::mark_folder_offline;
+use crate::reachability::ReachabilityRegistry;
 use crate::thumbnail;
+
+/// How recent a probe of a watch folder may be for `FolderReachability` to
+/// reuse it. A scan that registers many copies of one file would otherwise
+/// probe the same folder once per file; this keeps that to one probe per few
+/// seconds while still noticing a folder that went away since the last scan.
+const MOVE_CHECK_MIN_AGE: Duration = Duration::from_secs(3);
+
+/// Answers "is this watch folder gone right now?" for the move detection in
+/// `register_new_path`. Kept as a trait so the scan paths can be exercised
+/// with a fake probe behind a real `ReachabilityRegistry`.
+pub trait FolderReachability: Send + Sync {
+    /// True only when the folder is confirmed unreachable. May block for as
+    /// long as a probe of a dead share takes, so callers must not hold the DB
+    /// writer lock around it.
+    fn is_confirmed_unreachable(&self, folder: &str) -> bool;
+}
+
+impl FolderReachability for ReachabilityRegistry {
+    fn is_confirmed_unreachable(&self, folder: &str) -> bool {
+        // Not `refresh` (forced): that would probe on every call. A recent
+        // answer is trusted; otherwise this probes. `is_reachable` then reads
+        // the settled answer, waiting for a probe already in flight rather
+        // than acting on its provisional "unreachable" display flag.
+        self.refresh_if_stale(folder, MOVE_CHECK_MIN_AGE);
+        !self.is_reachable(folder)
+    }
+}
+
+/// Treats every folder as reachable: a duplicate is always registered as a new
+/// row and no folder is probed. For callers and tests that have no registry
+/// and are not exercising moves out of vanished folders.
+pub struct AssumeReachable;
+
+impl FolderReachability for AssumeReachable {
+    fn is_confirmed_unreachable(&self, _folder: &str) -> bool {
+        false
+    }
+}
 
 #[derive(Default, serde::Serialize)]
 pub struct ScanSummary {
@@ -112,12 +153,16 @@ pub enum ProcessOutcome {
 /// layer (`crate::paths::app_data_dir`) and threaded down explicitly rather
 /// than re-resolved here, matching this codebase's "OS-dependent path
 /// resolution stays at the edge" convention.
+///
+/// `reachability` is consulted only for a new path whose content matches an
+/// `online` row elsewhere (see `register_new_path`).
 pub fn process_detected_file(
     db: &Db,
     thumbnails_root: &Path,
     entry_path: &Path,
     file_size: u64,
     mtime: i64,
+    reachability: &dyn FolderReachability,
 ) -> anyhow::Result<ProcessOutcome> {
     let file_path = entry_path.to_string_lossy().to_string();
     let file_name = entry_path
@@ -156,7 +201,7 @@ pub fn process_detected_file(
 
     match known {
         Some(known) => reconcile_known_path(db, thumbnails_root, &scanned_file, &known),
-        None => register_new_path(db, thumbnails_root, &scanned_file),
+        None => register_new_path(db, thumbnails_root, &scanned_file, reachability),
     }
 }
 
@@ -361,10 +406,18 @@ fn apply_rehashed_metadata(
 /// first -- only falls back to a brand-new row when no such candidate
 /// exists, or when the candidate's target path collides with an
 /// already-`online` row.
+///
+/// With no `offline` candidate, an `online` row of the same content elsewhere
+/// is either a real copy or the same file whose old folder was renamed or
+/// unplugged without that being noticed yet (nothing re-checks a reachable
+/// local folder on its own). Its folder is checked on the spot: if it is
+/// confirmed gone, its rows are flipped `offline` first so the move is
+/// followed; if it is reachable, the file is a copy and is registered as such.
 fn register_new_path(
     db: &Db,
     thumbnails_root: &Path,
     scanned_file: &ScannedFile,
+    reachability: &dyn FolderReachability,
 ) -> anyhow::Result<ProcessOutcome> {
     let quick_hash = match hash_file(&scanned_file.file_path, scanned_file.file_size) {
         Ok(h) => h,
@@ -377,6 +430,10 @@ fn register_new_path(
         }
     };
     let quick_hash_str = quick_hash.to_string();
+
+    // Before the writer lock: a probe of a dead share can block for tens of
+    // seconds, and every other writer would wait behind it.
+    flip_vanished_lookalikes_offline(db, scanned_file, &quick_hash_str, reachability)?;
 
     // Read (candidate lookup + collision check), decision, and write all
     // happen inside one db.writer.lock() acquisition -- this is what
@@ -482,6 +539,67 @@ fn register_new_path(
             Ok(ProcessOutcome::Registered)
         }
     }
+}
+
+/// When `scanned_file` has no `offline` candidate, checks the watch folders of
+/// the `online` rows with the same content and flips the rows under each
+/// folder confirmed unreachable to `offline`, so the caller's candidate lookup
+/// then finds them. Rows under a reachable folder are left alone (a real
+/// copy). Written directly rather than left to the unreachable hook, which
+/// runs on another thread and may not have applied yet; the update only
+/// touches `online` rows, so doing both is harmless.
+fn flip_vanished_lookalikes_offline(
+    db: &Db,
+    scanned_file: &ScannedFile,
+    quick_hash_str: &str,
+    reachability: &dyn FolderReachability,
+) -> anyhow::Result<()> {
+    let (lookalikes, watch_folders) = {
+        let conn = db.read_pool.get()?;
+        let file_size = scanned_file.file_size as i64;
+        if !queries::find_offline_candidates_by_quick_hash_and_size(
+            &conn,
+            quick_hash_str,
+            file_size,
+        )?
+        .is_empty()
+        {
+            return Ok(());
+        }
+        let lookalikes = queries::find_online_lookalikes_at_other_paths(
+            &conn,
+            quick_hash_str,
+            file_size,
+            &scanned_file.file_path,
+        )?;
+        if lookalikes.is_empty() {
+            return Ok(());
+        }
+        (lookalikes, queries::get_watch_folders(&conn)?)
+    };
+
+    let mut checked: Vec<&str> = Vec::new();
+    for row in &lookalikes {
+        let Some(folder) = paths::owning_folder(&row.file_path, &watch_folders) else {
+            continue;
+        };
+        if checked.contains(&folder) {
+            continue;
+        }
+        checked.push(folder);
+        if !reachability.is_confirmed_unreachable(folder) {
+            continue;
+        }
+        match mark_folder_offline(db, folder) {
+            Ok(changed) => log::info!(
+                "{changed} video(s) under {folder} went offline: folder unreachable while \
+                 checking a possible move to {}",
+                scanned_file.file_path
+            ),
+            Err(e) => log::error!("failed to mark videos under {folder} offline: {e:#}"),
+        }
+    }
+    Ok(())
 }
 
 /// Moves the offline row `video_id` to the discovered path and brings it
@@ -600,6 +718,7 @@ pub fn scan_folders(
     folders: &[String],
     db: &Db,
     thumbnails_root: &Path,
+    reachability: &dyn FolderReachability,
 ) -> anyhow::Result<ScanSummary> {
     let mut summary = ScanSummary::default();
     log::info!("scan started for {} folder(s)", folders.len());
@@ -674,7 +793,14 @@ pub fn scan_folders(
             discovered_paths.push(file_path.clone());
             summary.scanned += 1;
 
-            match process_detected_file(db, thumbnails_root, &entry_path, file_size, mtime)? {
+            match process_detected_file(
+                db,
+                thumbnails_root,
+                &entry_path,
+                file_size,
+                mtime,
+                reachability,
+            )? {
                 ProcessOutcome::Registered => summary.registered += 1,
                 ProcessOutcome::Reconciled => summary.reconciled += 1,
                 ProcessOutcome::Unchanged => summary.unchanged += 1,
@@ -766,6 +892,141 @@ fn reconcile_missing_videos(
     Ok(decision.missing_ids.len() as u32)
 }
 
+/// A catalog with folders to register videos in and move them between, behind a
+/// registry whose probe the test controls. Shared by the tests of every
+/// detection path.
+#[cfg(test)]
+pub(crate) mod move_fixture {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+    use crate::events::NoopReachabilityNotifier;
+    use gb_core::testing::fake_folder_probe::FakeFolderProbe;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    pub const CONTENT: &[u8] = b"the same video bytes";
+
+    pub struct MoveFixture {
+        pub db: Db,
+        pub thumbs: tempfile::TempDir,
+        pub dirs: Vec<tempfile::TempDir>,
+        pub probe: Arc<FakeFolderProbe>,
+        pub registry: ReachabilityRegistry,
+        pub watch_folders: Vec<String>,
+        _db_dir: tempfile::TempDir,
+    }
+
+    impl MoveFixture {
+        pub fn new(folder_count: usize) -> Self {
+            let (db_dir, db) = init_temp_db();
+            let dirs: Vec<_> = (0..folder_count)
+                .map(|_| tempfile::tempdir().unwrap())
+                .collect();
+            let watch_folders: Vec<String> = dirs
+                .iter()
+                .map(|d| d.path().to_string_lossy().to_string())
+                .collect();
+            queries::set_watch_folders(&db.writer.lock().unwrap(), &watch_folders).unwrap();
+            let probe = Arc::new(FakeFolderProbe::default());
+            let registry =
+                ReachabilityRegistry::new(probe.clone(), Arc::new(NoopReachabilityNotifier));
+            Self {
+                db,
+                thumbs: tempfile::tempdir().unwrap(),
+                dirs,
+                probe,
+                registry,
+                watch_folders,
+                _db_dir: db_dir,
+            }
+        }
+
+        pub fn folder(&self, i: usize) -> &str {
+            &self.watch_folders[i]
+        }
+
+        /// Writes `name` into folder `i` and registers it through a manual scan
+        /// that never consults reachability, so the registry stays unprobed.
+        pub fn register_at(&self, i: usize, name: &str) -> PathBuf {
+            let path = self.write_at(i, name);
+            scan_folders(
+                &[self.folder(i).to_string()],
+                &self.db,
+                self.thumbs.path(),
+                &AssumeReachable,
+            )
+            .unwrap();
+            path
+        }
+
+        pub fn write_at(&self, i: usize, name: &str) -> PathBuf {
+            let path = self.dirs[i].path().join(name);
+            fs::write(&path, CONTENT).unwrap();
+            path
+        }
+
+        pub fn id_at(&self, path: &Path) -> String {
+            let conn = self.db.read_pool.get().unwrap();
+            queries::find_video_by_path(&conn, &path.to_string_lossy())
+                .unwrap()
+                .unwrap()
+                .id
+        }
+
+        pub fn rows(&self) -> Vec<(String, String)> {
+            let conn = self.db.read_pool.get().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT file_path, status FROM videos ORDER BY file_path")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        }
+
+        pub fn tag(&self, id: &str, name: &str) {
+            let conn = self.db.writer.lock().unwrap();
+            conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [name])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO video_tags (video_id, tag_id)
+                 SELECT ?1, id FROM tags WHERE name = ?2",
+                [id, name],
+            )
+            .unwrap();
+        }
+
+        pub fn tag_count(&self, id: &str) -> i64 {
+            let conn = self.db.read_pool.get().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM video_tags WHERE video_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        }
+
+        /// Where `id`'s first thumbnail slot lives for a file at `path`.
+        pub fn thumbnail_slot(&self, id: &str, path: &Path) -> PathBuf {
+            thumbnail::paths::video_thumbnail_dir(
+                self.thumbs.path(),
+                &self.watch_folders,
+                &path.to_string_lossy(),
+            )
+            .join(format!("{id}_0.webp"))
+        }
+
+        pub fn put_thumbnail(&self, id: &str, path: &Path) {
+            let slot = self.thumbnail_slot(id, path);
+            fs::create_dir_all(slot.parent().unwrap()).unwrap();
+            fs::write(slot, "thumb").unwrap();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,7 +1072,7 @@ mod tests {
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
         let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-        scan_folders(&old_folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&old_folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
         let r1_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -825,7 +1086,7 @@ mod tests {
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"different content, a different length").unwrap();
         let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
-        scan_folders(&new_folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&new_folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
         let r2_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.query_row(
@@ -848,7 +1109,8 @@ mod tests {
             mtime: mtime_from_metadata(&metadata).unwrap(),
         };
 
-        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file).unwrap();
+        let outcome =
+            register_new_path(&db, thumbs_root.path(), &scanned_file, &AssumeReachable).unwrap();
         match outcome {
             ProcessOutcome::BlockedByCollision {
                 video_id,
@@ -931,7 +1193,7 @@ mod tests {
         let old_path = old_dir.path().join("old.mp4");
         fs::write(&old_path, b"shared content").unwrap();
         let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-        scan_folders(&old_folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&old_folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
         let r1_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -946,7 +1208,7 @@ mod tests {
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"original R2 content, a different length").unwrap();
         let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
-        scan_folders(&new_folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&new_folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
         let r2_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.query_row(
@@ -1051,7 +1313,7 @@ mod tests {
         let path = dir.path().join("video.mp4");
         fs::write(&path, b"shared content").unwrap();
         let folders = vec![dir.path().to_string_lossy().to_string()];
-        scan_folders(&folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
 
         let video_id: String = {
             let conn = db.writer.lock().unwrap();
@@ -1129,7 +1391,7 @@ mod tests {
         let path = dir.path().join("video.mp4");
         fs::write(&path, b"original content").unwrap();
         let folders = vec![dir.path().to_string_lossy().to_string()];
-        scan_folders(&folders, &db, thumbs_root.path()).unwrap();
+        scan_folders(&folders, &db, thumbs_root.path(), &AssumeReachable).unwrap();
 
         // Change the content to something with no matching offline
         // candidate anywhere in the DB (there isn't even another row).
@@ -1188,7 +1450,13 @@ mod tests {
 
         // Register the video under old_dir, then simulate it going offline
         // (e.g. the drive holding old_dir was disconnected).
-        scan_folders(std::slice::from_ref(&old_folder), &db, thumbs_root.path()).unwrap();
+        scan_folders(
+            std::slice::from_ref(&old_folder),
+            &db,
+            thumbs_root.path(),
+            &AssumeReachable,
+        )
+        .unwrap();
         let video_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute("UPDATE videos SET status = 'offline'", [])
@@ -1218,7 +1486,13 @@ mod tests {
         let new_path = new_dir.path().join("new.mp4");
         fs::write(&new_path, b"shared content for path-follow").unwrap();
 
-        scan_folders(std::slice::from_ref(&new_folder), &db, thumbs_root.path()).unwrap();
+        scan_folders(
+            std::slice::from_ref(&new_folder),
+            &db,
+            thumbs_root.path(),
+            &AssumeReachable,
+        )
+        .unwrap();
 
         let conn = db.writer.lock().unwrap();
         let (status, file_path): (String, String) = conn
@@ -1279,7 +1553,7 @@ mod tests {
             let conn = db.writer.lock().unwrap();
             queries::set_watch_folders(&conn, &folders).unwrap();
         }
-        scan_folders(&folders, db, thumbs_root.path()).unwrap();
+        scan_folders(&folders, db, thumbs_root.path(), &AssumeReachable).unwrap();
         let video_id: String = {
             let conn = db.writer.lock().unwrap();
             conn.execute(
@@ -1323,6 +1597,7 @@ mod tests {
             path,
             metadata.len(),
             mtime_from_metadata(&metadata).unwrap() + mtime_bump,
+            &AssumeReachable,
         )
         .unwrap();
     }
@@ -1389,7 +1664,7 @@ mod tests {
         let old_path = old_dir.join("old.mp4");
         fs::write(&old_path, content).unwrap();
         let folders = vec![old_dir.to_string_lossy().to_string()];
-        scan_folders(&folders, db, thumbs_root).unwrap();
+        scan_folders(&folders, db, thumbs_root, &AssumeReachable).unwrap();
         let conn = db.writer.lock().unwrap();
         conn.execute("UPDATE videos SET status = 'offline'", [])
             .unwrap();
@@ -1451,8 +1726,13 @@ mod tests {
         // A directory squatting on the destination slot makes the rename fail.
         fs::create_dir_all(new_video_dir.join(format!("{video_id}_0.webp"))).unwrap();
 
-        let outcome =
-            register_new_path(&db, thumbs_root.path(), &scanned_file_of(&new_path)).unwrap();
+        let outcome = register_new_path(
+            &db,
+            thumbs_root.path(),
+            &scanned_file_of(&new_path),
+            &AssumeReachable,
+        )
+        .unwrap();
         assert!(matches!(
         outcome,
         ProcessOutcome::PathFollowed { video_id: ref id } if *id == video_id
@@ -1493,8 +1773,13 @@ mod tests {
             .unwrap();
         }
 
-        let outcome =
-            register_new_path(&db, thumbs_root.path(), &scanned_file_of(&new_path)).unwrap();
+        let outcome = register_new_path(
+            &db,
+            thumbs_root.path(),
+            &scanned_file_of(&new_path),
+            &AssumeReachable,
+        )
+        .unwrap();
         assert!(matches!(outcome, ProcessOutcome::SkippedUnreadable));
 
         let conn = db.writer.lock().unwrap();
@@ -1524,7 +1809,8 @@ mod tests {
             file_size: 10,
             mtime: 1,
         };
-        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file).unwrap();
+        let outcome =
+            register_new_path(&db, thumbs_root.path(), &scanned_file, &AssumeReachable).unwrap();
         assert!(matches!(outcome, ProcessOutcome::SkippedUnreadable));
         let conn = db.writer.lock().unwrap();
         let count: i64 = conn
@@ -1540,7 +1826,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fresh.mp4");
         fs::write(&path, b"fresh content").unwrap();
-        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file_of(&path)).unwrap();
+        let outcome = register_new_path(
+            &db,
+            thumbs_root.path(),
+            &scanned_file_of(&path),
+            &AssumeReachable,
+        )
+        .unwrap();
         assert!(matches!(outcome, ProcessOutcome::Registered));
         let conn = db.writer.lock().unwrap();
         let (status, count): (String, i64) = conn
@@ -1562,6 +1854,7 @@ mod tests {
             &[dir.path().to_string_lossy().to_string()],
             &db,
             thumbs_root.path(),
+            &AssumeReachable,
         )
         .unwrap();
         let scanned_file = scanned_file_of(&path);
@@ -1640,5 +1933,192 @@ mod tests {
         assert_eq!(status, "online");
         assert_eq!(size, scanned_file.file_size as i64);
         assert_eq!(mtime, scanned_file.mtime);
+    }
+
+    use super::move_fixture::MoveFixture;
+
+    fn process(fx: &MoveFixture, path: &Path, reach: &dyn FolderReachability) -> ProcessOutcome {
+        let metadata = fs::metadata(path).unwrap();
+        process_detected_file(
+            &fx.db,
+            fx.thumbs.path(),
+            path,
+            metadata.len(),
+            mtime_from_metadata(&metadata).unwrap(),
+            reach,
+        )
+        .unwrap()
+    }
+
+    fn path_str(p: &Path) -> String {
+        p.to_string_lossy().to_string()
+    }
+
+    /// A video is registered in folder A, A then disappears (renamed or
+    /// unplugged) while the registry still caches it as reachable, and the file
+    /// shows up in B. No hook has run yet.
+    #[test]
+    fn a_move_out_of_a_vanished_folder_is_followed_before_any_hook_ran() {
+        let fx = MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let id = fx.id_at(&old);
+        fx.tag(&id, "keep");
+        fx.put_thumbnail(&id, &old);
+        fx.probe.set_reachable(fx.folder(0), false);
+        let new = fx.dirs[1].path().join("new.mp4");
+        fs::rename(&old, &new).unwrap();
+
+        let outcome = process(&fx, &new, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::PathFollowed { video_id } if video_id == id));
+        assert_eq!(fx.rows(), vec![(path_str(&new), "online".to_string())]);
+        assert_eq!(fx.id_at(&new), id);
+        assert_eq!(fx.tag_count(&id), 1);
+        assert!(fx.thumbnail_slot(&id, &new).exists());
+        assert!(!fx.thumbnail_slot(&id, &old).exists());
+    }
+
+    #[test]
+    fn a_move_is_followed_when_the_unreachable_hook_already_flipped_the_rows() {
+        let fx = MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let id = fx.id_at(&old);
+        {
+            let db = fx.db.clone();
+            fx.registry.set_on_unreachable(move |folder| {
+                crate::offline_sync::mark_folder_offline(&db, folder).unwrap();
+            });
+        }
+        fx.probe.set_reachable(fx.folder(0), false);
+        assert!(!fx.registry.is_reachable(fx.folder(0)));
+        let new = fx.dirs[1].path().join("new.mp4");
+        fs::rename(&old, &new).unwrap();
+
+        let outcome = process(&fx, &new, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::PathFollowed { video_id } if video_id == id));
+        assert_eq!(fx.rows(), vec![(path_str(&new), "online".to_string())]);
+        assert_eq!(
+            fx.probe.call_count_for(fx.folder(0)),
+            1,
+            "an offline candidate needs no further check"
+        );
+    }
+
+    #[test]
+    fn a_copy_of_a_file_in_a_reachable_folder_is_a_new_row() {
+        let fx = MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let copy = fx.write_at(1, "copy.mp4");
+
+        let outcome = process(&fx, &copy, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::Registered));
+        let mut expected = vec![
+            (path_str(&copy), "online".to_string()),
+            (path_str(&old), "online".to_string()),
+        ];
+        expected.sort();
+        assert_eq!(fx.rows(), expected);
+    }
+
+    #[test]
+    fn only_the_row_in_the_unreachable_folder_is_followed() {
+        let fx = MoveFixture::new(3);
+        let in_a = fx.register_at(0, "a.mp4");
+        let in_c = fx.register_at(2, "c.mp4");
+        let id_a = fx.id_at(&in_a);
+        fx.probe.set_reachable(fx.folder(0), false);
+        let new = fx.write_at(1, "new.mp4");
+
+        let outcome = process(&fx, &new, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::PathFollowed { video_id } if video_id == id_a));
+        let mut expected = vec![
+            (path_str(&in_c), "online".to_string()),
+            (path_str(&new), "online".to_string()),
+        ];
+        expected.sort();
+        assert_eq!(fx.rows(), expected);
+    }
+
+    #[test]
+    fn rows_in_reachable_folders_are_not_touched_by_the_check() {
+        let fx = MoveFixture::new(3);
+        let in_a = fx.register_at(0, "a.mp4");
+        let in_c = fx.register_at(2, "c.mp4");
+        let new = fx.write_at(1, "new.mp4");
+
+        let outcome = process(&fx, &new, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::Registered));
+        let rows = fx.rows();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|(_, status)| status == "online"));
+        assert!(rows.iter().any(|(p, _)| *p == path_str(&in_a)));
+        assert!(rows.iter().any(|(p, _)| *p == path_str(&in_c)));
+    }
+
+    #[test]
+    fn a_burst_of_copies_probes_each_reachable_folder_only_once() {
+        let fx = MoveFixture::new(2);
+        fx.register_at(0, "old.mp4");
+        for i in 0..6 {
+            let copy = fx.write_at(1, &format!("copy{i}.mp4"));
+            assert!(matches!(
+                process(&fx, &copy, &fx.registry),
+                ProcessOutcome::Registered
+            ));
+        }
+
+        assert_eq!(fx.probe.call_count_for(fx.folder(0)), 1);
+        assert_eq!(fx.probe.call_count_for(fx.folder(1)), 1);
+        assert_eq!(fx.rows().len(), 7);
+    }
+
+    #[test]
+    fn a_lookalike_outside_every_watch_folder_is_left_alone() {
+        let fx = MoveFixture::new(2);
+        let new = fx.write_at(1, "new.mp4");
+        let stray = tempfile::tempdir().unwrap();
+        fs::write(stray.path().join("stray.mp4"), move_fixture::CONTENT).unwrap();
+        scan_folders(
+            &[path_str(stray.path())],
+            &fx.db,
+            fx.thumbs.path(),
+            &AssumeReachable,
+        )
+        .unwrap();
+
+        let outcome = process(&fx, &new, &fx.registry);
+
+        assert!(matches!(outcome, ProcessOutcome::Registered));
+        assert_eq!(fx.rows().len(), 2);
+        assert!(
+            fx.probe.calls().is_empty(),
+            "no owning folder, nothing to probe"
+        );
+    }
+
+    #[test]
+    fn a_manual_scan_follows_a_move_out_of_a_vanished_folder() {
+        let fx = MoveFixture::new(2);
+        let old = fx.register_at(0, "old.mp4");
+        let id = fx.id_at(&old);
+        fx.probe.set_reachable(fx.folder(0), false);
+        let new = fx.dirs[1].path().join("new.mp4");
+        fs::rename(&old, &new).unwrap();
+
+        let summary = scan_folders(
+            &[fx.folder(1).to_string()],
+            &fx.db,
+            fx.thumbs.path(),
+            &fx.registry,
+        )
+        .unwrap();
+
+        assert_eq!((summary.reactivated, summary.registered), (1, 0));
+        assert_eq!(fx.id_at(&new), id);
+        assert_eq!(fx.rows().len(), 1);
     }
 }
