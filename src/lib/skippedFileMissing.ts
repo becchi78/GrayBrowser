@@ -10,5 +10,5 @@ export const MISSING_FILE_GUIDANCE =
 export function missingRegistrationNotice(carriedWbData: boolean): string | null {
   return carriedWbData
     ? null
-    : "オフラインの動画として登録しました。この記録には.wbの情報がないため、タグ・評価は付いていません。タグなどを引き継ぎたい場合は、登録の前に.wbをインポートし直してください。";
+    : "オフラインの動画として登録しました。この記録には.wbの情報がないため、タグ・レーティングは付いていません。タグなどを引き継ぎたい場合は、登録の前に.wbをインポートし直してください。";
 }

@@ -186,7 +186,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             前回終了時の検索・フォルダなどの状態を、起動時に復元する
           </label>
           <p className="settings-dialog-hint">
-            検索語、フォルダ、並び順、タグ、評価の絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
+            検索語、フォルダ、並び順、タグ、レーティングの絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
           </p>
         </div>
         {error !== null && (

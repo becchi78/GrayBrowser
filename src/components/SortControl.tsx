@@ -10,7 +10,7 @@ const FIELD_LABELS: Record<SortField, string> = {
   file_name: "ファイル名",
   created_at: "追加日",
   updated_date: "更新日",
-  rating: "評価",
+  rating: "レーティング",
   file_size: "ファイルサイズ",
   folder: "フォルダ名",
 };

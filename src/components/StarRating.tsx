@@ -19,7 +19,7 @@ export function StarRating({ videoId, value, onChange }: Props) {
     <div
       className="star-rating"
       role="radiogroup"
-      aria-label="評価"
+      aria-label="レーティング"
       data-testid="video-row-rating"
     >
       {STARS.map((star) => (
@@ -40,7 +40,7 @@ export function StarRating({ videoId, value, onChange }: Props) {
         className="star-clear"
         onClick={() => handleSet(0)}
         disabled={value === 0}
-        aria-label="評価をクリア"
+        aria-label="レーティングをクリア"
       >
         クリア
       </button>
