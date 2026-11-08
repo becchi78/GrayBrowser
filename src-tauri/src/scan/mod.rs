@@ -222,102 +222,8 @@ fn reconcile_known_path(
             let quick_hash_str = quick_hash.to_string();
             let conn = db.writer.lock().unwrap();
 
-            // Detection only (no reactivation): look up any `offline` row
-            // whose quick_hash+file_size now matches the freshly computed
-            // content. Each match is stored via `record_path_collision`.
-            // `path_collisions` holds "an offline candidate and an online row
-            // whose content may coincide, pending full_hash confirmation",
-            // which fits this case too, and `dedup::detect_duplicate_groups`
-            // reads every row in it uniformly.
-            match queries::find_offline_candidates_by_quick_hash_and_size(
-                &conn,
-                &quick_hash_str,
-                scanned_file.file_size as i64,
-            ) {
-                Ok(candidates) => {
-                    // Self-collision guard: `known` may still be `offline` here
-                    // (reconnecting; the status update below hasn't run) and
-                    // its hash may equal its own stored values when only the
-                    // mtime drifted, so the query can match `known` itself.
-                    // Unfiltered, that records a self-pair that
-                    // `dedup::detect_duplicate_groups` would show as a
-                    // "duplicate of itself". `register_new_path` has no
-                    // `known` row, so it never needs this filter.
-                    for candidate in candidates.iter().filter(|c| c.id != known.id) {
-                        if let Err(e) = queries::record_path_collision(
-                            &conn,
-                            &candidate.id,
-                            &known.id,
-                            &scanned_file.file_path,
-                        ) {
-                            log::warn!(
-                                "failed to record path collision from a rehash coincidence \
-                                 (video_id={}, colliding_video_id={}): {e}",
-                                candidate.id,
-                                known.id
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "failed to check {} against offline candidates after rehash: {e}",
-                        scanned_file.file_path
-                    );
-                }
-            }
-
-            // An mtime-only change (same size and quick_hash) leaves the
-            // derived data valid, so it must not throw away good thumbnails.
-            let content_changed = known.file_size != scanned_file.file_size as i64
-                || known.quick_hash != quick_hash_str;
-            if content_changed {
-                // One transaction so the new hash is never committed without
-                // the invalidation: the hash is what makes the next scan see
-                // the file as unchanged, so a lost reset would never be
-                // retried.
-                let tx = conn.unchecked_transaction()?;
-                queries::update_video_scan_metadata(
-                    &tx,
-                    &known.id,
-                    scanned_file.file_size as i64,
-                    scanned_file.mtime,
-                    &quick_hash_str,
-                )?;
-                queries::reset_video_derived_data(&tx, &known.id)?;
-                tx.commit()?;
-                // Files go only after the DB commit: if the commit failed,
-                // deleting them would leave a row that still claims
-                // thumbnails exist.
-                let watch_folders = match queries::get_watch_folders(&conn) {
-                    Ok(folders) => folders,
-                    Err(e) => {
-                        log::warn!(
-                            "failed to read watch_folders while removing stale thumbnails for \
-                             video_id={}: {e}",
-                            known.id
-                        );
-                        Vec::new()
-                    }
-                };
-                thumbnail::paths::remove_video_thumbnails(
-                    thumbnails_root,
-                    &watch_folders,
-                    &known.id,
-                    &known.file_path,
-                );
-            } else {
-                queries::update_video_scan_metadata(
-                    &conn,
-                    &known.id,
-                    scanned_file.file_size as i64,
-                    scanned_file.mtime,
-                    &quick_hash_str,
-                )?;
-            }
-            if known.status == "offline" {
-                queries::update_video_status(&conn, &known.id, "online")?;
-            }
+            record_rehash_coincidences(&conn, scanned_file, known, &quick_hash_str);
+            apply_rehashed_metadata(&conn, thumbnails_root, scanned_file, known, &quick_hash_str)?;
             Ok(ProcessOutcome::Reconciled)
         }
         // `known` is `Some(_)` here, and classify_discovered_file's only
@@ -327,6 +233,127 @@ fn reconcile_known_path(
             unreachable!("classify_discovered_file never returns NewCandidate when `known` is Some")
         }
     }
+}
+
+/// Records, in `path_collisions`, every `offline` row whose quick_hash+size
+/// now matches the freshly rehashed content of `known`. Detection only: no
+/// row is reactivated. Failures are logged, never propagated. The caller
+/// holds the writer lock and passes its connection.
+fn record_rehash_coincidences(
+    conn: &rusqlite::Connection,
+    scanned_file: &ScannedFile,
+    known: &queries::VideoRow,
+    quick_hash_str: &str,
+) {
+    // Detection only (no reactivation): look up any `offline` row
+    // whose quick_hash+file_size now matches the freshly computed
+    // content. Each match is stored via `record_path_collision`.
+    // `path_collisions` holds "an offline candidate and an online row
+    // whose content may coincide, pending full_hash confirmation",
+    // which fits this case too, and `dedup::detect_duplicate_groups`
+    // reads every row in it uniformly.
+    match queries::find_offline_candidates_by_quick_hash_and_size(
+        conn,
+        quick_hash_str,
+        scanned_file.file_size as i64,
+    ) {
+        Ok(candidates) => {
+            // Self-collision guard: `known` may still be `offline` here
+            // (reconnecting; its status is flipped only after this check) and
+            // its hash may equal its own stored values when only the
+            // mtime drifted, so the query can match `known` itself.
+            // Unfiltered, that records a self-pair that
+            // `dedup::detect_duplicate_groups` would show as a
+            // "duplicate of itself". `register_new_path` has no
+            // `known` row, so it never needs this filter.
+            for candidate in candidates.iter().filter(|c| c.id != known.id) {
+                if let Err(e) = queries::record_path_collision(
+                    conn,
+                    &candidate.id,
+                    &known.id,
+                    &scanned_file.file_path,
+                ) {
+                    log::warn!(
+                        "failed to record path collision from a rehash coincidence \
+                         (video_id={}, colliding_video_id={}): {e}",
+                        candidate.id,
+                        known.id
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "failed to check {} against offline candidates after rehash: {e}",
+                scanned_file.file_path
+            );
+        }
+    }
+}
+
+/// Writes the rehashed size/mtime/quick_hash to `known` and flips it back
+/// online if it was offline. A content change also resets the derived data
+/// and removes the stale thumbnails. The caller holds the writer lock and
+/// passes its connection; the transaction stays inside this function.
+fn apply_rehashed_metadata(
+    conn: &rusqlite::Connection,
+    thumbnails_root: &Path,
+    scanned_file: &ScannedFile,
+    known: &queries::VideoRow,
+    quick_hash_str: &str,
+) -> anyhow::Result<()> {
+    // An mtime-only change (same size and quick_hash) leaves the
+    // derived data valid, so it must not throw away good thumbnails.
+    let content_changed =
+        known.file_size != scanned_file.file_size as i64 || known.quick_hash != quick_hash_str;
+    if content_changed {
+        // One transaction so the new hash is never committed without
+        // the invalidation: the hash is what makes the next scan see
+        // the file as unchanged, so a lost reset would never be
+        // retried.
+        let tx = conn.unchecked_transaction()?;
+        queries::update_video_scan_metadata(
+            &tx,
+            &known.id,
+            scanned_file.file_size as i64,
+            scanned_file.mtime,
+            quick_hash_str,
+        )?;
+        queries::reset_video_derived_data(&tx, &known.id)?;
+        tx.commit()?;
+        // Files go only after the DB commit: if the commit failed,
+        // deleting them would leave a row that still claims
+        // thumbnails exist.
+        let watch_folders = match queries::get_watch_folders(conn) {
+            Ok(folders) => folders,
+            Err(e) => {
+                log::warn!(
+                    "failed to read watch_folders while removing stale thumbnails for \
+                     video_id={}: {e}",
+                    known.id
+                );
+                Vec::new()
+            }
+        };
+        thumbnail::paths::remove_video_thumbnails(
+            thumbnails_root,
+            &watch_folders,
+            &known.id,
+            &known.file_path,
+        );
+    } else {
+        queries::update_video_scan_metadata(
+            conn,
+            &known.id,
+            scanned_file.file_size as i64,
+            scanned_file.mtime,
+            quick_hash_str,
+        )?;
+    }
+    if known.status == "offline" {
+        queries::update_video_status(conn, &known.id, "online")?;
+    }
+    Ok(())
 }
 
 /// `entry_path` has no existing `videos` row for this exact path.
@@ -391,73 +418,17 @@ fn register_new_path(
 
     match reconcile::decide_path_follow(&candidates, collision) {
         reconcile::PathFollowDecision::Reactivate { video_id } => {
-            match queries::update_video_path_and_status(
+            // `candidates.first()` is exactly the offline row
+            // `decide_path_follow` picked (see its doc comment), so its
+            // `file_path` is this video's pre-rewrite path.
+            let old_file_path = candidates.first().map(|c| c.file_path.as_str());
+            Ok(reactivate_at_new_path(
                 &conn,
-                &video_id,
-                &scanned_file.file_path,
-                &scanned_file.file_name,
-                "online",
-            ) {
-                Ok(()) => {
-                    // Best-effort: a reactivated video's cached thumbnails
-                    // (if any were ever generated) live under a subdirectory
-                    // resolved from its *old* file_path -- now that the path
-                    // has moved, they must move with it, or a later
-                    // `get_thumbnails`/`list_videos_missing_thumbnails` call
-                    // would look in the wrong (new) directory and find
-                    // nothing, needlessly regenerating what already exists.
-                    // A failure here never affects `video_id`'s already-
-                    // committed DB write above: thumbnails are regenerable,
-                    // so this is logged, not propagated.
-                    //
-                    // `candidates.first()` is exactly the offline row
-                    // `decide_path_follow` picked (see its doc comment), so
-                    // its `file_path` is this video's pre-rewrite path --
-                    // reading it back from the DB again here isn't needed.
-                    if let Some(candidate) = candidates.first() {
-                        let watch_folders = match queries::get_watch_folders(&conn) {
-                            Ok(folders) => folders,
-                            Err(e) => {
-                                log::warn!(
-                                    "failed to read watch_folders while moving thumbnails for \
-                                     reactivated video_id={video_id}: {e}"
-                                );
-                                Vec::new()
-                            }
-                        };
-                        if !thumbnail::paths::move_video_thumbnails(
-                            thumbnails_root,
-                            &watch_folders,
-                            &video_id,
-                            &candidate.file_path,
-                            &scanned_file.file_path,
-                        ) {
-                            log::warn!(
-                                "failed to fully move cached thumbnails for reactivated \
-                                 video_id={video_id} from {} to {}",
-                                candidate.file_path,
-                                scanned_file.file_path
-                            );
-                        }
-                    }
-                    Ok(ProcessOutcome::PathFollowed { video_id })
-                }
-                Err(e) => {
-                    // Final defense: the pre-check above ran inside this
-                    // same lock acquisition, so this is not an ordinary
-                    // TOCTOU race --
-                    // it means some other constraint slipped past
-                    // is_path_used_by_online_video. Log and leave the
-                    // offline row untouched rather than propagate/panic;
-                    // the file is picked up again on the next scan/poll.
-                    log::warn!(
-                        "path-follow write for video_id={video_id} to {} failed despite the \
-                         pre-check (UNIQUE constraint?): {e}",
-                        scanned_file.file_path
-                    );
-                    Ok(ProcessOutcome::SkippedUnreadable)
-                }
-            }
+                thumbnails_root,
+                scanned_file,
+                video_id,
+                old_file_path,
+            ))
         }
         reconcile::PathFollowDecision::BlockedByCollision {
             video_id,
@@ -509,6 +480,81 @@ fn register_new_path(
         reconcile::PathFollowDecision::NoMatch => {
             insert_new_video(&conn, scanned_file, quick_hash)?;
             Ok(ProcessOutcome::Registered)
+        }
+    }
+}
+
+/// Moves the offline row `video_id` to the discovered path and brings it
+/// online, then moves its cached thumbnails along. The caller holds the
+/// writer lock (the same acquisition as its collision pre-check) and passes
+/// its connection, so the check and this write stay atomic.
+fn reactivate_at_new_path(
+    conn: &rusqlite::Connection,
+    thumbnails_root: &Path,
+    scanned_file: &ScannedFile,
+    video_id: String,
+    old_file_path: Option<&str>,
+) -> ProcessOutcome {
+    match queries::update_video_path_and_status(
+        conn,
+        &video_id,
+        &scanned_file.file_path,
+        &scanned_file.file_name,
+        "online",
+    ) {
+        Ok(()) => {
+            // Best-effort: a reactivated video's cached thumbnails
+            // (if any were ever generated) live under a subdirectory
+            // resolved from its *old* file_path -- now that the path
+            // has moved, they must move with it, or a later
+            // `get_thumbnails`/`list_videos_missing_thumbnails` call
+            // would look in the wrong (new) directory and find
+            // nothing, needlessly regenerating what already exists.
+            // A failure here never affects `video_id`'s already-
+            // committed DB write above: thumbnails are regenerable,
+            // so this is logged, not propagated.
+            if let Some(old_file_path) = old_file_path {
+                let watch_folders = match queries::get_watch_folders(conn) {
+                    Ok(folders) => folders,
+                    Err(e) => {
+                        log::warn!(
+                            "failed to read watch_folders while moving thumbnails for \
+                             reactivated video_id={video_id}: {e}"
+                        );
+                        Vec::new()
+                    }
+                };
+                if !thumbnail::paths::move_video_thumbnails(
+                    thumbnails_root,
+                    &watch_folders,
+                    &video_id,
+                    old_file_path,
+                    &scanned_file.file_path,
+                ) {
+                    log::warn!(
+                        "failed to fully move cached thumbnails for reactivated \
+                         video_id={video_id} from {} to {}",
+                        old_file_path,
+                        scanned_file.file_path
+                    );
+                }
+            }
+            ProcessOutcome::PathFollowed { video_id }
+        }
+        Err(e) => {
+            // Final defense: the pre-check above ran inside this
+            // same lock acquisition, so this is not an ordinary
+            // TOCTOU race --
+            // it means some other constraint slipped past
+            // is_path_used_by_online_video. Log and leave the
+            // offline row untouched rather than propagate/panic;
+            // the file is picked up again on the next scan/poll.
+            log::warn!(
+                "path-follow write for video_id={video_id} to {} failed despite the \
+                 pre-check (UNIQUE constraint?): {e}",
+                scanned_file.file_path
+            );
+            ProcessOutcome::SkippedUnreadable
         }
     }
 }
@@ -1330,5 +1376,269 @@ mod tests {
         for i in 0..thumbnail::worker::THUMBNAILS_PER_VIDEO {
             assert!(video_dir.join(format!("{id}_{i}.webp")).exists());
         }
+    }
+
+    /// Registers `content` under `old_dir`, flips it offline, and returns
+    /// `(video_id, old_path)` -- the starting point for path-follow tests.
+    fn register_then_take_offline(
+        db: &Db,
+        thumbs_root: &Path,
+        old_dir: &Path,
+        content: &[u8],
+    ) -> (String, std::path::PathBuf) {
+        let old_path = old_dir.join("old.mp4");
+        fs::write(&old_path, content).unwrap();
+        let folders = vec![old_dir.to_string_lossy().to_string()];
+        scan_folders(&folders, db, thumbs_root).unwrap();
+        let conn = db.writer.lock().unwrap();
+        conn.execute("UPDATE videos SET status = 'offline'", [])
+            .unwrap();
+        let id = conn
+            .query_row("SELECT id FROM videos", [], |r| r.get(0))
+            .unwrap();
+        (id, old_path)
+    }
+
+    fn scanned_file_of(path: &Path) -> ScannedFile {
+        let metadata = fs::metadata(path).unwrap();
+        ScannedFile {
+            file_path: path.to_string_lossy().to_string(),
+            file_name: path.file_name().unwrap().to_string_lossy().to_string(),
+            file_size: metadata.len(),
+            mtime: mtime_from_metadata(&metadata).unwrap(),
+        }
+    }
+
+    fn known_row_of(db: &Db, scanned_file: &ScannedFile) -> queries::VideoRow {
+        let conn = db.read_pool.get().unwrap();
+        queries::find_video_by_path(&conn, &scanned_file.file_path)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_thumbnail_move_failure_does_not_undo_the_path_follow_reactivation() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let old_dir = tempfile::tempdir().unwrap();
+        let new_dir = tempfile::tempdir().unwrap();
+        let watch_folders = vec![
+            old_dir.path().to_string_lossy().to_string(),
+            new_dir.path().to_string_lossy().to_string(),
+        ];
+        {
+            let conn = db.writer.lock().unwrap();
+            queries::set_watch_folders(&conn, &watch_folders).unwrap();
+        }
+        let (video_id, old_path) =
+            register_then_take_offline(&db, thumbs_root.path(), old_dir.path(), b"moved content");
+
+        let old_video_dir = thumbnail::paths::video_thumbnail_dir(
+            thumbs_root.path(),
+            &watch_folders,
+            &old_path.to_string_lossy(),
+        );
+        fs::create_dir_all(&old_video_dir).unwrap();
+        fs::write(old_video_dir.join(format!("{video_id}_0.webp")), "slot-0").unwrap();
+
+        let new_path = new_dir.path().join("new.mp4");
+        fs::write(&new_path, b"moved content").unwrap();
+        let new_video_dir = thumbnail::paths::video_thumbnail_dir(
+            thumbs_root.path(),
+            &watch_folders,
+            &new_path.to_string_lossy(),
+        );
+        // A directory squatting on the destination slot makes the rename fail.
+        fs::create_dir_all(new_video_dir.join(format!("{video_id}_0.webp"))).unwrap();
+
+        let outcome =
+            register_new_path(&db, thumbs_root.path(), &scanned_file_of(&new_path)).unwrap();
+        assert!(matches!(
+        outcome,
+        ProcessOutcome::PathFollowed { video_id: ref id } if *id == video_id
+                ));
+
+        let conn = db.writer.lock().unwrap();
+        let (status, file_path): (String, String) = conn
+            .query_row(
+                "SELECT status, file_path FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "online");
+        assert_eq!(file_path, new_path.to_string_lossy().to_string());
+        assert!(
+            old_video_dir.join(format!("{video_id}_0.webp")).exists(),
+            "the thumbnail that failed to move stays where it was"
+        );
+    }
+
+    #[test]
+    fn a_failed_path_follow_write_leaves_the_offline_row_untouched_and_is_skipped() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let old_dir = tempfile::tempdir().unwrap();
+        let new_dir = tempfile::tempdir().unwrap();
+        let (video_id, old_path) =
+            register_then_take_offline(&db, thumbs_root.path(), old_dir.path(), b"moved content");
+        let new_path = new_dir.path().join("new.mp4");
+        fs::write(&new_path, b"moved content").unwrap();
+        {
+            let conn = db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER block_path_update BEFORE UPDATE OF file_path ON videos
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+        }
+
+        let outcome =
+            register_new_path(&db, thumbs_root.path(), &scanned_file_of(&new_path)).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::SkippedUnreadable));
+
+        let conn = db.writer.lock().unwrap();
+        let (status, file_path): (String, String) = conn
+            .query_row(
+                "SELECT status, file_path FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "offline");
+        assert_eq!(file_path, old_path.to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn an_unreadable_new_file_is_skipped_without_touching_the_db() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let scanned_file = ScannedFile {
+            file_path: dir
+                .path()
+                .join("vanished.mp4")
+                .to_string_lossy()
+                .to_string(),
+            file_name: "vanished.mp4".to_string(),
+            file_size: 10,
+            mtime: 1,
+        };
+        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::SkippedUnreadable));
+        let conn = db.writer.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn a_new_path_with_no_offline_match_is_registered_as_a_new_row() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh.mp4");
+        fs::write(&path, b"fresh content").unwrap();
+        let outcome = register_new_path(&db, thumbs_root.path(), &scanned_file_of(&path)).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::Registered));
+        let conn = db.writer.lock().unwrap();
+        let (status, count): (String, i64) = conn
+            .query_row("SELECT status, COUNT(*) FROM videos", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((status.as_str(), count), ("online", 1));
+    }
+
+    #[test]
+    fn reconcile_known_path_reports_unchanged_for_an_online_row_with_matching_metadata() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("video.mp4");
+        fs::write(&path, b"stable content").unwrap();
+        scan_folders(
+            &[dir.path().to_string_lossy().to_string()],
+            &db,
+            thumbs_root.path(),
+        )
+        .unwrap();
+        let scanned_file = scanned_file_of(&path);
+        let known = known_row_of(&db, &scanned_file);
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::Unchanged));
+    }
+
+    #[test]
+    fn reconcile_known_path_brings_an_unchanged_offline_row_back_online() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let (video_id, path) =
+            register_then_take_offline(&db, thumbs_root.path(), dir.path(), b"stable content");
+        let scanned_file = scanned_file_of(&path);
+        let known = known_row_of(&db, &scanned_file);
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::Reconciled));
+        let conn = db.writer.lock().unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "online");
+    }
+
+    #[test]
+    fn reconcile_known_path_leaves_the_row_as_is_when_the_rehash_cannot_read_the_file() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let (video_id, path) =
+            register_then_take_offline(&db, thumbs_root.path(), dir.path(), b"original");
+        let mut scanned_file = scanned_file_of(&path);
+        scanned_file.mtime += 100;
+        let known = known_row_of(&db, &scanned_file);
+        fs::remove_file(&path).unwrap();
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::SkippedUnreadable));
+        let conn = db.writer.lock().unwrap();
+        let (status, mtime): (String, i64) = conn
+            .query_row(
+                "SELECT status, mtime FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "offline");
+        assert_eq!(Some(mtime), known.mtime);
+    }
+
+    #[test]
+    fn reconcile_known_path_updates_metadata_and_goes_online_when_an_offline_row_changed_content() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = temp_thumbs_root();
+        let dir = tempfile::tempdir().unwrap();
+        let (video_id, path) =
+            register_then_take_offline(&db, thumbs_root.path(), dir.path(), b"original");
+        fs::write(&path, b"original, now longer").unwrap();
+        let scanned_file = scanned_file_of(&path);
+        let known = known_row_of(&db, &scanned_file);
+        let outcome = reconcile_known_path(&db, thumbs_root.path(), &scanned_file, &known).unwrap();
+        assert!(matches!(outcome, ProcessOutcome::Reconciled));
+        let conn = db.writer.lock().unwrap();
+        let (status, size, mtime): (String, i64, i64) = conn
+            .query_row(
+                "SELECT status, file_size, mtime FROM videos WHERE id = ?1",
+                [&video_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "online");
+        assert_eq!(size, scanned_file.file_size as i64);
+        assert_eq!(mtime, scanned_file.mtime);
     }
 }

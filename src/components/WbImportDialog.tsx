@@ -14,7 +14,9 @@ import {
 } from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { countUnmatchedByKind, unmatchedCountText } from "../lib/unmatchedThumbnails";
+import { attentionTestId } from "../lib/wbImportAttentionTestId";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
+import type { WbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import {
   computeWbImportSteps,
   formatStepCount,
@@ -76,6 +78,125 @@ function ImportLogLink() {
           {openError}
         </p>
       )}
+    </div>
+  );
+}
+
+interface ResultProps {
+  resultDisplay: WbImportResultDisplay;
+  unmatchedListState: "pending" | "loaded" | "failed";
+  unmatchedByKind: Record<UnmatchedThumbnailKind, number>;
+  onReview: (kind: UnmatchedThumbnailKind) => void;
+}
+
+function WbImportResult({
+  resultDisplay,
+  unmatchedListState,
+  unmatchedByKind,
+  onReview,
+}: ResultProps) {
+  return (
+    <div className="wb-import-result">
+      <p className="wb-import-result-line" data-testid="import-result-total">
+        {resultDisplay.totalText}
+      </p>
+      <p
+        className="wb-import-result-line wb-import-result-success"
+        data-testid="import-result-success"
+      >
+        {resultDisplay.registeredText}
+      </p>
+      {resultDisplay.offlineThumbnailsText && (
+        <p className="wb-import-result-line" data-testid="import-result-offline-thumbnails">
+          {resultDisplay.offlineThumbnailsText}
+        </p>
+      )}
+      {resultDisplay.linkedByNameText && (
+        <p className="wb-import-result-line" data-testid="import-result-linked-by-name">
+          {resultDisplay.linkedByNameText}
+        </p>
+      )}
+      {resultDisplay.watchFoldersAddedText && (
+        <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
+      )}
+      {resultDisplay.volumeLabelResolvedText && (
+        <p className="wb-import-result-line" data-testid="import-result-volume-label-resolved">
+          {resultDisplay.volumeLabelResolvedText}
+        </p>
+      )}
+      {resultDisplay.skippedText && (
+        <p className="wb-import-result-line" data-testid="import-result-skipped">
+          {resultDisplay.skippedText}
+        </p>
+      )}
+
+      {resultDisplay.attention.map((item) => {
+        const reviewKind: UnmatchedThumbnailKind =
+          item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
+        const isUnmatchedItem = item.key === "unmatched-empty-hash" || item.key === "unmatched";
+        // 結果の文章はインポート時点の記録なので、確認先の行が全て紐付け済み・スキップ済みなら項目ごと消す。
+        if (
+          isUnmatchedItem &&
+          (unmatchedListState === "pending" ||
+            (unmatchedListState === "loaded" && unmatchedByKind[reviewKind] === 0))
+        ) {
+          return null;
+        }
+        const showReview = item.expandable;
+        return (
+          <div
+            key={item.key}
+            className={`wb-import-result-attention wb-import-result-attention--${item.tone}`}
+            data-testid={attentionTestId(item.key)}
+          >
+            <p className="wb-import-result-line">{item.text}</p>
+            {showReview && (
+              <button
+                type="button"
+                data-testid={`import-unmatched-review-btn-${item.key}`}
+                onClick={() => onReview(reviewKind)}
+              >
+                確認する
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      {(resultDisplay.details.length > 0 ||
+        resultDisplay.watchFolders.length > 0 ||
+        resultDisplay.skippedRoots.length > 0) && (
+        <details className="wb-import-result-details">
+          <summary>詳細</summary>
+          <ul className="wb-import-result-details-list">
+            {resultDisplay.details.map((item) => (
+              <li key={item.key}>{item.text}</li>
+            ))}
+            {resultDisplay.watchFolders.length > 0 && (
+              <li data-testid="import-result-watch-folders">
+                監視フォルダに追加:
+                <ul className="wb-import-result-watch-folder-list">
+                  {resultDisplay.watchFolders.map((folder) => (
+                    <li key={folder}>{folder}</li>
+                  ))}
+                </ul>
+              </li>
+            )}
+            {resultDisplay.skippedRoots.length > 0 && (
+              <li data-testid="import-result-skipped-root-list">
+                監視フォルダに追加しなかったルート:
+                <ul className="wb-import-result-watch-folder-list">
+                  {resultDisplay.skippedRoots.map((root) => (
+                    <li key={root}>{root}</li>
+                  ))}
+                </ul>
+              </li>
+            )}
+          </ul>
+        </details>
+      )}
+
+      <ImportLogLink />
     </div>
   );
 }
@@ -294,122 +415,12 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
         )}
 
         {summary && resultDisplay && (
-          <div className="wb-import-result">
-            <p className="wb-import-result-line" data-testid="import-result-total">
-              {resultDisplay.totalText}
-            </p>
-            <p
-              className="wb-import-result-line wb-import-result-success"
-              data-testid="import-result-success"
-            >
-              {resultDisplay.registeredText}
-            </p>
-            {resultDisplay.offlineThumbnailsText && (
-              <p className="wb-import-result-line" data-testid="import-result-offline-thumbnails">
-                {resultDisplay.offlineThumbnailsText}
-              </p>
-            )}
-            {resultDisplay.linkedByNameText && (
-              <p className="wb-import-result-line" data-testid="import-result-linked-by-name">
-                {resultDisplay.linkedByNameText}
-              </p>
-            )}
-            {resultDisplay.watchFoldersAddedText && (
-              <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
-            )}
-            {resultDisplay.volumeLabelResolvedText && (
-              <p className="wb-import-result-line" data-testid="import-result-volume-label-resolved">
-                {resultDisplay.volumeLabelResolvedText}
-              </p>
-            )}
-            {resultDisplay.skippedText && (
-              <p className="wb-import-result-line" data-testid="import-result-skipped">
-                {resultDisplay.skippedText}
-              </p>
-            )}
-
-            {resultDisplay.attention.map((item) => {
-              const testId =
-                item.key === "unmatched"
-                  ? "import-result-needs-review"
-                  : item.key === "unmatched-empty-hash"
-                    ? "import-result-empty-hash"
-                    : item.key === "invalid-name"
-                    ? "import-result-skipped-invalid-name"
-                    : item.key === "failed-rows"
-                      ? "import-result-failed-rows"
-                      : item.key === "skipped-roots"
-                        ? "import-result-skipped-roots"
-                        : item.key === "volume-label-unresolved"
-                          ? "import-result-volume-label-unresolved"
-                          : undefined;
-              const reviewKind: UnmatchedThumbnailKind =
-                item.key === "unmatched-empty-hash" ? "empty_hash" : "no_matching_video";
-              const isUnmatchedItem = item.key === "unmatched-empty-hash" || item.key === "unmatched";
-              // 結果の文章はインポート時点の記録なので、確認先の行が全て紐付け済み・スキップ済みなら項目ごと消す。
-              if (
-                isUnmatchedItem &&
-                (unmatchedListState === "pending" ||
-                  (unmatchedListState === "loaded" && unmatchedByKind[reviewKind] === 0))
-              ) {
-                return null;
-              }
-              const showReview = item.expandable;
-              return (
-                <div
-                  key={item.key}
-                  className={`wb-import-result-attention wb-import-result-attention--${item.tone}`}
-                  data-testid={testId}
-                >
-                  <p className="wb-import-result-line">{item.text}</p>
-                  {showReview && (
-                    <button
-                      type="button"
-                      data-testid={`import-unmatched-review-btn-${item.key}`}
-                      onClick={() => setUnmatchedDialog({ kind: reviewKind })}
-                    >
-                      確認する
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-
-            {(resultDisplay.details.length > 0 ||
-              resultDisplay.watchFolders.length > 0 ||
-              resultDisplay.skippedRoots.length > 0) && (
-              <details className="wb-import-result-details">
-                <summary>詳細</summary>
-                <ul className="wb-import-result-details-list">
-                  {resultDisplay.details.map((item) => (
-                    <li key={item.key}>{item.text}</li>
-                  ))}
-                  {resultDisplay.watchFolders.length > 0 && (
-                    <li data-testid="import-result-watch-folders">
-                      監視フォルダに追加:
-                      <ul className="wb-import-result-watch-folder-list">
-                        {resultDisplay.watchFolders.map((folder) => (
-                          <li key={folder}>{folder}</li>
-                        ))}
-                      </ul>
-                    </li>
-                  )}
-                  {resultDisplay.skippedRoots.length > 0 && (
-                    <li data-testid="import-result-skipped-root-list">
-                      監視フォルダに追加しなかったルート:
-                      <ul className="wb-import-result-watch-folder-list">
-                        {resultDisplay.skippedRoots.map((root) => (
-                          <li key={root}>{root}</li>
-                        ))}
-                      </ul>
-                    </li>
-                  )}
-                </ul>
-              </details>
-            )}
-
-            <ImportLogLink />
-          </div>
+          <WbImportResult
+            resultDisplay={resultDisplay}
+            unmatchedListState={unmatchedListState}
+            unmatchedByKind={unmatchedByKind}
+            onReview={(kind) => setUnmatchedDialog({ kind })}
+          />
         )}
 
         {error && (

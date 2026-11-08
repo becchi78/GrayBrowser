@@ -115,58 +115,70 @@ pub fn generate_thumbnail_for_video(
     }
 
     let failure = match extraction_err {
-        None => {
-            debug_assert_eq!(tmp_paths.len(), THUMBNAILS_PER_VIDEO);
-            let mut renamed_finals: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
-            let mut rename_err: Option<anyhow::Error> = None;
-            for (i, tmp_path) in tmp_paths.iter().enumerate() {
-                let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
-                match std::fs::rename(tmp_path, &final_path) {
-                    Ok(()) => renamed_finals.push(final_path),
-                    Err(e) => {
-                        rename_err = Some(anyhow::anyhow!(
-                            "slot {i}: failed to rename {} -> {}: {e}",
-                            tmp_path.display(),
-                            final_path.display()
-                        ));
-                        break;
-                    }
+        None => match publish_slots(thumbnails_dir, video_id, &tmp_paths) {
+            Ok(()) => {
+                // Keeps videos.thumbnail_ready (migration 0008) in
+                // sync with the files that were just written, so
+                // list_videos's hot path never has to stat() these
+                // files itself. Best-effort: a failure to write this
+                // flag must not turn an otherwise-successful generation
+                // into an error -- worst case, the files exist but the
+                // flag lags behind until the next
+                // list_videos_missing_thumbnails resume pass backfills
+                // it.
+                if let Err(e) = queries::mark_thumbnail_ready(&db.writer.lock().unwrap(), video_id)
+                {
+                    log::warn!("failed to mark thumbnail_ready for {video_id}: {e}");
                 }
+                return Ok(());
             }
-            match rename_err {
-                None => {
-                    // Keeps videos.thumbnail_ready (migration 0008) in
-                    // sync with the files that were just written, so
-                    // list_videos's hot path never has to stat() these
-                    // files itself. Best-effort: a failure to write this
-                    // flag must not turn an otherwise-successful generation
-                    // into an error -- worst case, the files exist but the
-                    // flag lags behind until the next
-                    // list_videos_missing_thumbnails resume pass backfills
-                    // it.
-                    if let Err(e) =
-                        queries::mark_thumbnail_ready(&db.writer.lock().unwrap(), video_id)
-                    {
-                        log::warn!("failed to mark thumbnail_ready for {video_id}: {e}");
-                    }
-                    return Ok(());
-                }
-                Some(e) => {
-                    // A video's thumbnails are all-or-nothing: take back the
-                    // finals this call already published so no partial set
-                    // is left behind. Only this call's own files are
-                    // removed, never a pre-existing path that made a rename
-                    // fail.
-                    for final_path in &renamed_finals {
-                        let _ = std::fs::remove_file(final_path);
-                    }
-                    e
-                }
-            }
-        }
+            Err(e) => e,
+        },
         Some(e) => e,
     };
 
+    record_failure(db, video_id, video_path, &tmp_paths, &failure);
+    Err(failure)
+}
+
+/// Renames each `.tmp` to its final `{video_id}_{i}.webp` name. A video's
+/// thumbnails are all-or-nothing, so if any rename fails, the finals this
+/// call already published are removed again and the error is returned.
+/// Only this call's own files are removed, never a pre-existing path that
+/// made a rename fail. `tmp_paths` must hold every slot, in slot order.
+fn publish_slots(
+    thumbnails_dir: &Path,
+    video_id: &str,
+    tmp_paths: &[PathBuf],
+) -> anyhow::Result<()> {
+    debug_assert_eq!(tmp_paths.len(), THUMBNAILS_PER_VIDEO);
+    let mut renamed_finals: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
+    for (i, tmp_path) in tmp_paths.iter().enumerate() {
+        let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
+        if let Err(e) = std::fs::rename(tmp_path, &final_path) {
+            for renamed in &renamed_finals {
+                let _ = std::fs::remove_file(renamed);
+            }
+            return Err(anyhow::anyhow!(
+                "slot {i}: failed to rename {} -> {}: {e}",
+                tmp_path.display(),
+                final_path.display()
+            ));
+        }
+        renamed_finals.push(final_path);
+    }
+    Ok(())
+}
+
+/// Logs a failed generation, removes the leftover `.tmp` files and counts
+/// the attempt.
+fn record_failure(
+    db: &Db,
+    video_id: &str,
+    video_path: &Path,
+    tmp_paths: &[PathBuf],
+    failure: &anyhow::Error,
+) {
     log::warn!(
         "thumbnail generation failed for video {video_id} ({}): {failure}",
         video_path.display()
@@ -175,21 +187,21 @@ pub fn generate_thumbnail_for_video(
     // renamed no longer exist under that name, so removing them is a no-op).
     // The failing extraction slot itself never wrote a tmp file, since
     // extract_thumbnail only writes its output on success.
-    for tmp_path in &tmp_paths {
+    for tmp_path in tmp_paths {
         let _ = std::fs::remove_file(tmp_path);
     }
     // Recorded only on failure (never on success), and only once per video
     // regardless of which step failed -- this is the one and only place
-    // `thumbnail_attempts` is incremented, so a caller invoking this function
-    // directly (e.g. the retry_thumbnail_generation command) gets the same
-    // counting behavior as the automatic queue, with no risk of double-
-    // counting a single failed attempt.
+    // `thumbnail_attempts` is incremented, so a caller invoking
+    // `generate_thumbnail_for_video` directly (e.g. the
+    // retry_thumbnail_generation command) gets the same counting behavior as
+    // the automatic queue, with no risk of double-counting a single failed
+    // attempt.
     if let Err(inc_err) =
         queries::increment_thumbnail_attempts(&db.writer.lock().unwrap(), video_id)
     {
         log::warn!("failed to increment thumbnail_attempts for {video_id}: {inc_err}");
     }
-    Err(failure)
 }
 
 /// `(id, file_path)` for every online video for which any of the 6
