@@ -138,6 +138,8 @@ npm run test:e2e
 
 コーディング規約・開発フローは [`CLAUDE.md`](CLAUDE.md) を参照してください。
 
+設計やリリースの仕組みなど、開発者向けの文書は [docs/dev/](docs/dev/) にあります。
+
 ## コントリビューション
 
 不具合の報告・機能拡張の要望は [Issue](https://github.com/becchi78/GrayBrowser/issues/new/choose) にお願いします。
