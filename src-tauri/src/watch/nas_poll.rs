@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use gb_core::ports::path_existence::PathExistence;
 use gb_core::reconcile::{
     self, DiscoveredFile, EnumerationResult, FileClassification, KnownFileMeta, KnownOnlineVideo,
 };
@@ -19,6 +20,7 @@ use gb_core::scan_pipeline;
 use walkdir::WalkDir;
 
 use crate::adapters::long_path;
+use crate::adapters::path_existence::RealPathExistence;
 use crate::db::{queries, Db};
 use crate::events::CatalogNotifier;
 use crate::reachability::ReachabilityRegistry;
@@ -31,13 +33,39 @@ use crate::watch::follow_up::FollowUp;
 /// `interval` (e.g. the default 600s) is.
 const STOP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
+/// `run_nas_diff_scan_with_existence` asking the real filesystem about
+/// withheld missing-video candidates -- what every production caller wants.
+pub fn run_nas_diff_scan(
+    db: &Db,
+    thumbnails_root: &Path,
+    folder: &str,
+    stop_flag: &AtomicBool,
+    notifier: &dyn CatalogNotifier,
+    follow_up: &FollowUp,
+    reachability: &ReachabilityRegistry,
+) -> anyhow::Result<()> {
+    run_nas_diff_scan_with_existence(
+        db,
+        thumbnails_root,
+        folder,
+        stop_flag,
+        notifier,
+        follow_up,
+        reachability,
+        &RealPathExistence,
+    )
+}
+
 /// One diff-scan pass over `folder`: reachability check (doubles as the NAS
 /// connectivity check -- no separate ping), a walk classifying each video
 /// file via the same cheap mtime/file_size filter NAS polling exists for,
 /// and a `decide_missing_video_ids` pass to flip genuinely-gone videos
 /// offline without ever touching ones under a directory that merely failed
 /// to enumerate this cycle, or ones caught by the broken-enumeration guard
-/// (see `gb_core::reconcile::decide_missing_video_ids`'s doc comment).
+/// (see `gb_core::reconcile::decide_missing_video_ids`'s doc comment) --
+/// except that when the guard withholds only a few videos, each is checked
+/// individually and the ones the OS reports as not found do go offline
+/// (`gb_core::reconcile::confirm_suppressed_candidates`).
 ///
 /// **Path-representation invariant:**
 /// `decide_missing_video_ids` excludes a known video from the "missing" set
@@ -70,7 +98,19 @@ const STOP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// removable folders also run it once per `reconfigure` (see
 /// `start_one_shot_diff_scan`) to pick up files added while the app was not
 /// running, which `notify` cannot report.
-pub fn run_nas_diff_scan(
+///
+/// `existence` answers the per-path follow-up for missing-video candidates
+/// the broken-enumeration guard withheld (see `confirm_suppressed_candidates`);
+/// it is a parameter so a test can make the OS claim a file still exists,
+/// which a real tempdir cannot fake. Production callers go through
+/// `run_nas_diff_scan`, which passes the real filesystem. The check itself
+/// would answer NotFound for every file of a share that went away (unknown
+/// host and unknown share both come back as NotFound), so it relies on such
+/// a folder never reaching it: `reachability.refresh` skips an unreachable
+/// root up front, and a root that fails during the walk lands in
+/// `inaccessible_dirs`, which removes all of its videos from the candidates.
+#[allow(clippy::too_many_arguments)]
+pub fn run_nas_diff_scan_with_existence(
     db: &Db,
     thumbnails_root: &Path,
     folder: &str,
@@ -78,6 +118,7 @@ pub fn run_nas_diff_scan(
     notifier: &dyn CatalogNotifier,
     follow_up: &FollowUp,
     reachability: &ReachabilityRegistry,
+    existence: &dyn PathExistence,
 ) -> anyhow::Result<()> {
     // Always a fresh probe (not the cached answer): this is how an outage
     // ending, or starting, is noticed. Recovery also resumes the thumbnail and
@@ -228,7 +269,21 @@ pub fn run_nas_diff_scan(
         inaccessible_dirs,
         discovered_paths,
     };
-    let decision = reconcile::decide_missing_video_ids(&known_online, &diff);
+    let decision = reconcile::confirm_suppressed_candidates(
+        reconcile::decide_missing_video_ids(&known_online, &diff),
+        existence,
+    );
+    if let Some(check) = &decision.individually_checked {
+        if check.confirmed_missing_count > 0 {
+            log::info!(
+                "NAS diff scan for {folder}: {} of {} withheld video(s) confirmed not found \
+                 one by one (guard reason={:?}), marking them offline",
+                check.confirmed_missing_count,
+                check.checked_count,
+                check.reason
+            );
+        }
+    }
     if let Some(guard) = &decision.suppressed {
         log::warn!(
             "NAS diff scan for {folder}: holding {} video(s) online this cycle (known={}, \
@@ -548,5 +603,66 @@ mod tests {
 
         assert_eq!(fx.id_at(&new), id);
         assert_eq!(fx.rows().len(), 1);
+    }
+
+    fn path_str(p: &Path) -> String {
+        p.to_string_lossy().to_string()
+    }
+
+    /// The only video of a folder moved somewhere no watch folder covers:
+    /// the walk finds nothing (the `NothingDiscovered` guard), but the
+    /// one-by-one check gets NotFound from the real filesystem, so the old
+    /// row goes offline and the catalog is told about it.
+    #[test]
+    fn a_diff_scan_offlines_the_only_video_moved_out_of_its_folder() {
+        let fx = crate::scan::move_fixture::MoveFixture::new(1);
+        let old = fx.register_at(0, "only.mp4");
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::rename(&old, elsewhere.path().join("only.mp4")).unwrap();
+        let notifier = FakeCatalogNotifier::default();
+
+        run_nas_diff_scan(
+            &fx.db,
+            fx.thumbs.path(),
+            fx.folder(0),
+            &AtomicBool::new(false),
+            &notifier,
+            &FollowUp::noop(),
+            &fx.registry,
+        )
+        .unwrap();
+
+        assert_eq!(fx.rows(), vec![(path_str(&old), "offline".to_string())]);
+        assert_eq!(notifier.call_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// Stand-in for a listing that missed a file which is in fact still
+    /// there: the walk finds nothing, and the OS says the path exists, so
+    /// the guard's hold stands and nothing is written.
+    #[test]
+    fn a_diff_scan_keeps_the_only_video_online_when_the_os_says_it_exists() {
+        use gb_core::testing::fake_path_existence::FakePathExistence;
+
+        let fx = crate::scan::move_fixture::MoveFixture::new(1);
+        let old = fx.register_at(0, "only.mp4");
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::rename(&old, elsewhere.path().join("only.mp4")).unwrap();
+        let notifier = FakeCatalogNotifier::default();
+        let existence = FakePathExistence::with_paths(&[&path_str(&old)]);
+
+        run_nas_diff_scan_with_existence(
+            &fx.db,
+            fx.thumbs.path(),
+            fx.folder(0),
+            &AtomicBool::new(false),
+            &notifier,
+            &FollowUp::noop(),
+            &fx.registry,
+            &existence,
+        )
+        .unwrap();
+
+        assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
+        assert_eq!(notifier.call_count.load(Ordering::SeqCst), 0);
     }
 }

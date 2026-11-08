@@ -17,19 +17,25 @@
 //! The broken-enumeration ratio/floor guard's exact threshold behavior is
 //! covered exhaustively (with concrete counts) by unit tests in
 //! `crates/gb-core/src/reconcile.rs`; this file only exercises its
-//! integration-level effect (a lone missing file is held, not flipped).
+//! integration-level effect (a lone missing file goes offline once the OS
+//! confirms it is not found, and is held while the OS still reports it).
 
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use gb_core::ports::path_existence::PathExistence;
+use gb_core::testing::fake_path_existence::FakePathExistence;
 use graybrowser_lib::adapters::folder_probe::RealFolderProbe;
+use graybrowser_lib::adapters::path_existence::RealPathExistence;
 use graybrowser_lib::db;
 use graybrowser_lib::events::{FakeCatalogNotifier, NoopReachabilityNotifier};
 use graybrowser_lib::reachability::ReachabilityRegistry;
 use graybrowser_lib::watch::follow_up::FollowUp;
-use graybrowser_lib::watch::nas_poll::{run_nas_diff_scan, start_nas_polling};
+use graybrowser_lib::watch::nas_poll::{
+    run_nas_diff_scan, run_nas_diff_scan_with_existence, start_nas_polling,
+};
 
 /// Probes the real filesystem, standing in for the share, like the rest of
 /// this suite.
@@ -128,20 +134,23 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
     assert_eq!(count, 1, "rescanning must not insert a duplicate row");
 }
 
-/// Broken-enumeration guard: with only one known video in the
-/// folder, its disappearance makes `discovered_paths` empty -- the
-/// `NothingDiscovered` floor holds it online rather than treating this as a
-/// confirmed deletion. This is the accepted trade-off: a
-/// genuinely-deleted lone file in a small folder is, from a single poll
-/// cycle's data alone, indistinguishable from a broken listing.
-#[test]
-fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
+/// Registers a lone `movie.mp4` in a fresh folder, deletes it, and runs a
+/// second diff scan. Its per-path follow-up check asks the real filesystem,
+/// or, with `os_still_reports_it`, a fake that claims the file is still
+/// there. Returns the row's `(status, row count)` afterwards.
+fn diff_scan_after_deleting_a_lone_video(os_still_reports_it: bool) -> (String, i64) {
     let (_db_dir, db) = init_temp_db();
     let thumbs_root = temp_thumbs_root();
     let nas_dir = tempfile::tempdir().expect("failed to create nas tempdir");
     let video_path = nas_dir.path().join("movie.mp4");
     fs::write(&video_path, b"bytes").unwrap();
     let folder = nas_dir.path().to_string_lossy().to_string();
+    let fake = FakePathExistence::with_paths(&[&video_path.to_string_lossy()]);
+    let existence: &dyn PathExistence = if os_still_reports_it {
+        &fake
+    } else {
+        &RealPathExistence
+    };
 
     run_nas_diff_scan(
         &db,
@@ -154,7 +163,7 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
     )
     .unwrap();
     fs::remove_file(&video_path).unwrap();
-    run_nas_diff_scan(
+    run_nas_diff_scan_with_existence(
         &db,
         thumbs_root.path(),
         &folder,
@@ -162,21 +171,38 @@ fn a_lone_known_videos_disappearance_is_held_online_not_flipped_offline() {
         &FakeCatalogNotifier::default(),
         &FollowUp::noop(),
         &real_registry(),
+        existence,
     )
     .unwrap();
 
     let conn = db.writer.lock().unwrap();
-    let (status, count): (String, i64) = (
+    (
         conn.query_row("SELECT status FROM videos", [], |r| r.get(0))
             .unwrap(),
         conn.query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
             .unwrap(),
-    );
-    assert_eq!(
-        status, "online",
-        "a lone missing file must be held online, not flipped offline"
-    );
-    assert_eq!(count, 1, "the row must be kept regardless");
+    )
+}
+
+/// With only one known video in the folder, its disappearance makes
+/// `discovered_paths` empty and trips the `NothingDiscovered` floor -- but
+/// the follow-up check of that one path gets NotFound from the real
+/// filesystem, so it is a confirmed deletion and goes offline.
+#[test]
+fn a_lone_known_videos_deletion_is_confirmed_and_flipped_offline() {
+    let (status, count) = diff_scan_after_deleting_a_lone_video(false);
+    assert_eq!(status, "offline");
+    assert_eq!(count, 1, "the row must be kept, only its status changes");
+}
+
+/// Same empty listing, but the OS claims the file is still there (what a
+/// broken listing of a live share looks like): the `NothingDiscovered`
+/// floor's hold stands.
+#[test]
+fn a_lone_known_video_is_held_online_while_the_os_still_reports_it() {
+    let (status, count) = diff_scan_after_deleting_a_lone_video(true);
+    assert_eq!(status, "online");
+    assert_eq!(count, 1);
 }
 
 /// The flip side of the guard: a single file missing out of a large-enough
