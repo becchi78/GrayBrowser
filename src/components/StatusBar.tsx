@@ -28,13 +28,78 @@ interface Props {
   onJump: (percent: number) => void;
 }
 
+interface JumpMenuProps {
+  open: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  /** 安定した参照(useState のセッター)を渡すこと。購読の依存配列に入る。 */
+  setOpen: (open: boolean) => void;
+  onJump: (percent: number) => void;
+}
+
+// 開閉の状態は StatusBar が持つ。他のパネルを開くときにこのメニューを閉じ、
+// このメニューを開くときに他のパネルを閉じる排他制御が必要なため。
+function JumpMenu({ open, disabled, onToggle, setOpen, onJump }: JumpMenuProps) {
+  const jumpRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!jumpRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, setOpen]);
+
+  return (
+    <div className="status-jump" ref={jumpRef}>
+      <button
+        type="button"
+        className="status-badge"
+        data-testid="status-jump-button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={onToggle}
+      >
+        ジャンプ
+      </button>
+      {open && (
+        <div className="status-jump-menu" role="menu" data-testid="status-jump-menu">
+          {JUMP_PERCENTS.map((percent) => (
+            <button
+              key={percent}
+              type="button"
+              role="menuitem"
+              className="status-jump-item"
+              data-testid={`status-jump-item-${percent}`}
+              onClick={() => {
+                setOpen(false);
+                onJump(percent);
+              }}
+            >
+              {percent}%
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Props) {
   const [openPanel, setOpenPanel] = useState<PanelKind | null>(null);
   const [unregisteredCount, setUnregisteredCount] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
   const [jumpOpen, setJumpOpen] = useState(false);
-  const jumpRef = useRef<HTMLDivElement>(null);
   const [thumbnailProgress, setThumbnailProgress] =
     useState<ThumbnailProgress | null>(null);
 
@@ -66,22 +131,6 @@ export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Pro
     setJumpOpen(false);
   }
   const jumpMenuOpen = jumpOpen && videoCount > 0;
-
-  useEffect(() => {
-    if (!jumpMenuOpen) return;
-    const onMouseDown = (e: MouseEvent) => {
-      if (!jumpRef.current?.contains(e.target as Node)) setJumpOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setJumpOpen(false);
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [jumpMenuOpen]);
 
   function toggle(kind: PanelKind) {
     setJumpOpen(false);
@@ -137,38 +186,13 @@ export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Pro
           </span>
         )}
       </div>
-      <div className="status-jump" ref={jumpRef}>
-        <button
-          type="button"
-          className="status-badge"
-          data-testid="status-jump-button"
-          aria-haspopup="menu"
-          aria-expanded={jumpMenuOpen}
-          disabled={videoCount === 0}
-          onClick={toggleJump}
-        >
-          ジャンプ
-        </button>
-        {jumpMenuOpen && (
-          <div className="status-jump-menu" role="menu" data-testid="status-jump-menu">
-            {JUMP_PERCENTS.map((percent) => (
-              <button
-                key={percent}
-                type="button"
-                role="menuitem"
-                className="status-jump-item"
-                data-testid={`status-jump-item-${percent}`}
-                onClick={() => {
-                  setJumpOpen(false);
-                  onJump(percent);
-                }}
-              >
-                {percent}%
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <JumpMenu
+        open={jumpMenuOpen}
+        disabled={videoCount === 0}
+        onToggle={toggleJump}
+        setOpen={setJumpOpen}
+        onJump={onJump}
+      />
       <SkippedFilesPanel
         refreshKey={refreshKey}
         open={openPanel === "unregistered"}
