@@ -180,8 +180,8 @@ fn remove_tmp_files_in(dir: &Path, descend: bool) -> usize {
 /// `notifier` is threaded in only here, not into `worker.rs` -- `worker.rs`'s
 /// `generate_thumbnail_for_video`/`list_videos_missing_thumbnails` keep their
 /// existing pure/testable signatures unchanged, and the
-/// `notify_changed` call sits in this orchestration
-/// function's own per-worker loop instead, right after each individual
+/// `notify_changed` call sits in this module's per-video step
+/// (`generate_claimed`) instead, right after each individual
 /// `generate_thumbnail_for_video` call succeeds -- one notification per
 /// completed thumbnail, not one at the very end, so the grid fills in
 /// incrementally (matching the "list first, thumbnails backfill"
@@ -273,8 +273,9 @@ fn run_thumbnail_queue<F, N>(
 /// Generates the given videos on a small worker pool. `pending` is a
 /// snapshot that may already be stale (another queue can finish a video
 /// after it was listed), so each worker re-checks the files after claiming.
-// Each argument is an independent handle moved into the worker threads;
-// bundling them would only rename the problem.
+// The handles are bundled into `WorkerContext` for the workers, but this
+// entry point keeps taking them one by one so its many direct callers in the
+// tests stay unchanged.
 #[allow(clippy::too_many_arguments)]
 fn process_pending<F, N>(
     db: Db,
@@ -297,115 +298,167 @@ fn process_pending<F, N>(
         queue.publish_progress(notifier.as_ref());
 
         let worker_count = WORKER_THREAD_COUNT.min(pending.len());
-        let pending = Arc::new(std::sync::Mutex::new(pending.into_iter()));
+        let pending = Arc::new(Mutex::new(pending.into_iter()));
+        let ctx = WorkerContext {
+            db,
+            thumbnails_dir,
+            watch_folders,
+            queue,
+            ffmpeg,
+            notifier,
+            reachability,
+        };
 
         let handles: Vec<_> = (0..worker_count)
             .map(|_| {
                 let pending = Arc::clone(&pending);
-                let db = db.clone();
-                let thumbnails_dir = thumbnails_dir.clone();
-                let watch_folders = watch_folders.clone();
-                let queue = queue.clone();
-                let ffmpeg = Arc::clone(&ffmpeg);
-                let notifier = Arc::clone(&notifier);
-                let reachability = reachability.clone();
-                thread::spawn(move || loop {
-                    while queue.is_paused() {
-                        thread::sleep(PAUSE_POLL_INTERVAL);
-                    }
-                    let next = pending.lock().unwrap().next();
-                    let Some((id, path)) = next else { break };
-                    // Held until the end of this iteration, i.e. past the
-                    // generate call and the notification.
-                    let Some(_claim) = queue.try_claim(&id) else {
-                        log::debug!("thumbnail worker: {id} is already being generated, skipping");
-                        // The holder may be untracked (e.g. a manual retry) or
-                        // may have finished already, so nobody else is
-                        // guaranteed to retire this id.
-                        queue.finish_tracked(&id, FinishOutcome::SkippedBusy);
-                        queue.publish_progress(notifier.as_ref());
-                        continue;
-                    };
-                    let video_dir = paths::video_thumbnail_dir(
-                        &thumbnails_dir,
-                        &watch_folders,
-                        &path.to_string_lossy(),
-                    );
-                    // The claim only serializes runs; it can be won right
-                    // after another queue finished this very video.
-                    if (0..worker::THUMBNAILS_PER_VIDEO)
-                        .all(|i| paths::slot_path(&video_dir, &id, i).exists())
-                    {
-                        log::debug!("thumbnail worker: {id} is already complete, skipping");
-                        if let Err(e) = crate::db::queries::mark_thumbnail_ready(
-                            &db.writer.lock().unwrap(),
-                            &id,
-                        ) {
-                            log::warn!("failed to backfill thumbnail_ready for {id}: {e}");
-                        }
-                        queue.finish_tracked(&id, FinishOutcome::AlreadyGenerated);
-                        queue.publish_progress(notifier.as_ref());
-                        continue;
-                    }
-                    // After the already-complete check, which needs no access
-                    // to the video. The first question about a folder may
-                    // block for as long as the share takes to time out; that
-                    // happens here on the worker, and every later video of
-                    // the same folder gets the cached answer.
-                    let path_str = path.to_string_lossy();
-                    if reachability.is_path_unreachable(&path_str, &watch_folders) {
-                        log::info!(
-                            "thumbnail worker: skipping {id}, its folder is unreachable right now"
-                        );
-                        queue.finish_tracked(&id, FinishOutcome::SkippedUnreachable);
-                        queue.publish_progress(notifier.as_ref());
-                        continue;
-                    }
-                    let outcome = match worker::generate_thumbnail_for_video(
-                        ffmpeg.as_ref(),
-                        &db,
-                        &video_dir,
-                        &id,
-                        &path,
-                    ) {
-                        Ok(()) => {
-                            notifier.notify_changed();
-                            FinishOutcome::Generated
-                        }
-                        Err(e) if reachability.confirm_path_unreachable(&path_str, &watch_folders) => {
-                            // The share went away during the attempt, so the
-                            // failure says nothing about the video: give the
-                            // retry back (the worker already counted it).
-                            log::warn!(
-                                "thumbnail worker: {id} failed because its folder became unreachable: {e}"
-                            );
-                            if let Err(refund_err) = crate::db::queries::refund_thumbnail_attempt(
-                                &db.writer.lock().unwrap(),
-                                &id,
-                            ) {
-                                log::warn!(
-                                    "failed to refund the thumbnail attempt for {id}: {refund_err}"
-                                );
-                            }
-                            FinishOutcome::SkippedUnreachable
-                        }
-                        Err(e) => {
-                            log::warn!("thumbnail worker: giving up on video {id}: {e}");
-                            // The row can only switch to its failed state if
-                            // the list is re-read after the attempt count
-                            // changed. That re-read does not start generation.
-                            notifier.notify_changed();
-                            FinishOutcome::Failed
-                        }
-                    };
-                    queue.finish_tracked(&id, outcome);
-                    queue.publish_progress(notifier.as_ref());
-                })
+                let ctx = ctx.clone();
+                thread::spawn(move || worker_loop(&ctx, &pending))
             })
             .collect();
 
         for handle in handles {
             let _ = handle.join();
+        }
+    }
+}
+
+/// The handles one worker thread needs, so each worker takes a single clone
+/// instead of one per handle.
+struct WorkerContext<F, N> {
+    db: Db,
+    thumbnails_dir: PathBuf,
+    watch_folders: Vec<String>,
+    queue: ThumbnailQueueHandle,
+    ffmpeg: Arc<F>,
+    notifier: Arc<N>,
+    reachability: ReachabilityRegistry,
+}
+
+// Written by hand because `#[derive(Clone)]` would demand `F: Clone` and
+// `N: Clone`, although only the `Arc`s around them are cloned.
+impl<F, N> Clone for WorkerContext<F, N> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            thumbnails_dir: self.thumbnails_dir.clone(),
+            watch_folders: self.watch_folders.clone(),
+            queue: self.queue.clone(),
+            ffmpeg: Arc::clone(&self.ffmpeg),
+            notifier: Arc::clone(&self.notifier),
+            reachability: self.reachability.clone(),
+        }
+    }
+}
+
+/// One worker thread: takes videos from the shared iterator until it runs
+/// dry. The pause is honored before taking the next video, so a paused
+/// queue leaves the rest of the batch untouched.
+fn worker_loop<F, N>(
+    ctx: &WorkerContext<F, N>,
+    pending: &Mutex<std::vec::IntoIter<(String, PathBuf)>>,
+) where
+    F: FfmpegAdapter,
+    N: CatalogNotifier,
+{
+    loop {
+        while ctx.queue.is_paused() {
+            thread::sleep(PAUSE_POLL_INTERVAL);
+        }
+        let next = pending.lock().unwrap().next();
+        let Some((id, path)) = next else { break };
+        process_one(ctx, &id, &path);
+    }
+}
+
+/// Handles one video from claim to recorded progress. The outcome is
+/// recorded here, while the claim is still held, so a video is never seen
+/// as unclaimed before its progress is final.
+fn process_one<F, N>(ctx: &WorkerContext<F, N>, id: &str, path: &Path)
+where
+    F: FfmpegAdapter,
+    N: CatalogNotifier,
+{
+    // Held until the end of this function, i.e. past the generate call and
+    // the notification.
+    let Some(_claim) = ctx.queue.try_claim(id) else {
+        log::debug!("thumbnail worker: {id} is already being generated, skipping");
+        // The holder may be untracked (e.g. a manual retry) or
+        // may have finished already, so nobody else is
+        // guaranteed to retire this id.
+        ctx.queue.finish_tracked(id, FinishOutcome::SkippedBusy);
+        ctx.queue.publish_progress(ctx.notifier.as_ref());
+        return;
+    };
+    let outcome = generate_claimed(ctx, id, path);
+    ctx.queue.finish_tracked(id, outcome);
+    ctx.queue.publish_progress(ctx.notifier.as_ref());
+}
+
+/// Everything done for a claimed video, ending in the outcome to record.
+/// Recording is left to the caller so it happens in one place, before the
+/// claim is released.
+fn generate_claimed<F, N>(ctx: &WorkerContext<F, N>, id: &str, path: &Path) -> FinishOutcome
+where
+    F: FfmpegAdapter,
+    N: CatalogNotifier,
+{
+    let video_dir = paths::video_thumbnail_dir(
+        &ctx.thumbnails_dir,
+        &ctx.watch_folders,
+        &path.to_string_lossy(),
+    );
+    // The claim only serializes runs; it can be won right
+    // after another queue finished this very video.
+    if (0..worker::THUMBNAILS_PER_VIDEO).all(|i| paths::slot_path(&video_dir, id, i).exists()) {
+        log::debug!("thumbnail worker: {id} is already complete, skipping");
+        if let Err(e) = crate::db::queries::mark_thumbnail_ready(&ctx.db.writer.lock().unwrap(), id)
+        {
+            log::warn!("failed to backfill thumbnail_ready for {id}: {e}");
+        }
+        return FinishOutcome::AlreadyGenerated;
+    }
+    // After the already-complete check, which needs no access
+    // to the video. The first question about a folder may
+    // block for as long as the share takes to time out; that
+    // happens here on the worker, and every later video of
+    // the same folder gets the cached answer.
+    let path_str = path.to_string_lossy();
+    if ctx
+        .reachability
+        .is_path_unreachable(&path_str, &ctx.watch_folders)
+    {
+        log::info!("thumbnail worker: skipping {id}, its folder is unreachable right now");
+        return FinishOutcome::SkippedUnreachable;
+    }
+    match worker::generate_thumbnail_for_video(ctx.ffmpeg.as_ref(), &ctx.db, &video_dir, id, path) {
+        Ok(()) => {
+            ctx.notifier.notify_changed();
+            FinishOutcome::Generated
+        }
+        Err(e)
+            if ctx
+                .reachability
+                .confirm_path_unreachable(&path_str, &ctx.watch_folders) =>
+        {
+            // The share went away during the attempt, so the
+            // failure says nothing about the video: give the
+            // retry back (the worker already counted it).
+            log::warn!("thumbnail worker: {id} failed because its folder became unreachable: {e}");
+            if let Err(refund_err) =
+                crate::db::queries::refund_thumbnail_attempt(&ctx.db.writer.lock().unwrap(), id)
+            {
+                log::warn!("failed to refund the thumbnail attempt for {id}: {refund_err}");
+            }
+            FinishOutcome::SkippedUnreachable
+        }
+        Err(e) => {
+            log::warn!("thumbnail worker: giving up on video {id}: {e}");
+            // The row can only switch to its failed state if
+            // the list is re-read after the attempt count
+            // changed. That re-read does not start generation.
+            ctx.notifier.notify_changed();
+            FinishOutcome::Failed
         }
     }
 }
@@ -1091,6 +1144,103 @@ mod tests {
         assert_eq!(probe.call_count_for(NAS), 1);
         for id in &ids {
             assert_eq!(thumbnail_attempts_of(&db, id), 0);
+        }
+    }
+
+    /// Polls `cond` until it holds or `timeout` elapses, returning whether it
+    /// held. Keeps the paused-queue test from depending on a single sleep.
+    fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if cond() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_paused_queue_generates_nothing_until_resumed() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-paused", "C:/videos/vid-paused.mp4");
+        let ffmpeg = available_ffmpeg(Duration::ZERO);
+        let queue = ThumbnailQueueHandle::default();
+        queue.set_paused(true);
+
+        let run = {
+            let (db, root) = (db.clone(), thumbs.path().to_path_buf());
+            let (queue, ffmpeg) = (queue.clone(), Arc::clone(&ffmpeg));
+            thread::spawn(move || {
+                process_pending(
+                    db,
+                    root,
+                    Vec::new(),
+                    queue,
+                    ffmpeg,
+                    Arc::new(CountingNotifier(AtomicUsize::new(0))),
+                    vec![pending_entry("vid-paused")],
+                    all_reachable(),
+                )
+            })
+        };
+
+        // Nothing may be extracted at any point while paused.
+        assert!(
+            !wait_until(Duration::from_millis(200), || extract_count_for(
+                &ffmpeg,
+                "vid-paused"
+            ) > 0),
+            "a paused queue must not extract"
+        );
+        assert!(!run.is_finished(), "a paused worker must keep waiting");
+        assert_eq!(thumbnail_ready_flag(&db, "vid-paused"), 0);
+
+        queue.set_paused(false);
+        assert!(
+            wait_until(Duration::from_secs(10), || run.is_finished()),
+            "the run must finish after resuming"
+        );
+        run.join().unwrap();
+
+        assert_eq!(
+            extract_count_for(&ffmpeg, "vid-paused"),
+            worker::THUMBNAILS_PER_VIDEO
+        );
+        assert!(six_finals_exist(
+            &unassigned_dir(thumbs.path()),
+            "vid-paused"
+        ));
+        assert_eq!(thumbnail_ready_flag(&db, "vid-paused"), 1);
+    }
+
+    #[test]
+    fn each_successful_generation_notifies_once_and_marks_the_video_ready() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs = tempfile::tempdir().unwrap();
+        for id in ["ok-1", "ok-2"] {
+            insert_test_video(&db, id, &format!("C:/videos/{id}.mp4"));
+        }
+        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
+
+        process_pending(
+            db.clone(),
+            thumbs.path().to_path_buf(),
+            Vec::new(),
+            ThumbnailQueueHandle::default(),
+            available_ffmpeg(Duration::ZERO),
+            Arc::clone(&notifier),
+            vec![pending_entry("ok-1"), pending_entry("ok-2")],
+            all_reachable(),
+        );
+
+        assert_eq!(notifier.0.load(Ordering::SeqCst), 2);
+        for id in ["ok-1", "ok-2"] {
+            assert_eq!(thumbnail_ready_flag(&db, id), 1, "{id}");
+            assert!(six_finals_exist(&unassigned_dir(thumbs.path()), id));
         }
     }
 }
