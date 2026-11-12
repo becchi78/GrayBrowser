@@ -30,6 +30,7 @@ import type {
   WbImportStageId,
   WbImportSummary,
 } from "../types";
+import { ModalShell } from "./ModalShell";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 
 interface Props {
@@ -343,107 +344,105 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
     <>
     {/* Overlay click closes like every other dialog; requestClose keeps it shut
         while an import is running, so the outcome can't be lost by a stray click. */}
-    <div className="dialog-overlay" onClick={requestClose}>
-      <div
-        className="dialog wb-import-dialog"
-        data-testid="import-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>.wbインポート</h2>
+    <ModalShell
+      label=".wbインポート"
+      className="wb-import-dialog"
+      testId="import-dialog"
+      onOverlayClick={requestClose}
+    >
+      <h2>.wbインポート</h2>
 
-        {!summary && !error && (
-          <>
-            <div className="wb-import-dialog-row">
-              <button type="button" onClick={handlePickWbFile} disabled={importing}>
-                .wbファイルを選択
-              </button>
-              {wbPath && <PathLabel path={wbPath} />}
-            </div>
-            <div className="wb-import-dialog-row">
-              <button type="button" onClick={handlePickThumbnailFolder} disabled={importing}>
-                旧サムネイルフォルダを選択
-              </button>
-              {thumbnailFolderPath && <PathLabel path={thumbnailFolderPath} />}
-            </div>
-            {unmatchedCountText(unmatchedCount) && (
-              <div className="wb-import-dialog-row" data-testid="import-unmatched-saved">
-                <span>{unmatchedCountText(unmatchedCount)}</span>
-                <button
-                  type="button"
-                  data-testid="import-unmatched-open-btn"
-                  onClick={() => setUnmatchedDialog({})}
-                  disabled={importing}
-                >
-                  確認する
-                </button>
-              </div>
-            )}
-            <div className="wb-import-dialog-row">
+      {!summary && !error && (
+        <>
+          <div className="wb-import-dialog-row">
+            <button type="button" onClick={handlePickWbFile} disabled={importing}>
+              .wbファイルを選択
+            </button>
+            {wbPath && <PathLabel path={wbPath} />}
+          </div>
+          <div className="wb-import-dialog-row">
+            <button type="button" onClick={handlePickThumbnailFolder} disabled={importing}>
+              旧サムネイルフォルダを選択
+            </button>
+            {thumbnailFolderPath && <PathLabel path={thumbnailFolderPath} />}
+          </div>
+          {unmatchedCountText(unmatchedCount) && (
+            <div className="wb-import-dialog-row" data-testid="import-unmatched-saved">
+              <span>{unmatchedCountText(unmatchedCount)}</span>
               <button
                 type="button"
-                onClick={handleStartImport}
-                disabled={importing || wbPath === null || thumbnailFolderPath === null}
+                data-testid="import-unmatched-open-btn"
+                onClick={() => setUnmatchedDialog({})}
+                disabled={importing}
               >
-                {importing ? "インポート中..." : "インポート"}
+                確認する
               </button>
             </div>
-          </>
-        )}
-
-        {importing && (
-          <div className="wb-import-steps">
-            <ol className="wb-import-steps-list">
-              {computeWbImportSteps(stage, null).map((s) => {
-                const countText = formatStepCount(s.status, counts[s.key]);
-                return (
-                  <li key={s.key} className={`wb-import-step wb-import-step--${s.status}`}>
-                    {s.label}
-                    {countText && <span className="wb-import-step-count">{countText}</span>}
-                  </li>
-                );
-              })}
-            </ol>
-            {bar && (
-              <progress
-                data-testid="import-progress-bar"
-                className="wb-import-progress-bar"
-                value={bar.value}
-                max={bar.max}
-              />
-            )}
+          )}
+          <div className="wb-import-dialog-row">
+            <button
+              type="button"
+              onClick={handleStartImport}
+              disabled={importing || wbPath === null || thumbnailFolderPath === null}
+            >
+              {importing ? "インポート中..." : "インポート"}
+            </button>
           </div>
-        )}
+        </>
+      )}
 
-        {summary && resultDisplay && (
-          <WbImportResult
-            resultDisplay={resultDisplay}
-            unmatchedListState={unmatchedListState}
-            unmatchedByKind={unmatchedByKind}
-            onReview={(kind) => setUnmatchedDialog({ kind })}
-          />
-        )}
-
-        {error && (
-          <>
-            <p className="wb-import-error">移行に失敗しました: {error}</p>
-            <ImportLogLink />
-          </>
-        )}
-
-        <div className="dialog-footer">
-          <button
-            type="button"
-            data-testid="import-dialog-close-btn"
-            onClick={requestClose}
-            disabled={importing}
-          >
-            閉じる
-          </button>
+      {importing && (
+        <div className="wb-import-steps">
+          <ol className="wb-import-steps-list">
+            {computeWbImportSteps(stage, null).map((s) => {
+              const countText = formatStepCount(s.status, counts[s.key]);
+              return (
+                <li key={s.key} className={`wb-import-step wb-import-step--${s.status}`}>
+                  {s.label}
+                  {countText && <span className="wb-import-step-count">{countText}</span>}
+                </li>
+              );
+            })}
+          </ol>
+          {bar && (
+            <progress
+              data-testid="import-progress-bar"
+              className="wb-import-progress-bar"
+              value={bar.value}
+              max={bar.max}
+            />
+          )}
         </div>
+      )}
+
+      {summary && resultDisplay && (
+        <WbImportResult
+          resultDisplay={resultDisplay}
+          unmatchedListState={unmatchedListState}
+          unmatchedByKind={unmatchedByKind}
+          onReview={(kind) => setUnmatchedDialog({ kind })}
+        />
+      )}
+
+      {error && (
+        <>
+          <p className="wb-import-error">移行に失敗しました: {error}</p>
+          <ImportLogLink />
+        </>
+      )}
+
+      <div className="dialog-footer">
+        <button
+          type="button"
+          data-testid="import-dialog-close-btn"
+          onClick={requestClose}
+          disabled={importing}
+        >
+          閉じる
+        </button>
       </div>
-    </div>
-    {/* A sibling, not a child: a child's overlay clicks would bubble into the
-        overlay above and close this dialog as well. */}
+    </ModalShell>
+    {/* A sibling of the ModalShell, not a child; see ModalShell for why. */}
     {unmatchedDialog && (
       <UnmatchedThumbnailsDialog
         onClose={() => {

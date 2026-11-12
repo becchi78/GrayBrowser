@@ -116,11 +116,3 @@ export function formatBytes(bytes: number): string {
   }
   return `${(safe / (1024 * 1024)).toFixed(1)} MB`;
 }
-
-/** invoke の拒否値(文字列)も Error も、利用者に見せる一行にする。 */
-export function errorReason(e: unknown): string {
-  if (typeof e === "string") {
-    return e;
-  }
-  return e instanceof Error ? e.message : String(e);
-}

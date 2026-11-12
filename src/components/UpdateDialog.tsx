@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { createPortal } from "react-dom";
 import { useEscapeKey } from "../useEscapeKey";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate } from "../api";
+import { errorText } from "../lib/errorText";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import {
   canDismiss,
-  errorReason,
   formatBytes,
   INITIAL_UPDATE_STATE,
   progressPercent,
   updateReducer,
 } from "../lib/updateState";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   open: boolean;
@@ -73,7 +73,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       .catch((e) => {
         console.error(e);
         if (guardRef.current.isLatest(id)) {
-          dispatch({ type: "checkFailed", reason: errorReason(e) });
+          dispatch({ type: "checkFailed", reason: errorText(e) });
         }
       });
   }, [releaseUpdate]);
@@ -108,7 +108,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       .downloadAndInstall((event) => dispatch({ type: "downloadEvent", event }))
       .catch((e) => {
         console.error(e);
-        dispatch({ type: "downloadFailed", reason: errorReason(e) });
+        dispatch({ type: "downloadFailed", reason: errorText(e) });
       })
       .finally(() => {
         applyingRef.current = false;
@@ -209,22 +209,17 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       break;
   }
 
-  return createPortal(
-    <div className="dialog-overlay" onClick={dismissible ? onClose : undefined}>
-      <div
-        className="dialog update-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="更新の確認"
-        data-testid="update-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>更新の確認</h2>
-        {body}
-        {footer !== null && <div className="dialog-footer update-dialog-footer">{footer}</div>}
-      </div>
-    </div>,
-    document.body,
+  return (
+    <ModalShell
+      label="更新の確認"
+      className="update-dialog"
+      testId="update-dialog"
+      onOverlayClick={dismissible ? onClose : undefined}
+    >
+      <h2>更新の確認</h2>
+      {body}
+      {footer !== null && <div className="dialog-footer update-dialog-footer">{footer}</div>}
+    </ModalShell>
   );
 }
 

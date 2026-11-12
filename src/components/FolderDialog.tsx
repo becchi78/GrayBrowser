@@ -1,6 +1,7 @@
 import { useWatchFolders } from "../useWatchFolders";
 import { FolderDeleteConfirm } from "./FolderDeleteConfirm";
 import { FolderRow } from "./FolderRow";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   open: boolean;
@@ -47,101 +48,95 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
 
   return (
     <>
-      <div className="dialog-overlay" onClick={onClose}>
-        <div
-          className="dialog folder-dialog"
-          data-testid="folder-dialog"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <h2>フォルダ管理</h2>
-          {folders.length === 0 ? (
-            <p className="folder-dialog-empty">
-              登録済みのフォルダはありません。
-            </p>
-          ) : (
-            <ul className="folder-dialog-list">
-              {folders.map((path, index) => (
-                <FolderRow
-                  key={path}
-                  path={path}
-                  isFirst={index === 0}
-                  isLast={index === folders.length - 1}
-                  checkEnabled={!checkDisabled.includes(path)}
-                  reordering={reordering}
-                  toggling={togglingPath !== null}
-                  editing={editingPath === path}
-                  editingValue={editingValue}
-                  editError={editError}
-                  savingEdit={savingEdit}
-                  onMove={(direction) => handleMove(index, direction)}
-                  onToggleCheck={(enabled) => handleToggleCheck(path, enabled)}
-                  onStartEdit={() => startEdit(path)}
-                  onDelete={() => openDeleteConfirm(path)}
-                  onEditingValueChange={setEditingValue}
-                  onSaveEdit={saveEdit}
-                  onCancelEdit={cancelEdit}
-                />
-              ))}
-            </ul>
-          )}
-          {orderCheckError && (
-            <p
-              className="folder-dialog-order-check-error"
-              data-testid="folder-dialog-order-check-error"
-            >
-              {orderCheckError}
-            </p>
-          )}
-          {renameSummary && (
-            <p
-              className="folder-dialog-rename-summary"
-              data-testid="folder-dialog-rename-summary"
-            >
-              {renameSummary}
-            </p>
-          )}
-          <div className="folder-dialog-scan-row">
-            <button
-              type="button"
-              data-testid="folder-dialog-scan-btn"
-              onClick={handleScan}
-              disabled={scanning || !rescan.enabled}
-            >
-              {scanning ? "スキャン中..." : "再スキャン"}
-            </button>
-            {lastScanSummary && (
-              <span className="scan-summary">{lastScanSummary}</span>
-            )}
-          </div>
-          <p
-            className="folder-dialog-scan-note"
-            data-testid="folder-dialog-scan-note"
-          >
-            {rescan.enabled
-              ? "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。"
-              : rescan.reason === "all-check-off"
-                ? "すべてのフォルダで「更新チェック」が外れているため、再スキャンできません。"
-                : "フォルダが登録されていないため、再スキャンできません。"}
+      <ModalShell label="フォルダ管理" className="folder-dialog" testId="folder-dialog" onOverlayClick={onClose}>
+        <h2>フォルダ管理</h2>
+        {folders.length === 0 ? (
+          <p className="folder-dialog-empty">
+            登録済みのフォルダはありません。
           </p>
-          <div className="dialog-footer">
-            <button
-              type="button"
-              data-testid="folder-dialog-add-btn"
-              onClick={handleAdd}
-              disabled={reordering || togglingPath !== null}
-            >
-              + フォルダを追加
-            </button>
-            <button
-              type="button"
-              data-testid="folder-dialog-close-btn"
-              onClick={onClose}
-            >
-              閉じる
-            </button>
-          </div>
+        ) : (
+          <ul className="folder-dialog-list">
+            {folders.map((path, index) => (
+              <FolderRow
+                key={path}
+                path={path}
+                isFirst={index === 0}
+                isLast={index === folders.length - 1}
+                checkEnabled={!checkDisabled.includes(path)}
+                reordering={reordering}
+                toggling={togglingPath !== null}
+                editing={editingPath === path}
+                editingValue={editingValue}
+                editError={editError}
+                savingEdit={savingEdit}
+                onMove={(direction) => handleMove(index, direction)}
+                onToggleCheck={(enabled) => handleToggleCheck(path, enabled)}
+                onStartEdit={() => startEdit(path)}
+                onDelete={() => openDeleteConfirm(path)}
+                onEditingValueChange={setEditingValue}
+                onSaveEdit={saveEdit}
+                onCancelEdit={cancelEdit}
+              />
+            ))}
+          </ul>
+        )}
+        {orderCheckError && (
+          <p
+            className="folder-dialog-order-check-error"
+            data-testid="folder-dialog-order-check-error"
+          >
+            {orderCheckError}
+          </p>
+        )}
+        {renameSummary && (
+          <p
+            className="folder-dialog-rename-summary"
+            data-testid="folder-dialog-rename-summary"
+          >
+            {renameSummary}
+          </p>
+        )}
+        <div className="folder-dialog-scan-row">
+          <button
+            type="button"
+            data-testid="folder-dialog-scan-btn"
+            onClick={handleScan}
+            disabled={scanning || !rescan.enabled}
+          >
+            {scanning ? "スキャン中..." : "再スキャン"}
+          </button>
+          {lastScanSummary && (
+            <span className="scan-summary">{lastScanSummary}</span>
+          )}
         </div>
-      </div>
+        <p
+          className="folder-dialog-scan-note"
+          data-testid="folder-dialog-scan-note"
+        >
+          {rescan.enabled
+            ? "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。"
+            : rescan.reason === "all-check-off"
+              ? "すべてのフォルダで「更新チェック」が外れているため、再スキャンできません。"
+              : "フォルダが登録されていないため、再スキャンできません。"}
+        </p>
+        <div className="dialog-footer">
+          <button
+            type="button"
+            data-testid="folder-dialog-add-btn"
+            onClick={handleAdd}
+            disabled={reordering || togglingPath !== null}
+          >
+            + フォルダを追加
+          </button>
+          <button
+            type="button"
+            data-testid="folder-dialog-close-btn"
+            onClick={onClose}
+          >
+            閉じる
+          </button>
+        </div>
+      </ModalShell>
 
       {deleteTarget && (
         <FolderDeleteConfirm

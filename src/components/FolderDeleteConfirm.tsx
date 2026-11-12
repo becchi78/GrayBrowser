@@ -1,4 +1,5 @@
 import type { DeleteTarget } from "../useWatchFolders";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   target: DeleteTarget;
@@ -16,37 +17,36 @@ export function FolderDeleteConfirm({
   onConfirm,
 }: Props) {
   return (
-    <div className="dialog-overlay" onClick={() => !deleting && onCancel()}>
-      <div
-        className="dialog folder-delete-confirm-dialog"
-        data-testid="folder-delete-confirm-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p>
-          このフォルダの登録を解除します。配下の{" "}
-          <strong>{target.count}</strong>{" "}
-          件の動画について、GrayBrowser上のタグ・レーティング・登録日の情報が失われます（動画ファイル自体は削除されません）。
-        </p>
-        <p className="folder-delete-confirm-path">{target.path}</p>
-        <div className="dialog-footer">
-          <button
-            type="button"
-            data-testid="folder-delete-cancel-btn"
-            onClick={onCancel}
-            disabled={deleting}
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            data-testid="folder-delete-confirm-btn"
-            onClick={onConfirm}
-            disabled={deleting}
-          >
-            {deleting ? "解除中..." : "登録を解除する"}
-          </button>
-        </div>
+    <ModalShell
+      label="フォルダの登録を解除"
+      className="folder-delete-confirm-dialog"
+      testId="folder-delete-confirm-dialog"
+      onOverlayClick={() => !deleting && onCancel()}
+    >
+      <p>
+        このフォルダの登録を解除します。配下の{" "}
+        <strong>{target.count}</strong>{" "}
+        件の動画について、GrayBrowser上のタグ・レーティング・登録日の情報が失われます（動画ファイル自体は削除されません）。
+      </p>
+      <p className="folder-delete-confirm-path">{target.path}</p>
+      <div className="dialog-footer">
+        <button
+          type="button"
+          data-testid="folder-delete-cancel-btn"
+          onClick={onCancel}
+          disabled={deleting}
+        >
+          キャンセル
+        </button>
+        <button
+          type="button"
+          data-testid="folder-delete-confirm-btn"
+          onClick={onConfirm}
+          disabled={deleting}
+        >
+          {deleting ? "解除中..." : "登録を解除する"}
+        </button>
       </div>
-    </div>
+    </ModalShell>
   );
 }
