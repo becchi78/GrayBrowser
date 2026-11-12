@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { playVideo } from "./api";
 
-// 重複パネルの行からの再生。blocked のあいだと開始中は起動せず、開始中の状態と
-// 失敗理由を返す。
+// 一覧の行と重複パネルの行に共通の、ダブルクリックからの再生。blocked のあいだと
+// 開始中は起動せず、開始中の状態と失敗理由を返す（どう表示するかは呼び出し側）。
 export function useStartPlay(filePath: string, blocked: boolean) {
   const [playError, setPlayError] = useState<string | null>(null);
   const [isStartingPlay, setIsStartingPlay] = useState(false);
 
   // 再生の開始は外部プレーヤーの起動待ち（ネットワーク先では数十秒）になりうる。
-  // 再生ボタンの disabled で待機を示せないため、開始中の二重ダブルクリックは
-  // 無視し、結果が出るまでの状態と失敗理由を行内に表示する。
+  // どちらの行も再生ボタンを持たず disabled で待機を示せないため、開始中の
+  // 二重ダブルクリックはここで無視し、バックグラウンドの起動処理を積み上げない。
   async function handlePlay() {
     if (blocked || isStartingPlay) return;
     setPlayError(null);
