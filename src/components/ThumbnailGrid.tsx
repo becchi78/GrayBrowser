@@ -1,30 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type MouseEvent,
-} from "react";
-import { listVideos, listWatchFolders, unregisterVideos } from "../api";
-import { onCatalogChanged } from "../events";
-import { jumpTargetIndex } from "../lib/jumpToPercent";
-import { createLatestOnlyGuard } from "../lib/latestRequest";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { isTextEntryTarget } from "../lib/textEntryTarget";
-import {
-  clearSelection,
-  clickSelect,
-  pruneSelection,
-  selectAll,
-  selectionForContextMenu,
-  type ClickModifiers,
-  type SelectionState,
-} from "../lib/multiSelect";
 import type { SortDirection, SortField, VideoDto } from "../types";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { BulkTagDialog } from "./BulkTagDialog";
-import { ContextMenu } from "./ContextMenu";
+import { useHasNoWatchFolders } from "../useHasNoWatchFolders";
+import { useJumpToPercent } from "../useJumpToPercent";
+import { useListSelection } from "../useListSelection";
+import { useUnregisterVideos } from "../useUnregisterVideos";
+import { useVideoList } from "../useVideoList";
+import { VideoListOverlays, type VideoListMenu } from "./VideoListOverlays";
 import { VideoRow } from "./VideoRow";
 
 // A row hosts 6 thumbnails + metadata/rating/tag-editor. Measured via CDP
@@ -36,8 +19,6 @@ import { VideoRow } from "./VideoRow";
 // ROW_HEIGHT further. The fixed 150px thumbnail height (+16px padding =
 // 166px) fits within 226px too.
 const ROW_HEIGHT = 226;
-// Max re-fetch frequency while catalog:changed events are arriving.
-const NOTIFY_THROTTLE_MS = 300;
 
 interface Props {
   refreshKey: number;
@@ -75,142 +56,46 @@ export function ThumbnailGrid({
   onCountChange,
   onSelectionCountChange,
 }: Props) {
-  const [videos, setVideos] = useState<VideoDto[]>([]);
-  // 一覧を再取得するたびに増える。VideoDtoには詳細情報の取得状況が含まれず、
-  // 行は自分で状況を知る手段がないため、「一覧が更新された」ことだけを行に
-  // 伝えて、取得が終わっていない行に取り直させる。
-  const [catalogVersion, setCatalogVersion] = useState(0);
-  // Starts false so the "register a folder" hint never flashes before the
-  // first fetch resolves; only a confirmed empty list shows it.
-  const [noWatchFolders, setNoWatchFolders] = useState(false);
-  // Selection only highlights rows (via the CSS classes VideoRow applies
-  // itself). Held by id so rows scrolled out of the virtualizer's window stay
-  // selected.
-  const [selection, setSelection] = useState<SelectionState>(clearSelection);
+  const query = { search, sortField, sortDirection, tagIds, folderPath, ratings };
+  const parentRef = useRef<HTMLDivElement>(null);
+  const thumbnailCache = useRef(new Map<string, string[]>());
+
+  const noWatchFolders = useHasNoWatchFolders(refreshKey);
+  // 選択は一覧を受け取るので、一覧の後に作る。onLoaded は取得の応答が届いてから
+  // (描画の後に)呼ばれるので、その時点で selection は作られている。
+  const { videos, catalogVersion } = useVideoList(query, refreshKey, (rows) =>
+    selection.prune(rows),
+  );
+  const selection = useListSelection(videos, onSelectionCountChange, parentRef);
+  const clearSelection = selection.clear;
+
+  // A selection must never silently apply to rows the user can no longer
+  // see, so any change of what the list shows clears it. refreshKey is left
+  // out on purpose: it re-fetches the same view, which prune handles.
+  // clearSelection は描画をまたいで同じ関数なので、依存に入れても条件の変化の
+  // ときだけ動く。
+  //
+  // この effect は effect の中で同期的に state を更新するので、React Compiler の
+  // 解析対象では react-hooks/set-state-in-effect のエラーになる(選択のフックの
+  // 中に置くと、useCallback 越しの呼び出しでもエラーになる)。ここで通るのは、
+  // このコンポーネント全体が useVirtualizer のため解析対象外
+  // (react-hooks/incompatible-library)だからで、useVirtualizer をフックへ
+  // 移すとこのコンポーネントも検査対象になり、この effect の書き方を
+  // 見直す必要がある。
+  useEffect(() => {
+    clearSelection();
+  }, [clearSelection, search, sortField, sortDirection, tagIds, folderPath, ratings]);
+
+  const unregister = useUnregisterVideos();
   // 右クリックで開くメニューの位置と対象。対象はメニューを開いた時点の選択で
   // 固定する(メニューを開いている間に選択が変わっても、見せた件数と実行する
   // 対象がずれないようにする)。
-  const [menu, setMenu] = useState<{
-    x: number;
-    y: number;
-    ids: string[];
-  } | null>(null);
-  const [pendingUnregister, setPendingUnregister] = useState<string[] | null>(null);
-  const [unregisterBusy, setUnregisterBusy] = useState(false);
-  const [unregisterError, setUnregisterError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<VideoListMenu | null>(null);
   // 一括付与の対象(開いた時点で固定)。null のときダイアログは閉じている。
   const [bulkTagIds, setBulkTagIds] = useState<string[] | null>(null);
   // 一括付与で各行のタグが変わったことを行へ伝える。catalogVersion は生成進捗の
   // たびに増えるので、タグの再取得には使わない。
   const [tagsVersion, setTagsVersion] = useState(0);
-  const parentRef = useRef<HTMLDivElement>(null);
-  const thumbnailCache = useRef(new Map<string, string[]>());
-
-  // 登録フォルダが0件かどうか。空の一覧に、フォルダの登録先を案内するために使う。
-  useEffect(() => {
-    let cancelled = false;
-    listWatchFolders()
-      .then((rows) => {
-        if (!cancelled) setNoWatchFolders(rows.length === 0);
-      })
-      .catch(console.error);
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
-
-  // Re-fetches once on mount/refreshKey change, then on every catalog:changed
-  // event from the backend (no polling).
-  //
-  // A burst of events is throttled to at most one re-fetch per
-  // NOTIFY_THROTTLE_MS, as a *throttle* rather than a trailing-edge debounce:
-  // the first event fires immediately and re-fetches keep happening during
-  // the burst, so the grid fills in progressively during a large batch
-  // instead of staying frozen until everything finishes.
-  useEffect(() => {
-    let cancelled = false;
-    // 一覧の再取得は応答の順序が入れ替わりうる。古い要求の応答（まだ生成中の
-    // 状態）が新しい一覧を上書きしないよう、最新の要求の応答だけを反映する。
-    // effect の再実行時の古い応答は cancelled で破棄されるので、ガードは
-    // effect ごとに作れば足りる。
-    const guard = createLatestOnlyGuard();
-
-    const tick = async () => {
-      const requestId = guard.begin();
-      try {
-        const rows = await listVideos({
-          search,
-          sortField,
-          sortDirection,
-          tagIds,
-          folderPath,
-          ratings,
-        });
-        if (cancelled || !guard.isLatest(requestId)) return;
-        setVideos(rows);
-        setCatalogVersion((v) => v + 1);
-        // Only videos that vanished from the list (e.g. a watch folder was
-        // removed) are dropped; a plain refresh must not wipe the user's
-        // selection.
-        setSelection((prev) =>
-          pruneSelection(
-            prev,
-            rows.map((v) => v.id),
-          ),
-        );
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    tick();
-
-    let lastRun = 0;
-    let trailingTimer: ReturnType<typeof setTimeout> | null = null;
-    let trailingPending = false;
-
-    const scheduleTick = () => {
-      const elapsed = Date.now() - lastRun;
-      if (elapsed >= NOTIFY_THROTTLE_MS) {
-        lastRun = Date.now();
-        trailingPending = false;
-        tick();
-        return;
-      }
-      trailingPending = true;
-      if (trailingTimer === null) {
-        trailingTimer = setTimeout(() => {
-          trailingTimer = null;
-          if (trailingPending) {
-            trailingPending = false;
-            lastRun = Date.now();
-            tick();
-          }
-        }, NOTIFY_THROTTLE_MS - elapsed);
-      }
-    };
-
-    const unlisten = onCatalogChanged(scheduleTick);
-
-    return () => {
-      cancelled = true;
-      unlisten();
-      if (trailingTimer !== null) clearTimeout(trailingTimer);
-    };
-    // catalog:changed re-fetches always use the latest search/sort/tagIds/
-    // folderPath/ratings via closure, so those need to be dependencies too
-    // (not just refreshKey).
-  }, [refreshKey, search, sortField, sortDirection, tagIds, folderPath, ratings]);
-
-  // A selection must never silently apply to rows the user can no longer
-  // see, so any change of what the list shows clears it. refreshKey is left
-  // out on purpose: it re-fetches the same view, which prune handles.
-  useEffect(() => {
-    setSelection(clearSelection());
-  }, [search, sortField, sortDirection, tagIds, folderPath, ratings]);
-
-  useEffect(() => {
-    onSelectionCountChange(selection.ids.size);
-  }, [selection.ids.size, onSelectionCountChange]);
 
   // Resets scroll to the top only when the *search query* changes -- not on
   // sort-order change (still viewing the same result set, just reordered)
@@ -235,135 +120,39 @@ export function ThumbnailGrid({
     onCountChange(videos.length);
   }, [videos.length, onCountChange]);
 
-  // Keyed on the request object only: depending on `videos` would yank the
-  // user back to the jump target whenever the list refetches, so the latest
-  // length is read through a ref instead.
-  const videoCountRef = useRef(videos.length);
-  videoCountRef.current = videos.length;
-  const scrollToIndex = rowVirtualizer.scrollToIndex;
-  const scrollToIndexRef = useRef(scrollToIndex);
-  scrollToIndexRef.current = scrollToIndex;
-  useEffect(() => {
-    if (jumpRequest === null) return;
-    const index = jumpTargetIndex(videoCountRef.current, jumpRequest.percent);
-    if (index === null) return;
-    scrollToIndexRef.current(index, {
-      align: jumpRequest.percent === 100 ? "end" : "start",
-    });
-  }, [jumpRequest]);
-
-  function handleSelect(video: VideoDto, mods: ClickModifiers) {
-    const orderedIds = videos.map((v) => v.id);
-    setSelection((prev) => clickSelect(prev, orderedIds, video.id, mods));
-  }
+  useJumpToPercent(jumpRequest, videos.length, rowVirtualizer.scrollToIndex);
 
   function handleContextMenu(video: VideoDto, e: MouseEvent) {
     // 行内の入力欄(タグ入力など)は行メニューを出さず、document 側の
     // 入力欄用メニュー(または抑止)に任せる。
     if (isTextEntryTarget(e.target)) return;
     e.preventDefault();
-    const next = selectionForContextMenu(selection, video.id);
-    setSelection(next);
-    setMenu({ x: e.clientX, y: e.clientY, ids: [...next.ids] });
+    const ids = selection.selectForContextMenu(video.id);
+    setMenu({ x: e.clientX, y: e.clientY, ids });
   }
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  function cancelUnregister() {
-    setPendingUnregister(null);
-    setUnregisterError(null);
-  }
-
-  async function runUnregister() {
-    if (pendingUnregister === null || unregisterBusy) return;
-    setUnregisterBusy(true);
-    setUnregisterError(null);
-    try {
-      await unregisterVideos(pendingUnregister);
-      setPendingUnregister(null);
-    } catch (e) {
-      console.error(e);
-      setUnregisterError(String(e));
-    } finally {
-      setUnregisterBusy(false);
-    }
-  }
-
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (isTextEntryTarget(e.target)) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
-      e.preventDefault();
-      setSelection(selectAll(videos.map((v) => v.id)));
-    } else if (e.key === "Escape") {
-      setSelection(clearSelection());
-    }
-  }
-
-  // Shift/Ctrl+click would otherwise start the browser's own text selection.
-  // preventDefault also suppresses the focus change, and the keyboard
-  // shortcuts need the list focused, so focus it by hand.
-  function handleMouseDown(e: MouseEvent<HTMLDivElement>) {
-    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
-    if (e.target instanceof Element && e.target.closest("input, textarea, select, button, a")) {
-      return;
-    }
-    e.preventDefault();
-    parentRef.current?.focus({ preventScroll: true });
-  }
-
-  const multiSelected = selection.ids.size >= 2;
   const cache = thumbnailCache.current;
   const virtualRows = rowVirtualizer.getVirtualItems();
 
   // 削除で一覧が空になっても、確認ダイアログの後始末が途切れないよう、
   // メニューと確認ダイアログは一覧の空表示と共通で描画する。
   const overlays = (
-    <>
-      {menu && (
-        <ContextMenu
-          position={{ x: menu.x, y: menu.y }}
-          items={[
-            {
-              label: menu.ids.length >= 2 ? `タグを設定...(${menu.ids.length} 件)` : "タグを設定...",
-              onSelect: () => setBulkTagIds(menu.ids),
-            },
-            {
-              label: menu.ids.length >= 2 ? `登録から削除(${menu.ids.length} 件)` : "登録から削除",
-              danger: true,
-              onSelect: () => {
-                setUnregisterError(null);
-                setPendingUnregister(menu.ids);
-              },
-            },
-          ]}
-          onClose={closeMenu}
-        />
-      )}
-      <BulkTagDialog
-        videoIds={bulkTagIds}
-        onTagged={() => setTagsVersion((v) => v + 1)}
-        onClose={() => setBulkTagIds(null)}
-      />
-      <ConfirmDialog
-        open={pendingUnregister !== null}
-        title="登録から削除"
-        confirmLabel="登録から削除する"
-        danger
-        busy={unregisterBusy}
-        onConfirm={runUnregister}
-        onCancel={cancelUnregister}
-      >
-        <p>{pendingUnregister?.length ?? 0} 件の動画を登録から削除します。</p>
-        <p>
-          元の動画ファイルは削除されません。登録フォルダが監視・再スキャンの対象のままだと、次の更新チェックで再登録される場合があります。
-        </p>
-        {unregisterError && (
-          <p className="confirm-dialog-error" role="alert" data-testid="confirm-dialog-error">
-            {unregisterError}
-          </p>
-        )}
-      </ConfirmDialog>
-    </>
+    <VideoListOverlays
+      menu={menu}
+      onCloseMenu={closeMenu}
+      onRequestBulkTag={setBulkTagIds}
+      bulkTagIds={bulkTagIds}
+      onTagged={() => setTagsVersion((v) => v + 1)}
+      onCloseBulkTag={() => setBulkTagIds(null)}
+      onRequestUnregister={unregister.request}
+      pendingUnregister={unregister.pending}
+      unregisterBusy={unregister.busy}
+      unregisterError={unregister.error}
+      onConfirmUnregister={unregister.run}
+      onCancelUnregister={unregister.cancel}
+    />
   );
 
   if (videos.length === 0) {
@@ -390,8 +179,8 @@ export function ThumbnailGrid({
         className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
         data-testid="video-list"
         tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        onMouseDown={handleMouseDown}
+        onKeyDown={selection.handleKeyDown}
+        onMouseDown={selection.handleMouseDown}
       >
         <div
           style={{
@@ -421,9 +210,9 @@ export function ThumbnailGrid({
                   cache={cache}
                   catalogVersion={catalogVersion}
                   tagsVersion={tagsVersion}
-                  isSelected={selection.ids.has(video.id)}
-                  isMultiSelected={multiSelected && selection.ids.has(video.id)}
-                  onSelect={handleSelect}
+                  isSelected={selection.selectedIds.has(video.id)}
+                  isMultiSelected={selection.multiSelected && selection.selectedIds.has(video.id)}
+                  onSelect={selection.handleSelect}
                   onContextMenu={handleContextMenu}
                 />
               </div>
