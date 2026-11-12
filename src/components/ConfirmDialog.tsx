@@ -1,5 +1,4 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import { ModalShell } from "./ModalShell";
 
 interface Props {
@@ -37,8 +36,6 @@ export function ConfirmDialog({
     }
   }, [open]);
 
-  useEscapeKey(onCancel, open && !busy);
-
   if (!open) {
     return null;
   }
@@ -48,7 +45,8 @@ export function ConfirmDialog({
       label={title}
       className="confirm-dialog"
       testId="confirm-dialog"
-      onOverlayClick={() => !busy && onCancel()}
+      onDismiss={onCancel}
+      dismissible={!busy}
     >
       <h2>{title}</h2>
       <div className="confirm-dialog-body">{children}</div>

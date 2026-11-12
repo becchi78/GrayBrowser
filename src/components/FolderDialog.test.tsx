@@ -99,7 +99,7 @@ const addButton = () => screen.getByTestId("folder-dialog-add-btn");
 const scanButton = () => screen.getByTestId("folder-dialog-scan-btn");
 const orderCheckError = () => screen.queryByTestId("folder-dialog-order-check-error");
 const renameSummary = () => screen.queryByTestId("folder-dialog-rename-summary");
-const confirmDialog = () => screen.queryByTestId("folder-delete-confirm-dialog");
+const confirmDialog = () => screen.queryByTestId("confirm-dialog");
 
 // ---- 開閉と一覧の取得 ----
 
@@ -719,6 +719,12 @@ test("登録解除は、件数を取得してから確認を出す", async () =>
 
   const confirm = confirmDialog()!;
   expect(confirm).toBeInTheDocument();
+  expect(within(confirm).getByRole("heading")).toHaveTextContent("フォルダの登録を解除");
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveTextContent("登録を解除する");
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveClass(
+    "confirm-dialog-confirm--danger",
+  );
+  expect(document.activeElement).toBe(screen.getByTestId("confirm-dialog-cancel-btn"));
   expect(within(confirm).getByText("42").tagName).toBe("STRONG");
   expect(confirm.querySelector(".folder-delete-confirm-path")).toHaveTextContent(/^B$/);
   expect(api.removeWatchFolder).not.toHaveBeenCalled();
@@ -739,8 +745,8 @@ test("確認でキャンセルすると、解除せずに閉じる", async () =>
   const { user, onChanged, onClose } = await renderOpen();
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  await screen.findByTestId("folder-delete-confirm-dialog");
-  await user.click(screen.getByTestId("folder-delete-cancel-btn"));
+  await screen.findByTestId("confirm-dialog");
+  await user.click(screen.getByTestId("confirm-dialog-cancel-btn"));
 
   expect(confirmDialog()).toBeNull();
   expect(api.removeWatchFolder).not.toHaveBeenCalled();
@@ -754,7 +760,7 @@ test("解除中でなければ、確認の背景のクリックで確認を閉�
   const { user, onClose } = await renderOpen();
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  const confirm = await screen.findByTestId("folder-delete-confirm-dialog");
+  const confirm = await screen.findByTestId("confirm-dialog");
 
   await user.click(confirm);
   expect(confirmDialog()).toBeInTheDocument();
@@ -774,13 +780,13 @@ test("解除中は、ボタンを押せず、背景をクリックしても閉�
   const fetchesBefore = vi.mocked(api.listWatchCheckDisabledFolders).mock.calls.length;
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  const confirm = await screen.findByTestId("folder-delete-confirm-dialog");
-  await user.click(screen.getByTestId("folder-delete-confirm-btn"));
+  const confirm = await screen.findByTestId("confirm-dialog");
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
 
   expect(api.removeWatchFolder).toHaveBeenCalledWith("B");
-  expect(screen.getByTestId("folder-delete-confirm-btn")).toBeDisabled();
-  expect(screen.getByTestId("folder-delete-confirm-btn")).toHaveTextContent("解除中...");
-  expect(screen.getByTestId("folder-delete-cancel-btn")).toBeDisabled();
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeDisabled();
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveTextContent("処理中...");
+  expect(screen.getByTestId("confirm-dialog-cancel-btn")).toBeDisabled();
 
   await user.click(confirm.parentElement!);
   expect(confirmDialog()).toBeInTheDocument();
@@ -804,8 +810,8 @@ test("解除のあとのチェック状態の取得し直しが失敗しても�
   vi.mocked(api.listWatchCheckDisabledFolders).mockRejectedValue(new Error("boom"));
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  await screen.findByTestId("folder-delete-confirm-dialog");
-  await user.click(screen.getByTestId("folder-delete-confirm-btn"));
+  await screen.findByTestId("confirm-dialog");
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
 
   await waitFor(() => expect(paths()).toEqual(["A", "C"]));
   expect(confirmDialog()).toBeNull();
@@ -818,10 +824,10 @@ test("解除が失敗したら、確認を開いたまま押せる状態に戻�
   const { user, onChanged } = await renderOpen();
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  await screen.findByTestId("folder-delete-confirm-dialog");
-  await user.click(screen.getByTestId("folder-delete-confirm-btn"));
+  await screen.findByTestId("confirm-dialog");
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
 
-  await waitFor(() => expect(screen.getByTestId("folder-delete-confirm-btn")).toBeEnabled());
+  await waitFor(() => expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeEnabled());
   expect(confirmDialog()).toBeInTheDocument();
   expect(paths()).toEqual(["A", "B", "C"]);
   expect(onChanged).not.toHaveBeenCalled();

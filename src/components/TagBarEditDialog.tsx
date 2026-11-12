@@ -22,9 +22,9 @@ interface Props {
 // Draft-then-save editing, same convention as FolderDialog's editingValue/
 // cancelEdit: every ↑/↓ click below only mutates local `draftTags` state.
 // Nothing reaches the backend until "保存" is clicked; "キャンセル" (or the
-// overlay click) discards the draft unpersisted -- the next `open` re-fetches
-// a fresh draft from the currently-persisted order anyway, so there's nothing
-// to explicitly reset.
+// overlay click / Escape) discards the draft unpersisted -- the next `open`
+// re-fetches a fresh draft from the currently-persisted order anyway, so
+// there's nothing to explicitly reset.
 //
 // Deleting a tag is the exception: it is applied the moment the confirmation
 // is accepted, not deferred to "保存", because a delete cannot be meaningfully
@@ -99,7 +99,9 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         label="タグの編集"
         className="tag-bar-edit-dialog"
         testId="tag-bar-edit-dialog"
-        onOverlayClick={() => !saving && !deleting && onClose()}
+        onDismiss={onClose}
+        // 削除の確認が開いている間は、Escape で確認だけを閉じる。
+        dismissible={!saving && !deleting && deleteTarget === null}
       >
         <h2>タグの編集</h2>
         {draftTags.length === 0 ? (

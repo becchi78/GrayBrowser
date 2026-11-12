@@ -1,6 +1,7 @@
 // 各ダイアログの「外側」(背景のクリック・中のクリック・子のダイアログ・初期フォーカス・
-// role/aria 属性・描画の場所)の現状を固定する特性テスト。Escape の扱いは
-// escapeToClose.test.tsx が固定している。
+// role/aria 属性・描画の場所)の現状を固定する特性テスト。背景のクリックと Escape を
+// 同じ条件で扱う ModalShell の規則は末尾で確かめ、各ダイアログの Escape の条件は
+// escapeToClose.test.tsx が確かめている。
 // 属性と描画の場所の期待値は表にまとめてあり、仕様を変えるときは表の該当行を更新する。
 import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
@@ -13,6 +14,7 @@ import { BulkTagDialog } from "./BulkTagDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FolderDialog } from "./FolderDialog";
 import { LogViewerDialog } from "./LogViewerDialog";
+import { ModalShell } from "./ModalShell";
 import { SettingsDialog } from "./SettingsDialog";
 import { TagBarEditDialog } from "./TagBarEditDialog";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
@@ -219,12 +221,12 @@ function folderRowDeleteButton(path: string): HTMLElement {
 async function openFolderDeleteConfirmWithParent() {
   const parent = await openFolder();
   await parent.user.click(folderRowDeleteButton("B"));
-  const dialog = await screen.findByTestId("folder-delete-confirm-dialog");
+  const dialog = await screen.findByTestId("confirm-dialog");
   return {
     user: parent.user,
     container: parent.container,
     dialog,
-    closed: () => screen.queryByTestId("folder-delete-confirm-dialog") === null,
+    closed: () => screen.queryByTestId("confirm-dialog") === null,
     parentClosed: parent.closed,
   };
 }
@@ -261,7 +263,8 @@ async function openUnmatched(): Promise<Opened> {
   return { user, container, dialog: screen.getByTestId("unmatched-dialog"), closed };
 }
 
-// FolderDeleteConfirm は FolderDialog から開いた状態で確かめる(単体では描かない)。
+// FolderDeleteConfirm は、FolderDialog から開いた登録解除の確認(ConfirmDialog)を指し、
+// FolderDialog から開いた状態で確かめる。
 // UnmatchedThumbnailsDialog は単体で描き、WbImportDialog から開いたときは
 // 「子のダイアログ」の節で確かめる。
 const OPEN: Record<DialogName, () => Promise<Opened>> = {
@@ -423,8 +426,8 @@ const FOCUS: FocusExpectation[] = [
   { name: "FolderDialog", description: "body(移さない)", target: () => document.body },
   {
     name: "FolderDeleteConfirm",
-    description: "押した行の登録解除ボタンのまま(移さない)",
-    target: () => folderRowDeleteButton("B"),
+    description: "キャンセルボタン",
+    target: () => screen.getByTestId("confirm-dialog-cancel-btn"),
   },
   { name: "WbImportDialog", description: "body(移さない)", target: () => document.body },
   { name: "TagBarEditDialog", description: "body(移さない)", target: () => document.body },
@@ -552,8 +555,8 @@ test("UpdateDialog はダウンロード中(閉じられない状態)は背景�
 test("FolderDeleteConfirm は解除中は背景をクリックしても閉じず、親の FolderDialog も閉じない", async () => {
   vi.mocked(api.removeWatchFolder).mockReturnValue(never());
   const { user, dialog, closed, parentClosed } = await openFolderDeleteConfirmWithParent();
-  await user.click(screen.getByTestId("folder-delete-confirm-btn"));
-  await waitFor(() => expect(screen.getByTestId("folder-delete-confirm-btn")).toBeDisabled());
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+  await waitFor(() => expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeDisabled());
 
   await user.click(overlayOf(dialog));
 
@@ -696,4 +699,57 @@ test.each([
   expect(
     parentOverlay.compareDocumentPosition(childOverlay) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+});
+
+// ---- ModalShell の規則 ----
+
+function renderShell(props: { onDismiss?: () => void; dismissible?: boolean }) {
+  const { user } = renderWithProviders(
+    <ModalShell label="殻" className="shell" testId="shell" {...props}>
+      <p>本文</p>
+    </ModalShell>,
+  );
+  return { user, overlay: overlayOf(screen.getByTestId("shell")) };
+}
+
+test("ModalShell は dismissible が既定(true)なら、背景のクリックと Escape のどちらでも onDismiss を呼ぶ", async () => {
+  const onDismiss = vi.fn();
+  const { user, overlay } = renderShell({ onDismiss });
+
+  await user.click(overlay);
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+
+  await user.keyboard("{Escape}");
+  expect(onDismiss).toHaveBeenCalledTimes(2);
+});
+
+test("ModalShell は dismissible が true なら、背景のクリックと Escape のどちらでも onDismiss を呼ぶ", async () => {
+  const onDismiss = vi.fn();
+  const { user, overlay } = renderShell({ onDismiss, dismissible: true });
+
+  await user.click(overlay);
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+
+  await user.keyboard("{Escape}");
+  expect(onDismiss).toHaveBeenCalledTimes(2);
+});
+
+test("ModalShell は dismissible が false なら、背景のクリックでも Escape でも onDismiss を呼ばない", async () => {
+  const onDismiss = vi.fn();
+  const { user, overlay } = renderShell({ onDismiss, dismissible: false });
+
+  await user.click(overlay);
+  await user.keyboard("{Escape}");
+
+  expect(onDismiss).not.toHaveBeenCalled();
+});
+
+// 呼ぶ相手が無いので、例外にならず描画が残ることだけを確かめる。
+test("ModalShell は onDismiss が無ければ、背景のクリックや Escape で例外にならない", async () => {
+  const { user, overlay } = renderShell({});
+
+  await user.click(overlay);
+  await user.keyboard("{Escape}");
+
+  expect(screen.getByTestId("shell")).toBeInTheDocument();
 });

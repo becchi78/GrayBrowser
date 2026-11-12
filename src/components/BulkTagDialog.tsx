@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import { assignTagToVideos, listAllTags } from "../api";
 import { filterTagCandidates } from "../lib/bulkTag";
 import type { TagDto } from "../types";
@@ -50,8 +49,6 @@ function BulkTagDialogBody({
     };
   }, []);
 
-  useEscapeKey(onClose, !busy);
-
   const candidates = useMemo(() => filterTagCandidates(allTags, input), [allTags, input]);
 
   const canSubmit = input.trim() !== "";
@@ -79,7 +76,8 @@ function BulkTagDialogBody({
       label={title}
       className="bulk-tag-dialog"
       testId="bulk-tag-dialog"
-      onOverlayClick={() => !busy && onClose()}
+      onDismiss={onClose}
+      dismissible={!busy}
     >
       <h2>{title}</h2>
       <form onSubmit={handleSubmit}>

@@ -8,7 +8,6 @@ import {
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import { withoutKey } from "../lib/withoutKey";
-import { useEscapeKey } from "../useEscapeKey";
 import { ModalShell } from "./ModalShell";
 import {
   filterUnmatchedByKind,
@@ -174,8 +173,6 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
     };
   }, []);
 
-  useEscapeKey(onClose);
-
   function removeRow(key: string) {
     setRows((prev) => prev && prev.filter((r) => unmatchedRowKey(r) !== key));
     setOpenKey((prev) => (prev === key ? null : prev));
@@ -224,7 +221,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
       label="自動対応できなかった旧サムネイル"
       className="unmatched-dialog"
       testId="unmatched-dialog"
-      onOverlayClick={onClose}
+      onDismiss={onClose}
     >
       <h2>自動対応できなかった旧サムネイル</h2>
       {rows !== null && rows.length > 0 && (

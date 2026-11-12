@@ -65,7 +65,7 @@ export function DuplicateGroupsPanel({ refreshKey, open, onCountChange }: Props)
         open={pending !== null}
         title={pending?.kind === "file" ? "ファイルを削除" : "登録解除"}
         confirmLabel={pending?.kind === "file" ? "ゴミ箱に移動して削除" : "登録を解除する"}
-        danger={pending?.kind === "file"}
+        danger
         busy={busy}
         onConfirm={runPendingAction}
         onCancel={cancelPending}

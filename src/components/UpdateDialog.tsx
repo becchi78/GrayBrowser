@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate } from "../api";
@@ -89,8 +88,6 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
   }, [runCheck, releaseUpdate]);
 
   const dismissible = canDismiss(state);
-
-  useEscapeKey(onClose, dismissible);
 
   // 状態が変わって主ボタンが現れたら、キーボードですぐ押せるようにする。
   useEffect(() => {
@@ -214,7 +211,8 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       label="更新の確認"
       className="update-dialog"
       testId="update-dialog"
-      onOverlayClick={dismissible ? onClose : undefined}
+      onDismiss={onClose}
+      dismissible={dismissible}
     >
       <h2>更新の確認</h2>
       {body}

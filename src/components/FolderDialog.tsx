@@ -1,5 +1,5 @@
 import { useWatchFolders } from "../useWatchFolders";
-import { FolderDeleteConfirm } from "./FolderDeleteConfirm";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FolderRow } from "./FolderRow";
 import { ModalShell } from "./ModalShell";
 
@@ -48,7 +48,14 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
 
   return (
     <>
-      <ModalShell label="フォルダ管理" className="folder-dialog" testId="folder-dialog" onOverlayClick={onClose}>
+      <ModalShell
+        label="フォルダ管理"
+        className="folder-dialog"
+        testId="folder-dialog"
+        onDismiss={onClose}
+        // 登録解除の確認が開いている間は、Escape で確認だけを閉じる。
+        dismissible={deleteTarget === null}
+      >
         <h2>フォルダ管理</h2>
         {folders.length === 0 ? (
           <p className="folder-dialog-empty">
@@ -138,14 +145,27 @@ export function FolderDialog({ open, onClose, onChanged }: Props) {
         </div>
       </ModalShell>
 
-      {deleteTarget && (
-        <FolderDeleteConfirm
-          target={deleteTarget}
-          deleting={deleting}
-          onCancel={cancelDelete}
-          onConfirm={confirmDelete}
-        />
-      )}
+      {/* A sibling of the ModalShell, not a child; see ModalShell for why. */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="フォルダの登録を解除"
+        confirmLabel="登録を解除する"
+        danger
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      >
+        {deleteTarget && (
+          <>
+            <p>
+              このフォルダの登録を解除します。配下の{" "}
+              <strong>{deleteTarget.count}</strong>{" "}
+              件の動画について、GrayBrowser上のタグ・レーティング・登録日の情報が失われます（動画ファイル自体は削除されません）。
+            </p>
+            <p className="folder-delete-confirm-path">{deleteTarget.path}</p>
+          </>
+        )}
+      </ConfirmDialog>
     </>
   );
 }
