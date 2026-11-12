@@ -6,3 +6,16 @@ import type { VideoPropertiesDto } from "../types";
 export function needsPropertiesRefresh(properties: VideoPropertiesDto | null): boolean {
   return properties === null || properties.probed_at === null;
 }
+
+const THUMBNAIL_HEIGHT_PX = 150;
+const DEFAULT_THUMBNAIL_WIDTH_PX = 200;
+
+// サムネイルは元動画のアスペクト比を保って表示する。生成されたWebP自体が
+// 既に正しい比率なので、高さ150pxを固定し、幅を動画の width/height 比から
+// 算出する（固定枠+`object-fit: cover`だとクロップされる）。メタデータ未取得や
+// 幅・高さが不明(null・0)のときは200px（4:3相当）をフォールバックにする。
+export function thumbnailWidthPx(properties: VideoPropertiesDto | null): number {
+  return properties?.width && properties?.height
+    ? Math.round((THUMBNAIL_HEIGHT_PX * properties.width) / properties.height)
+    : DEFAULT_THUMBNAIL_WIDTH_PX;
+}

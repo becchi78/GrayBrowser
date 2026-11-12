@@ -17,3 +17,12 @@ export function formatFileSize(bytes: number): string {
 export function formatResolution(width: number | null, height: number | null): string {
   return width !== null && height !== null ? `${width} × ${height}` : "不明";
 }
+
+export function formatBitrate(bps: number | null): string {
+  if (bps === null) return "不明";
+  return `${(bps / 1_000_000).toFixed(1)} Mbps`;
+}
+
+export function formatFps(fps: number | null): string {
+  return fps === null ? "不明" : `${fps.toFixed(2)} fps`;
+}
