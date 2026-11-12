@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { useEscapeKey } from "../useEscapeKey";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   open: boolean;
@@ -17,10 +17,6 @@ interface Props {
 
 // window.confirm は使わない。tauri-plugin-dialog が window.confirm を非同期
 // 関数に差し替えるため Promise が返り、常に真として扱われて確認が効かない。
-//
-// ステータスバーのパネル（重複・生成失敗）は position の効く祖先を持つ
-// ポップオーバー内にあり、そこに描画すると position: fixed のオーバーレイが
-// 祖先に引っ張られるおそれがあるため、document.body へ portal で描画する。
 export function ConfirmDialog({
   open,
   title,
@@ -47,40 +43,35 @@ export function ConfirmDialog({
     return null;
   }
 
-  return createPortal(
-    <div className="dialog-overlay" onClick={() => !busy && onCancel()}>
-      <div
-        className="dialog confirm-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        data-testid="confirm-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>{title}</h2>
-        <div className="confirm-dialog-body">{children}</div>
-        <div className="dialog-footer">
-          <button
-            type="button"
-            ref={cancelRef}
-            data-testid="confirm-dialog-cancel-btn"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            className={danger ? "confirm-dialog-confirm confirm-dialog-confirm--danger" : undefined}
-            data-testid="confirm-dialog-confirm-btn"
-            onClick={onConfirm}
-            disabled={busy}
-          >
-            {busy ? "処理中..." : confirmLabel}
-          </button>
-        </div>
+  return (
+    <ModalShell
+      label={title}
+      className="confirm-dialog"
+      testId="confirm-dialog"
+      onOverlayClick={() => !busy && onCancel()}
+    >
+      <h2>{title}</h2>
+      <div className="confirm-dialog-body">{children}</div>
+      <div className="dialog-footer">
+        <button
+          type="button"
+          ref={cancelRef}
+          data-testid="confirm-dialog-cancel-btn"
+          onClick={onCancel}
+          disabled={busy}
+        >
+          キャンセル
+        </button>
+        <button
+          type="button"
+          className={danger ? "confirm-dialog-confirm confirm-dialog-confirm--danger" : undefined}
+          data-testid="confirm-dialog-confirm-btn"
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          {busy ? "処理中..." : confirmLabel}
+        </button>
       </div>
-    </div>,
-    document.body,
+    </ModalShell>
   );
 }

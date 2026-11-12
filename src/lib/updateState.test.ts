@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canDismiss,
-  errorReason,
   formatBytes,
   INITIAL_UPDATE_STATE,
   isBusy,
@@ -153,10 +152,4 @@ test("formatBytes", () => {
   assert.equal(formatBytes(1536), "2 KB");
   assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MB");
   assert.equal(formatBytes(-1), "0 KB");
-});
-
-test("errorReason handles strings, Errors and other values", () => {
-  assert.equal(errorReason("boom"), "boom");
-  assert.equal(errorReason(new Error("bad")), "bad");
-  assert.equal(errorReason(42), "42");
 });

@@ -9,6 +9,7 @@ import { abbreviatePath } from "../lib/abbreviatePath";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import { withoutKey } from "../lib/withoutKey";
 import { useEscapeKey } from "../useEscapeKey";
+import { ModalShell } from "./ModalShell";
 import {
   filterUnmatchedByKind,
   overwriteNotice,
@@ -219,95 +220,94 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
   const rows = allRows === null ? null : filterUnmatchedByKind(allRows, kind);
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div
-        className="dialog unmatched-dialog"
-        data-testid="unmatched-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>自動対応できなかった旧サムネイル</h2>
-        {rows !== null && rows.length > 0 && (
-          <p className="wb-import-result-detail" data-testid="unmatched-count">
-            {unmatchedCountText(rows.length)}
-          </p>
-        )}
+    <ModalShell
+      label="自動対応できなかった旧サムネイル"
+      className="unmatched-dialog"
+      testId="unmatched-dialog"
+      onOverlayClick={onClose}
+    >
+      <h2>自動対応できなかった旧サムネイル</h2>
+      {rows !== null && rows.length > 0 && (
+        <p className="wb-import-result-detail" data-testid="unmatched-count">
+          {unmatchedCountText(rows.length)}
+        </p>
+      )}
 
-        {loadError && (
-          <p className="wb-import-error" role="alert">
-            一覧を読み込めませんでした: {loadError}
-          </p>
-        )}
-        {rows === null && !loadError && <p className="wb-import-result-detail">読み込み中...</p>}
-        {rows !== null && rows.length === 0 && (
-          <p className="wb-import-result-line" data-testid="unmatched-empty">
-            自動対応できなかった旧サムネイルはありません。
-          </p>
-        )}
+      {loadError && (
+        <p className="wb-import-error" role="alert">
+          一覧を読み込めませんでした: {loadError}
+        </p>
+      )}
+      {rows === null && !loadError && <p className="wb-import-result-detail">読み込み中...</p>}
+      {rows !== null && rows.length === 0 && (
+        <p className="wb-import-result-line" data-testid="unmatched-empty">
+          自動対応できなかった旧サムネイルはありません。
+        </p>
+      )}
 
-        {rows !== null && rows.length > 0 && (
-          <ul className="unmatched-list" data-testid="unmatched-list">
-            {rows.map((row) => {
-              const key = unmatchedRowKey(row);
-              const isOpen = openKey === key;
-              const error = rowErrors[key];
-              return (
-                <li key={key} className="unmatched-row" data-testid="unmatched-row">
-                  <div className="unmatched-row-head">
-                    <div className="unmatched-row-info">
-                      <span className="unmatched-row-name" title={row.file_name}>
-                        {row.file_name}
-                      </span>
-                      <span className="unmatched-kind" data-testid="unmatched-kind">
-                        {unmatchedKindLabel(row.kind)}
-                      </span>
-                      <span className="unmatched-row-folder" title={row.folder_path}>
-                        {abbreviatePath(row.folder_path, PATH_DISPLAY_MAX_CHARS)}
-                      </span>
-                    </div>
-                    <div className="unmatched-row-actions">
-                      <button
-                        type="button"
-                        data-testid="unmatched-pick-btn"
-                        aria-expanded={isOpen}
-                        disabled={anyBusy}
-                        onClick={() => setOpenKey(isOpen ? null : key)}
-                      >
-                        {isOpen ? "閉じる" : "動画を選ぶ"}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="unmatched-dismiss-btn"
-                        disabled={anyBusy}
-                        onClick={() => handleDismiss(row)}
-                      >
-                        スキップ
-                      </button>
-                    </div>
+      {rows !== null && rows.length > 0 && (
+        <ul className="unmatched-list" data-testid="unmatched-list">
+          {rows.map((row) => {
+            const key = unmatchedRowKey(row);
+            const isOpen = openKey === key;
+            const error = rowErrors[key];
+            return (
+              <li key={key} className="unmatched-row" data-testid="unmatched-row">
+                <div className="unmatched-row-head">
+                  <div className="unmatched-row-info">
+                    <span className="unmatched-row-name" title={row.file_name}>
+                      {row.file_name}
+                    </span>
+                    <span className="unmatched-kind" data-testid="unmatched-kind">
+                      {unmatchedKindLabel(row.kind)}
+                    </span>
+                    <span className="unmatched-row-folder" title={row.folder_path}>
+                      {abbreviatePath(row.folder_path, PATH_DISPLAY_MAX_CHARS)}
+                    </span>
                   </div>
-                  {error && (
-                    <p className="wb-import-error" role="alert" data-testid="unmatched-row-error">
-                      {error}
-                    </p>
-                  )}
-                  {isOpen && (
-                    <LinkPicker
-                      row={row}
-                      busy={busyKey === key}
-                      onLink={(videoId) => handleLink(row, videoId)}
-                    />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                  <div className="unmatched-row-actions">
+                    <button
+                      type="button"
+                      data-testid="unmatched-pick-btn"
+                      aria-expanded={isOpen}
+                      disabled={anyBusy}
+                      onClick={() => setOpenKey(isOpen ? null : key)}
+                    >
+                      {isOpen ? "閉じる" : "動画を選ぶ"}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="unmatched-dismiss-btn"
+                      disabled={anyBusy}
+                      onClick={() => handleDismiss(row)}
+                    >
+                      スキップ
+                    </button>
+                  </div>
+                </div>
+                {error && (
+                  <p className="wb-import-error" role="alert" data-testid="unmatched-row-error">
+                    {error}
+                  </p>
+                )}
+                {isOpen && (
+                  <LinkPicker
+                    row={row}
+                    busy={busyKey === key}
+                    onLink={(videoId) => handleLink(row, videoId)}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-        <div className="dialog-footer">
-          <button type="button" data-testid="unmatched-close-btn" onClick={onClose}>
-            閉じる
-          </button>
-        </div>
+      <div className="dialog-footer">
+        <button type="button" data-testid="unmatched-close-btn" onClick={onClose}>
+          閉じる
+        </button>
       </div>
-    </div>
+    </ModalShell>
   );
 }

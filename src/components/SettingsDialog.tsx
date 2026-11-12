@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { createPortal } from "react-dom";
 import { useEscapeKey } from "../useEscapeKey";
 import {
   getNasPollIntervalMinutes,
@@ -10,18 +9,13 @@ import {
   setRestoreViewStateEnabled,
   setUpdateCheckOnStartup,
 } from "../api";
+import { errorText } from "../lib/errorText";
 import { DEFAULT_MINUTES, MAX_MINUTES, MIN_MINUTES, parseIntervalMinutes } from "../lib/nasInterval";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-}
-
-function errorMessage(e: unknown): string {
-  if (typeof e === "string") {
-    return e;
-  }
-  return e instanceof Error ? e.message : String(e);
 }
 
 export function SettingsDialog({ open, onClose }: Props) {
@@ -66,7 +60,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       .catch((e) => {
         console.error(e);
         if (!cancelled) {
-          setError(`現在の設定を取得できませんでした: ${errorMessage(e)}`);
+          setError(`現在の設定を取得できませんでした: ${errorText(e)}`);
           setLoading(false);
         }
       });
@@ -111,106 +105,100 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
     } catch (err) {
       console.error(err);
       if (mountedRef.current) {
-        setError(errorMessage(err));
+        setError(errorText(err));
         setSaving(false);
       }
     }
   }
 
-  return createPortal(
-    <div className="dialog-overlay" onClick={saving ? undefined : onClose}>
-      <form
-        className="dialog settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="設定"
-        data-testid="settings-dialog"
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
-        noValidate
-      >
-        <h2>設定</h2>
-        <div className="settings-dialog-field">
-          <label htmlFor="settings-nas-interval">NAS・ネットワークドライブの確認間隔</label>
-          <div className="settings-dialog-input-row">
-            <input
-              id="settings-nas-interval"
-              ref={inputRef}
-              className="settings-dialog-input"
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              value={text}
-              disabled={busy}
-              data-testid="settings-nas-interval-input"
-              onChange={(e) => setText(e.target.value)}
-            />
-            <span>分</span>
-          </div>
-          <p className="settings-dialog-hint">
-            {MIN_MINUTES}〜{MAX_MINUTES} 分。ローカルドライブは、変更を検知して即座に反映するため、この設定は関係しません。
-          </p>
-        </div>
-        <div className="settings-dialog-field">
-          <label className="settings-dialog-check">
-            <input
-              type="checkbox"
-              checked={updateCheck}
-              disabled={busy}
-              data-testid="settings-update-check-input"
-              onChange={(e) => setUpdateCheck(e.target.checked)}
-            />
-            起動時に更新を確認する
-          </label>
-          <p className="settings-dialog-hint">
-            オフにしても、「ヘルプ &gt; 更新の確認...」からいつでも確認できます。
-          </p>
-        </div>
-        <div className="settings-dialog-field">
-          <label className="settings-dialog-check">
-            <input
-              type="checkbox"
-              checked={restoreView}
-              disabled={busy}
-              data-testid="settings-restore-view-input"
-              onChange={(e) => setRestoreView(e.target.checked)}
-            />
-            前回終了時の検索・フォルダなどの状態を、起動時に復元する
-          </label>
-          <p className="settings-dialog-hint">
-            検索語、フォルダ、並び順、タグ、レーティングの絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
-          </p>
-        </div>
-        {error !== null && (
-          <p className="settings-dialog-error" role="alert" data-testid="settings-dialog-error">
-            {error}
-          </p>
-        )}
-        <div className="dialog-footer">
-          <button
-            type="button"
+  return (
+    <ModalShell
+      label="設定"
+      className="settings-dialog"
+      testId="settings-dialog"
+      onOverlayClick={saving ? undefined : onClose}
+      onSubmit={handleSubmit}
+    >
+      <h2>設定</h2>
+      <div className="settings-dialog-field">
+        <label htmlFor="settings-nas-interval">NAS・ネットワークドライブの確認間隔</label>
+        <div className="settings-dialog-input-row">
+          <input
+            id="settings-nas-interval"
+            ref={inputRef}
+            className="settings-dialog-input"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={text}
             disabled={busy}
-            data-testid="settings-dialog-reset-btn"
-            onClick={() => {
-              setText(String(DEFAULT_MINUTES));
-              setUpdateCheck(true);
-              setRestoreView(true);
-              setError(null);
-            }}
-          >
-            既定に戻す
-          </button>
-          <div className="settings-dialog-actions">
-            <button type="button" disabled={busy} data-testid="settings-dialog-cancel-btn" onClick={onClose}>
-              キャンセル
-            </button>
-            <button type="submit" disabled={busy} data-testid="settings-dialog-save-btn">
-              保存
-            </button>
-          </div>
+            data-testid="settings-nas-interval-input"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <span>分</span>
         </div>
-      </form>
-    </div>,
-    document.body,
+        <p className="settings-dialog-hint">
+          {MIN_MINUTES}〜{MAX_MINUTES} 分。ローカルドライブは、変更を検知して即座に反映するため、この設定は関係しません。
+        </p>
+      </div>
+      <div className="settings-dialog-field">
+        <label className="settings-dialog-check">
+          <input
+            type="checkbox"
+            checked={updateCheck}
+            disabled={busy}
+            data-testid="settings-update-check-input"
+            onChange={(e) => setUpdateCheck(e.target.checked)}
+          />
+          起動時に更新を確認する
+        </label>
+        <p className="settings-dialog-hint">
+          オフにしても、「ヘルプ &gt; 更新の確認...」からいつでも確認できます。
+        </p>
+      </div>
+      <div className="settings-dialog-field">
+        <label className="settings-dialog-check">
+          <input
+            type="checkbox"
+            checked={restoreView}
+            disabled={busy}
+            data-testid="settings-restore-view-input"
+            onChange={(e) => setRestoreView(e.target.checked)}
+          />
+          前回終了時の検索・フォルダなどの状態を、起動時に復元する
+        </label>
+        <p className="settings-dialog-hint">
+          検索語、フォルダ、並び順、タグ、レーティングの絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
+        </p>
+      </div>
+      {error !== null && (
+        <p className="settings-dialog-error" role="alert" data-testid="settings-dialog-error">
+          {error}
+        </p>
+      )}
+      <div className="dialog-footer">
+        <button
+          type="button"
+          disabled={busy}
+          data-testid="settings-dialog-reset-btn"
+          onClick={() => {
+            setText(String(DEFAULT_MINUTES));
+            setUpdateCheck(true);
+            setRestoreView(true);
+            setError(null);
+          }}
+        >
+          既定に戻す
+        </button>
+        <div className="settings-dialog-actions">
+          <button type="button" disabled={busy} data-testid="settings-dialog-cancel-btn" onClick={onClose}>
+            キャンセル
+          </button>
+          <button type="submit" disabled={busy} data-testid="settings-dialog-save-btn">
+            保存
+          </button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }

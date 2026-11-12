@@ -1341,14 +1341,14 @@ button.search-box-clear {
   margin: 0;
 }
 
-/* FolderDialog/WbImportDialog's shared modal chrome. Both are reached
-   only from the native menu
-   rather than being always-mounted flex children of `.app`, so unlike
-   every rule above, `flex`/`flex-shrink` sizing budgets don't apply here
-   at all -- this is a `position: fixed` overlay stacked on top of the
-   whole app. Closing via clicking the overlay background or the
-   ✕/close button is handled in each dialog component's own onClick
-   (overlay) + stopPropagation (dialog box), not in CSS. */
+/* Shared modal chrome for every dialog. ModalShell portals each dialog to
+   the end of document.body, outside `.app`, so unlike every rule above,
+   `flex`/`flex-shrink` sizing budgets don't apply here at all -- this is a
+   `position: fixed` overlay stacked on top of the whole app. Overlays share
+   one z-index, so a dialog opened later (a child dialog included) sits on
+   top by DOM order. Closing via clicking the overlay background is handled
+   by ModalShell's onClick (overlay) + stopPropagation (dialog box) with each
+   dialog's own condition, not in CSS. */
 .dialog-overlay {
   position: fixed;
   inset: 0;

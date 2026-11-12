@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 import { useEscapeKey } from "../useEscapeKey";
 import { assignTagToVideos, listAllTags } from "../api";
 import { filterTagCandidates } from "../lib/bulkTag";
 import type { TagDto } from "../types";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   /** 付与対象。null のとき閉じている。 */
@@ -74,73 +74,68 @@ function BulkTagDialogBody({
   }
 
   const title = `${videoIds.length} 件の動画にタグを付ける`;
-  return createPortal(
-    <div className="dialog-overlay" onClick={() => !busy && onClose()}>
-      <div
-        className="dialog bulk-tag-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        data-testid="bulk-tag-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>{title}</h2>
-        <form onSubmit={handleSubmit}>
-          <input
-            ref={inputRef}
-            type="text"
-            className="bulk-tag-input"
-            data-testid="bulk-tag-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="タグ名(新しい名前も入力できます)"
-            list="bulk-tag-suggestions"
-            disabled={busy}
-          />
-          <datalist id="bulk-tag-suggestions">
-            {allTags.map((tag) => (
-              <option key={tag.id} value={tag.name} />
+  return (
+    <ModalShell
+      label={title}
+      className="bulk-tag-dialog"
+      testId="bulk-tag-dialog"
+      onOverlayClick={() => !busy && onClose()}
+    >
+      <h2>{title}</h2>
+      <form onSubmit={handleSubmit}>
+        <input
+          ref={inputRef}
+          type="text"
+          className="bulk-tag-input"
+          data-testid="bulk-tag-input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="タグ名(新しい名前も入力できます)"
+          list="bulk-tag-suggestions"
+          disabled={busy}
+        />
+        <datalist id="bulk-tag-suggestions">
+          {allTags.map((tag) => (
+            <option key={tag.id} value={tag.name} />
+          ))}
+        </datalist>
+        {candidates.length > 0 && (
+          <div className="bulk-tag-list" data-testid="bulk-tag-list">
+            {candidates.map((tag) => (
+              <button
+                key={tag.id}
+                type="button"
+                className="bulk-tag-candidate"
+                disabled={busy}
+                onClick={() => {
+                  setInput(tag.name);
+                  inputRef.current?.focus();
+                }}
+              >
+                {tag.name}
+              </button>
             ))}
-          </datalist>
-          {candidates.length > 0 && (
-            <div className="bulk-tag-list" data-testid="bulk-tag-list">
-              {candidates.map((tag) => (
-                <button
-                  key={tag.id}
-                  type="button"
-                  className="bulk-tag-candidate"
-                  disabled={busy}
-                  onClick={() => {
-                    setInput(tag.name);
-                    inputRef.current?.focus();
-                  }}
-                >
-                  {tag.name}
-                </button>
-              ))}
-            </div>
-          )}
-          {error && (
-            <p className="bulk-tag-error" role="alert" data-testid="bulk-tag-error">
-              {error}
-            </p>
-          )}
-          <div className="dialog-footer">
-            <button
-              type="button"
-              data-testid="bulk-tag-cancel-btn"
-              onClick={onClose}
-              disabled={busy}
-            >
-              キャンセル
-            </button>
-            <button type="submit" data-testid="bulk-tag-submit-btn" disabled={busy || !canSubmit}>
-              {busy ? "処理中..." : "OK"}
-            </button>
           </div>
-        </form>
-      </div>
-    </div>,
-    document.body,
+        )}
+        {error && (
+          <p className="bulk-tag-error" role="alert" data-testid="bulk-tag-error">
+            {error}
+          </p>
+        )}
+        <div className="dialog-footer">
+          <button
+            type="button"
+            data-testid="bulk-tag-cancel-btn"
+            onClick={onClose}
+            disabled={busy}
+          >
+            キャンセル
+          </button>
+          <button type="submit" data-testid="bulk-tag-submit-btn" disabled={busy || !canSubmit}>
+            {busy ? "処理中..." : "OK"}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
   );
 }

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useEscapeKey } from "../useEscapeKey";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   open: boolean;
@@ -72,39 +72,29 @@ function AboutDialogContent({ onClose }: { onClose: () => void }) {
     versionText = `バージョン ${version}`;
   }
 
-  return createPortal(
-    <div className="dialog-overlay" onClick={onClose}>
-      <div
-        className="dialog about-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="バージョン情報"
-        data-testid="about-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>GrayBrowser</h2>
-        <p className="about-dialog-version" data-testid="about-dialog-version">
-          {versionText}
-        </p>
-        <p className="about-dialog-text">ローカル動画管理アプリ</p>
-        <p className="about-dialog-text">Copyright (c) 2026 becchi78</p>
-        <p className="about-dialog-text">MIT License</p>
-        <ul className="about-dialog-links">
-          {LINKS.map((l) => (
-            <li key={l.url}>
-              <button type="button" className="link-button" onClick={() => openExternal(l.url)}>
-                {l.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className="dialog-footer about-dialog-footer">
-          <button type="button" ref={closeRef} data-testid="about-dialog-close-btn" onClick={onClose}>
-            閉じる
-          </button>
-        </div>
+  return (
+    <ModalShell label="バージョン情報" className="about-dialog" testId="about-dialog" onOverlayClick={onClose}>
+      <h2>GrayBrowser</h2>
+      <p className="about-dialog-version" data-testid="about-dialog-version">
+        {versionText}
+      </p>
+      <p className="about-dialog-text">ローカル動画管理アプリ</p>
+      <p className="about-dialog-text">Copyright (c) 2026 becchi78</p>
+      <p className="about-dialog-text">MIT License</p>
+      <ul className="about-dialog-links">
+        {LINKS.map((l) => (
+          <li key={l.url}>
+            <button type="button" className="link-button" onClick={() => openExternal(l.url)}>
+              {l.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="dialog-footer about-dialog-footer">
+        <button type="button" ref={closeRef} data-testid="about-dialog-close-btn" onClick={onClose}>
+          閉じる
+        </button>
       </div>
-    </div>,
-    document.body,
+    </ModalShell>
   );
 }
