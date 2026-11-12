@@ -426,6 +426,134 @@ fn the_log_stamps_each_stage_and_ends_with_the_durations() {
     assert!(at("== サマリー ==") < at("終了時刻:"));
 }
 
+/// Stands in for the clock, the notifier and the import log at once, so
+/// clock readings can be ordered against stage announcements and log writes.
+#[derive(Default)]
+struct SequenceRecorder {
+    events: Mutex<Vec<String>>,
+}
+
+impl SequenceRecorder {
+    fn push(&self, event: String) {
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+impl WbImportClock for SequenceRecorder {
+    fn now(&self) -> gb_core::ports::wb_import_clock::ClockReading {
+        self.push("clock".to_string());
+        FakeWbImportClock::reading_at(0)
+    }
+}
+
+impl WbImportLog for SequenceRecorder {
+    fn append(&self, _: &str) {
+        self.push("log".to_string());
+    }
+    fn location(&self) -> String {
+        String::new()
+    }
+}
+
+impl WbImportNotifier for SequenceRecorder {
+    fn notify_stage(&self, stage: WbImportStage) {
+        self.push(format!("stage:{stage:?}"));
+    }
+    fn notify_progress(&self, _: WbImportStage, _: u32, _: Option<u32>) {}
+    fn notify_complete(&self, _: &WbImportSummary) {
+        self.push("complete".to_string());
+    }
+    fn notify_failed(&self, _: &str) {
+        self.push("failed".to_string());
+    }
+}
+
+fn run_with_recorder(
+    h: &Harness,
+    movies: Result<Vec<WbMovieRow>, gb_core::ports::wb_source::WbSourceError>,
+    recorder: &SequenceRecorder,
+) {
+    super::import_all(
+        &h.db,
+        &h.paths,
+        &FakeWbSourceAdapter {
+            movies,
+            ..Default::default()
+        },
+        &no_op_ffmpeg(),
+        recorder,
+        &FakeCatalogNotifier::default(),
+        None::<&FakeWatchReconfigurer>,
+        &FakeDirLister::default(),
+        &FakeFolderProbe::default(),
+        &FakeVolumeLabelResolver::default(),
+        recorder,
+        recorder,
+    );
+}
+
+/// Each stage's start is read before the stage is announced, so the time
+/// the screen shows a stage beginning is inside that stage's measured span.
+#[test]
+fn each_stage_start_is_read_before_the_stage_is_announced() {
+    let h = harness();
+    let recorder = SequenceRecorder::default();
+
+    run_with_recorder(&h, Ok(vec![row(|_| {})]), &recorder);
+
+    let events: Vec<String> = recorder
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| *e != "log")
+        .cloned()
+        .collect();
+    assert_eq!(
+        events,
+        [
+            "clock",
+            "stage:Reading",
+            "clock",
+            "stage:Registering",
+            "clock",
+            "stage:Linking",
+            "clock",
+            "complete",
+        ]
+    );
+}
+
+/// A failed read finishes the whole log, end time included, before the
+/// failure is announced.
+#[test]
+fn a_failed_read_writes_the_whole_log_before_announcing_the_failure() {
+    let h = harness();
+    let recorder = SequenceRecorder::default();
+
+    run_with_recorder(
+        &h,
+        Err(gb_core::ports::wb_source::WbSourceError::Query(
+            "boom".into(),
+        )),
+        &recorder,
+    );
+
+    assert_eq!(
+        *recorder.events.lock().unwrap(),
+        [
+            "clock",
+            "log",
+            "log",
+            "stage:Reading",
+            "log",
+            "clock",
+            "log",
+            "failed",
+        ]
+    );
+}
+
 #[test]
 fn a_failed_read_still_reports_the_time_it_took() {
     let h = harness();

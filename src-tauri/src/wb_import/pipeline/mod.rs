@@ -5,25 +5,27 @@
 //! background thread (`run_wb_import`) so the command layer never blocks on
 //! it -- a ~3072-row real library must not freeze the UI.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
-use gb_core::path_restore::last_segment;
 use gb_core::ports::dir_lister::DirLister;
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use gb_core::ports::folder_probe::FolderProbe;
 use gb_core::ports::volume_label::VolumeLabelResolver;
-use gb_core::ports::wb_import_clock::WbImportClock;
+use gb_core::ports::wb_import_clock::{ClockReading, WbImportClock};
 use gb_core::ports::wb_import_log::WbImportLog;
-use gb_core::ports::wb_source::WbSourceAdapter;
-use gb_core::scan_pipeline::{self, NewVideo, ScannedFile, ValidationOutcome};
-use gb_core::wb_import::{
-    count_clamped_scores, count_source_tags, wb_row_to_import_candidate, WbImportStage,
-};
-use gb_core::wb_import_log::{self as wb_log, Availability, PathRestoration, RowLog, RowOutcome};
+use gb_core::ports::wb_source::{WbMovieRow, WbSourceAdapter};
+use gb_core::wb_import::{count_clamped_scores, count_source_tags, WbImportStage};
+use gb_core::wb_import_log as wb_log;
+use gb_core::wb_thumbnail_split::ThumbLayout;
+
+// Only the tests use these names here: they reach this module's imports
+// through `use super::*`, while the code that needs them lives in `rows`.
+#[cfg(test)]
 use gb_core::wb_skipped_payload::WbSkippedPayload;
+#[cfg(test)]
+use std::collections::HashSet;
 
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, WatchReconfigurer, WbImportNotifier, WbImportSummary};
@@ -33,6 +35,7 @@ use crate::thumbnail::{self, ThumbnailQueueHandle};
 
 mod file_state;
 mod import_log;
+mod rows;
 mod share;
 mod thumbnails;
 
@@ -41,12 +44,14 @@ mod tests;
 
 pub(crate) use thumbnails::attach_recorded_thumbnail;
 
-use file_state::{resolve_file_state, restore_missing_path, CachingDirLister};
 use import_log::{format_finish_text, write_import_log, StageStarts};
-use share::{format_unreachable_share, resolve_volume_labels, ShareReachability};
+use rows::{register_rows, RowTally};
+use share::{
+    format_unreachable_share, resolve_volume_labels, ShareReachability, VolumeLabelReport,
+};
 use thumbnails::{
     link_empty_hash_thumbnails_by_name, link_thumbnails, read_thumb_layout,
-    save_unmatched_thumbnails,
+    save_unmatched_thumbnails, LinkOutcome,
 };
 
 /// How often `notifier.notify_progress` fires while importing movie rows --
@@ -82,7 +87,8 @@ pub struct WbImportPaths {
 /// enqueue_missing_thumbnails` for every online video still missing a
 /// thumbnail (this import's newly registered online rows, plus any earlier
 /// ones) -- online rows never go through `import_all`'s legacy-JPG linking
-/// (see the comment at its `Inserted` match arm), so without this second
+/// (see the comment at the `Inserted` match arm of
+/// `rows::RowTally::record_written`), so without this second
 /// step they would simply never get a thumbnail at all. This call sits here
 /// in `run_wb_import`, not inside `import_all`, deliberately:
 /// `enqueue_missing_thumbnails` needs owned `Arc<F>`/`Arc<N>` and `'static`,
@@ -220,11 +226,123 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
     // One reading serves as the import's start, the header time and the start
     // of the first stage, so the three can never differ.
     let started = clock.now();
+    let Some(mut rows) = read_rows(
+        paths,
+        wb_source,
+        notifier,
+        watch.is_some(),
+        clock,
+        import_log,
+        started,
+    ) else {
+        return;
+    };
+
+    let thumb_layout = read_thumb_layout(wb_source);
+
+    let total = rows.len() as u32;
+    // Reading has no intermediate count (one query fills the whole `Vec`), so
+    // the size is only known, and reported, once it has finished.
+    notifier.notify_progress(WbImportStage::Reading, total, Some(total));
+    import_log.append(&wb_log::format_read_count(total));
+    let source = SourceCounts {
+        total,
+        clamped_scores: count_clamped_scores(&rows) as u32,
+        source_tag_count: count_source_tags(&rows) as u32,
+    };
+
+    // Before the share probe: a rewritten path names a real drive, which the
+    // probe, the `?` restoration and the file checks below must all see.
+    let wb_paths: Vec<String> = rows.iter().map(|r| r.movie_path.clone()).collect();
+    let label_report = resolve_volume_labels(&mut rows, volume_labels);
+    import_log.append(&wb_log::format_volume_labels(&label_report.logs));
+
+    // Decided up front, before any row touches the filesystem, so a stopped
+    // share is waited for once (and concurrently with other stopped shares).
+    let shares = ShareReachability::probe(folder_probe, rows.iter().map(|r| r.movie_path.as_str()));
+    for root in shares.unreachable_roots() {
+        log::warn!("wb import: share unreachable, registering its rows offline: {root}");
+        import_log.append(&format_unreachable_share(root));
+    }
+
+    let registering_started = clock.now();
+    notifier.notify_stage(WbImportStage::Registering);
+    let tally = register_rows(db, &rows, &wb_paths, &shares, dir_lister, notifier, total);
+
+    // Must precede `link_thumbnails` and the thumbnail queue: both decide
+    // where a thumbnail is stored from the watch folders in force at that
+    // moment, so adding the folders first puts new thumbnails straight into
+    // their final directory.
+    let folders = settle_watch_folders(db, paths, watch.is_some(), &tally.registered_movie_paths);
+    let linking_started = clock.now();
+    notifier.notify_stage(WbImportStage::Linking);
+    let thumbs = link_legacy_thumbnails(
+        db,
+        paths,
+        &folders.current,
+        &tally,
+        ffmpeg,
+        thumb_layout.as_ref(),
+        notifier,
+    );
+
+    let summary = build_summary(
+        &source,
+        &tally,
+        &thumbs,
+        folders.added,
+        folders.skipped_roots,
+        label_report,
+    );
+
+    let stage_starts = StageStarts {
+        reading: started,
+        registering: registering_started,
+        linking: linking_started,
+    };
+    write_import_log(
+        import_log,
+        &tally.row_logs,
+        &thumbs.outcome,
+        &thumbs.name_linked,
+        &summary,
+        &stage_starts,
+        &clock.now(),
+    );
+
+    announce_completion(
+        import_log,
+        notifier,
+        catalog_notifier,
+        watch,
+        folders.change.as_ref(),
+        &summary,
+    );
+}
+
+/// The reading stage: the log's header, the read itself and, when the read
+/// fails, the whole ending of the import. `None` means there is nothing left
+/// to do.
+fn read_rows<S, N, K, L>(
+    paths: &WbImportPaths,
+    wb_source: &S,
+    notifier: &N,
+    register_watch_folders: bool,
+    clock: &K,
+    import_log: &L,
+    started: ClockReading,
+) -> Option<Vec<WbMovieRow>>
+where
+    S: WbSourceAdapter,
+    N: WbImportNotifier,
+    K: WbImportClock,
+    L: WbImportLog,
+{
     import_log.append(&wb_log::format_header(
         &started.local,
         &paths.wb_path.display().to_string(),
         &paths.thumbnail_folder.display().to_string(),
-        watch.is_some(),
+        register_watch_folders,
     ));
     import_log.append(&wb_log::format_stage_heading(
         WbImportStage::Reading,
@@ -232,8 +350,8 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
     ));
 
     notifier.notify_stage(WbImportStage::Reading);
-    let mut rows = match wb_source.read_movies() {
-        Ok(rows) => rows,
+    match wb_source.read_movies() {
+        Ok(rows) => Some(rows),
         Err(e) => {
             // notify_failed, not notify_complete: nothing was attempted, so
             // there is no summary to report -- an empty-everything
@@ -255,298 +373,41 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
                 &clock.now(),
             ));
             notifier.notify_failed(&reason);
-            return;
+            None
         }
-    };
-
-    let thumb_layout = read_thumb_layout(wb_source);
-
-    let total = rows.len() as u32;
-    // Reading has no intermediate count (one query fills the whole `Vec`), so
-    // the size is only known, and reported, once it has finished.
-    notifier.notify_progress(WbImportStage::Reading, total, Some(total));
-    import_log.append(&wb_log::format_read_count(total));
-    let clamped_scores = count_clamped_scores(&rows) as u32;
-    let source_tag_count = count_source_tags(&rows) as u32;
-
-    // Before the share probe: a rewritten path names a real drive, which the
-    // probe, the `?` restoration and the file checks below must all see.
-    let wb_paths: Vec<String> = rows.iter().map(|r| r.movie_path.clone()).collect();
-    let label_report = resolve_volume_labels(&mut rows, volume_labels);
-    import_log.append(&wb_log::format_volume_labels(&label_report.logs));
-
-    // Decided up front, before any row touches the filesystem, so a stopped
-    // share is waited for once (and concurrently with other stopped shares).
-    let shares = ShareReachability::probe(folder_probe, rows.iter().map(|r| r.movie_path.as_str()));
-    for root in shares.unreachable_roots() {
-        log::warn!("wb import: share unreachable, registering its rows offline: {root}");
-        import_log.append(&format_unreachable_share(root));
     }
+}
 
-    // Every row ends in exactly one of `registered_*`, `skipped`,
-    // `skipped_invalid_name` and `failed_rows`, so the summary's counts add up
-    // to `total`.
-    let mut registered_online = 0u32;
-    let mut registered_offline = 0u32;
-    let mut failed_rows = 0u32;
-    let mut skipped = 0u32;
-    let mut skipped_invalid_name = 0u32;
-    let mut tags_assigned = 0u32;
-    let mut ratings_from_star_tags = 0u32;
-    // (video_id, thumbnail_hash, file_path) of inserted rows with a thumbnail
-    // hash, the input to match_thumbnail_files. `file_path` lets
-    // `link_thumbnails` find each video's thumbnail subdirectory without
-    // another DB query. Already-registered rows are excluded: whatever first
-    // registered them already handled their thumbnail.
-    let mut registered_movies: Vec<(String, String, String)> = Vec::new();
-    // Thumbnail hashes of inserted online rows. Their legacy JPGs are not
-    // migrated (a thumbnail is generated from the video), but the hashes keep
-    // those JPGs from being reported as unmatched.
-    let mut online_hashes: Vec<String> = Vec::new();
-    // Hashes of rows refused for a machine-dependent file name: the JPG has
-    // nothing to attach to, and `link_thumbnails` drops it unreported.
-    let mut invalid_name_hashes: HashSet<String> = HashSet::new();
-    // Hashes of already-registered offline rows (re-import): the JPG was
-    // handled at first registration, so `link_thumbnails` drops it unreported.
-    let mut already_registered_offline_hashes: HashSet<String> = HashSet::new();
-    // Paths of rows newly registered by this run, online or offline, to become
-    // watch folders. Offline rows count so a stopped NAS folder stays
-    // reachable from the sidebar; skipped rows don't, so a re-import adds no
-    // duplicates.
-    let mut registered_movie_paths: Vec<String> = Vec::new();
-    // Shared by every row so a parent folder is listed once per import, even
-    // when it cannot be listed at all (see `CachingDirLister`).
-    let dir_lister = CachingDirLister::new(dir_lister);
-    // One entry per row (every exit of the row loop pushes exactly one),
-    // written after linking so each can state what became of its thumbnail.
-    let mut row_logs: Vec<RowLog> = Vec::with_capacity(rows.len());
+/// The counts taken from the `.wb` as read, before any row is written.
+struct SourceCounts {
+    total: u32,
+    clamped_scores: u32,
+    source_tag_count: u32,
+}
 
-    let registering_started = clock.now();
-    notifier.notify_stage(WbImportStage::Registering);
-    let mut reported_rows: Option<u32> = None;
-    for (idx, row) in rows.iter().enumerate() {
-        let mut entry = RowLog {
-            movie_id: row.movie_id,
-            name: row.movie_name.clone(),
-            wb_path: wb_paths[idx].clone(),
-            restoration: PathRestoration::NotChecked,
-            availability: Availability::NotJudged,
-            tag_count: count_source_tags(std::slice::from_ref(row)),
-            thumbnail_hash: (!row.hash.is_empty()).then(|| row.hash.clone()),
-            outcome: RowOutcome::Failed {
-                reason: String::new(),
-            },
-            video_id: None,
-        };
-        let candidate = match wb_row_to_import_candidate(row) {
-            Ok(c) => c,
-            Err(e) => {
-                // One malformed row (bad datetime) must not abort the
-                // whole import -- log and move on to the next row.
-                log::warn!(
-                    "wb import: skipping movie_id={} ({}): {e}",
-                    row.movie_id,
-                    row.movie_name
-                );
-                failed_rows += 1;
-                entry.outcome = RowOutcome::Failed {
-                    reason: format!("日付が不正: {e}"),
-                };
-                row_logs.push(entry);
-                continue;
-            }
-        };
+/// The watch folders as linking will see them, settled in one step because
+/// each part depends on the registration before it.
+struct WatchFolders {
+    /// `Some` only when folders were actually added.
+    change: Option<WatchFolderChange>,
+    added: Vec<String>,
+    /// The stored list once registration is done.
+    current: Vec<String>,
+    skipped_roots: Vec<String>,
+}
 
-        // The real path on disk: `movie_path` as stored, or -- when it holds
-        // `?` for characters the old WhiteBrowser could not convert and the
-        // stored path therefore does not exist -- the path restored from the
-        // parent folder's contents. Everything downstream (DB row, watch
-        // folders, thumbnail location) must use this one, never the stored
-        // `?` form.
-        //
-        // The share is judged on the stored path: a restored path differs only
-        // in the characters that were `?`, so it lives on the same share.
-        let share_reachable = shares.is_reachable_path(&row.movie_path);
-        let restored_path =
-            restore_missing_path(&candidate.movie_path, share_reachable, &dir_lister);
-        let file_path = restored_path
-            .clone()
-            .unwrap_or_else(|| candidate.movie_path.clone());
-        entry.restoration = match &restored_path {
-            Some(p) => PathRestoration::Restored(p.clone()),
-            None => PathRestoration::Unchanged,
-        };
-
-        // Checked on the restored name (the stored `?` form has lost the
-        // original character) and before any hashing, like a normal scan:
-        // such a file is never registered, hashed or given a thumbnail.
-        // Offline rows are judged by name alone, so they are covered too.
-        let scanned_file = ScannedFile {
-            file_path: file_path.clone(),
-            file_name: last_segment(&file_path).to_string(),
-            file_size: 0,
-            mtime: 0,
-        };
-        if let ValidationOutcome::Invalid { detected_char } = scan_pipeline::validate(&scanned_file)
-        {
-            let skipped_file = scan_pipeline::build_skipped_file(&scanned_file, detected_char);
-            log::warn!(
-                "wb import: skipped machine-dependent filename: {} (char: {detected_char})",
-                skipped_file.file_name
-            );
-            // Kept so the record can later be registered with this row's
-            // rating and tags even after the file itself is gone.
-            let payload = WbSkippedPayload::from_candidate(&candidate).to_json();
-            let recorded = {
-                let conn = db.writer.lock().unwrap();
-                queries::upsert_skipped_file_with_wb_payload(&conn, &skipped_file, &payload)
-            };
-            if let Err(e) = recorded {
-                log::error!(
-                    "wb import: failed to record skipped file {} for movie_id={}: {e}",
-                    file_path,
-                    row.movie_id
-                );
-            }
-            skipped_invalid_name += 1;
-            entry.outcome = RowOutcome::InvalidName { detected_char };
-            row_logs.push(entry);
-            if let Some(hash) = candidate.thumbnail_hash {
-                invalid_name_hashes.insert(hash);
-            }
-            notify_row_progress(notifier, idx, total, &mut reported_rows);
-            continue;
-        }
-
-        let file_state = resolve_file_state(&file_path, share_reachable);
-        entry.availability = if file_state.status == "offline" {
-            Availability::Offline
-        } else {
-            Availability::Online
-        };
-        let id = uuid::Uuid::new_v4().to_string();
-
-        let new_video = NewVideo {
-            id: id.clone(),
-            file_path: file_path.clone(),
-            // movie_name is the file's basename, filled for every row --
-            // reused directly rather than re-deriving from movie_path
-            // (which may use `\`-separated legacy Windows paths not
-            // guaranteed to parse the same way on every platform this
-            // workspace builds/tests on). A restored row takes the name from
-            // the restored path instead, as movie_name carries the same `?`.
-            file_name: if restored_path.is_some() {
-                last_segment(&file_path).to_string()
-            } else {
-                candidate.movie_name.clone()
-            },
-            file_size: file_state.file_size,
-            quick_hash: file_state.quick_hash,
-            status: file_state.status,
-            mtime: file_state.mtime,
-        };
-
-        let outcome = {
-            // Held only for this one row's write, then released -- mirrors
-            // thumbnail::worker's short-lock convention so a long `.wb`
-            // import never starves other writers (realtime watch, manual
-            // scan) for its whole duration.
-            let mut conn = db.writer.lock().unwrap();
-            match queries::import_wb_video(
-                &mut conn,
-                &new_video,
-                candidate.rating,
-                &candidate.kana,
-                &candidate.roma,
-                &candidate.tags,
-            ) {
-                Ok(outcome) => outcome,
-                Err(e) => {
-                    log::error!(
-                        "wb import: DB write failed for movie_id={} ({}): {e}",
-                        row.movie_id,
-                        row.movie_name
-                    );
-                    failed_rows += 1;
-                    entry.outcome = RowOutcome::Failed {
-                        reason: format!("データベースへの書き込みに失敗: {e}"),
-                    };
-                    row_logs.push(entry);
-                    continue;
-                }
-            }
-        };
-
-        match outcome {
-            queries::WbImportOutcome::Inserted {
-                tags_assigned: row_tags_assigned,
-            } => {
-                if file_state.status == "offline" {
-                    registered_offline += 1;
-                } else {
-                    registered_online += 1;
-                }
-                tags_assigned += row_tags_assigned as u32;
-                if candidate.rating_from_star_tags {
-                    ratings_from_star_tags += 1;
-                }
-                registered_movie_paths.push(file_path.clone());
-                entry.outcome = RowOutcome::Registered;
-                entry.video_id = Some(id.clone());
-                // Legacy-JPG thumbnail migration (link_thumbnails, below) is
-                // only for offline rows: their source video isn't available
-                // to generate a fresh thumbnail from, so the old JPG is the
-                // best available image. An online row's video file *is*
-                // available, so `run_wb_import` hands it to the existing
-                // thumbnail pipeline instead (10%-in frame extraction, the
-                // same as a normal scan) once this loop finishes --
-                // preferred over the old low-res JPG whenever the real
-                // video can produce a fresh one.
-                if let Some(hash) = candidate.thumbnail_hash {
-                    if file_state.status == "offline" {
-                        registered_movies.push((id, hash, file_path.clone()));
-                    } else {
-                        online_hashes.push(hash);
-                    }
-                }
-            }
-            queries::WbImportOutcome::Skipped => {
-                skipped += 1;
-                entry.outcome = RowOutcome::AlreadyRegistered;
-                // An already-registered online row still owns its legacy
-                // JPG. Without collecting the hash here, a re-import would
-                // report that JPG as unmatched (needs manual attention).
-                // An offline row's JPG was settled by whichever import first
-                // registered it, so it is not linked again (a row that has no
-                // thumbnail yet is not retried either), but its hash is still
-                // collected so the JPG is not reported as unmatched.
-                // Duplicate hashes are harmless because matching only tests
-                // membership.
-                if let Some(hash) = candidate.thumbnail_hash {
-                    if file_state.status != "offline" {
-                        online_hashes.push(hash);
-                    } else {
-                        already_registered_offline_hashes.insert(hash);
-                    }
-                }
-            }
-        }
-
-        row_logs.push(entry);
-        notify_row_progress(notifier, idx, total, &mut reported_rows);
-    }
-    // Also covers an empty `.wb` (no row ever reports) so the phase still ends
-    // with a count.
-    if reported_rows != Some(total) {
-        notifier.notify_progress(WbImportStage::Registering, total, Some(total));
-    }
-
-    // Must precede `link_thumbnails` and the thumbnail queue: both decide
-    // where a thumbnail is stored from the watch folders in force at that
-    // moment, so adding the folders first puts new thumbnails straight into
-    // their final directory.
-    let watch_change = if watch.is_some() {
-        register_import_folders(db, &registered_movie_paths)
+/// Registers the imported videos' folders (when opted in), moves existing
+/// thumbnails to follow them, reads back the list linking will use, and
+/// judges against it the root-level folders left unregistered
+/// (`skipped_roots`).
+fn settle_watch_folders(
+    db: &Db,
+    paths: &WbImportPaths,
+    register_watch_folders: bool,
+    registered_movie_paths: &[String],
+) -> WatchFolders {
+    let watch_change = if register_watch_folders {
+        register_import_folders(db, registered_movie_paths)
     } else {
         None
     };
@@ -590,23 +451,59 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
     // exactly the case where only root-level videos were imported. Judged
     // against the list after registration so a root the user already watches
     // is not reported.
-    let watch_folders_skipped_roots = if watch.is_some() {
-        gb_core::watch_folders::skipped_root_folders(&registered_movie_paths, &watch_folders)
+    let watch_folders_skipped_roots = if register_watch_folders {
+        gb_core::watch_folders::skipped_root_folders(registered_movie_paths, &watch_folders)
     } else {
         Vec::new()
     };
-    let linking_started = clock.now();
-    notifier.notify_stage(WbImportStage::Linking);
+
+    WatchFolders {
+        change: watch_change,
+        added: watch_folders_added,
+        current: watch_folders,
+        skipped_roots: watch_folders_skipped_roots,
+    }
+}
+
+/// What linking the legacy thumbnails came to, by hash and then by name.
+struct LinkedThumbnails {
+    outcome: LinkOutcome,
+    name_linked: Vec<(String, String)>,
+    linked: u32,
+    linked_by_name: u32,
+    failed: u32,
+    unmatched: u32,
+    unmatched_empty_hash: u32,
+    skipped_online: u32,
+}
+
+/// The linking stage after its announcement: links the legacy JPGs, flags
+/// the linked videos ready, keeps the unmatched list and links what it can
+/// by name. Its counts are final, as the by-name links are moved out of the
+/// unmatched ones here.
+fn link_legacy_thumbnails<F, N>(
+    db: &Db,
+    paths: &WbImportPaths,
+    watch_folders: &[String],
+    tally: &RowTally,
+    ffmpeg: &F,
+    thumb_layout: Option<&ThumbLayout>,
+    notifier: &N,
+) -> LinkedThumbnails
+where
+    F: FfmpegAdapter,
+    N: WbImportNotifier,
+{
     let link_outcome = link_thumbnails(
         &paths.thumbnail_folder,
         &paths.thumbnails_dir,
-        &watch_folders,
-        &registered_movies,
-        &online_hashes,
-        &invalid_name_hashes,
-        &already_registered_offline_hashes,
+        watch_folders,
+        &tally.registered_movies,
+        &tally.online_hashes,
+        &tally.invalid_name_hashes,
+        &tally.already_registered_offline_hashes,
         ffmpeg,
-        thumb_layout.as_ref(),
+        thumb_layout,
         |processed, total| {
             notifier.notify_progress(WbImportStage::Linking, processed, Some(total));
         },
@@ -621,12 +518,8 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
         let mut conn = db.writer.lock().unwrap();
         queries::mark_thumbnails_ready(&mut conn, &link_outcome.linked_video_ids);
     }
-    let list_saved = save_unmatched_thumbnails(
-        db,
-        &paths.thumbnail_folder,
-        &link_outcome,
-        thumb_layout.as_ref(),
-    );
+    let list_saved =
+        save_unmatched_thumbnails(db, &paths.thumbnail_folder, &link_outcome, thumb_layout);
     // Only on a freshly saved list: otherwise the stored rows are from an
     // earlier import and may not match what is in the folder now.
     let name_linked = if list_saved {
@@ -634,7 +527,7 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
             db,
             ffmpeg,
             &paths.thumbnails_dir,
-            &watch_folders,
+            watch_folders,
             &paths.thumbnail_folder,
         )
         .linked
@@ -652,46 +545,70 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
         .saturating_sub(linked_by_name);
     let thumbnails_skipped_online = link_outcome.skipped_online;
 
-    let summary = WbImportSummary {
-        total,
-        registered: registered_online + registered_offline,
-        registered_online,
-        registered_offline,
-        failed_rows,
-        skipped,
-        skipped_invalid_name,
-        clamped_scores,
-        tags_assigned,
-        source_tag_count,
-        ratings_from_star_tags,
-        thumbnails_linked,
-        thumbnails_linked_by_name: linked_by_name,
-        thumbnails_failed,
-        thumbnails_unmatched,
-        thumbnails_unmatched_empty_hash,
-        thumbnails_skipped_online,
+    LinkedThumbnails {
+        outcome: link_outcome,
+        name_linked,
+        linked: thumbnails_linked,
+        linked_by_name,
+        failed: thumbnails_failed,
+        unmatched: thumbnails_unmatched,
+        unmatched_empty_hash: thumbnails_unmatched_empty_hash,
+        skipped_online: thumbnails_skipped_online,
+    }
+}
+
+/// Gathers every stage's counts into the summary that the log, the screen
+/// and the completion log line all report.
+fn build_summary(
+    source: &SourceCounts,
+    tally: &RowTally,
+    thumbs: &LinkedThumbnails,
+    watch_folders_added: Vec<String>,
+    watch_folders_skipped_roots: Vec<String>,
+    label_report: VolumeLabelReport,
+) -> WbImportSummary {
+    WbImportSummary {
+        total: source.total,
+        registered: tally.registered_online + tally.registered_offline,
+        registered_online: tally.registered_online,
+        registered_offline: tally.registered_offline,
+        failed_rows: tally.failed_rows,
+        skipped: tally.skipped,
+        skipped_invalid_name: tally.skipped_invalid_name,
+        clamped_scores: source.clamped_scores,
+        tags_assigned: tally.tags_assigned,
+        source_tag_count: source.source_tag_count,
+        ratings_from_star_tags: tally.ratings_from_star_tags,
+        thumbnails_linked: thumbs.linked,
+        thumbnails_linked_by_name: thumbs.linked_by_name,
+        thumbnails_failed: thumbs.failed,
+        thumbnails_unmatched: thumbs.unmatched,
+        thumbnails_unmatched_empty_hash: thumbs.unmatched_empty_hash,
+        thumbnails_skipped_online: thumbs.skipped_online,
         watch_folders_added,
         watch_folders_skipped_roots,
         volume_label_resolved: label_report.resolved_rows,
         volume_label_unresolved: label_report.unresolved_rows,
         volume_label_unresolved_labels: label_report.unresolved_labels,
-    };
+    }
+}
 
-    let stage_starts = StageStarts {
-        reading: started,
-        registering: registering_started,
-        linking: linking_started,
-    };
-    write_import_log(
-        import_log,
-        &row_logs,
-        &link_outcome,
-        &name_linked,
-        &summary,
-        &stage_starts,
-        &clock.now(),
-    );
-
+/// Ends an import whose log is already written: the screen learns the
+/// result, the list is re-fetched, and the watchers restart on the grown
+/// folder list.
+fn announce_completion<N, C, W, L>(
+    import_log: &L,
+    notifier: &N,
+    catalog_notifier: &C,
+    watch: Option<&W>,
+    watch_change: Option<&WatchFolderChange>,
+    summary: &WbImportSummary,
+) where
+    N: WbImportNotifier,
+    C: CatalogNotifier,
+    W: WatchReconfigurer,
+    L: WbImportLog,
+{
     log::info!(
         "wb import complete: import_log={} total={} registered={} registered_online={} \
          registered_offline={} skipped={} failed_rows={} skipped_invalid_name={} \
@@ -719,13 +636,13 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
         summary.watch_folders_added
     );
 
-    notifier.notify_complete(&summary);
+    notifier.notify_complete(summary);
     // Separate from `notifier` by design: this is what triggers the
     // frontend's list re-fetch, same event `start_scan` fires after a
     // manual scan.
     catalog_notifier.notify_changed();
 
-    if let (Some(watch), Some(change)) = (watch, &watch_change) {
+    if let (Some(watch), Some(change)) = (watch, watch_change) {
         watch.reconfigure(&change.after);
     }
 }

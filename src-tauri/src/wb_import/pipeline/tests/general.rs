@@ -420,6 +420,95 @@ fn stages_are_announced_in_order() {
     assert_eq!(notifier.complete_calls.lock().unwrap().len(), 1);
 }
 
+/// Stands in for the import log and every notifier at once, so the order
+/// of the calls that end an import can be read off one list.
+#[derive(Default)]
+struct EndRecorder {
+    events: Mutex<Vec<&'static str>>,
+}
+
+impl EndRecorder {
+    fn push(&self, event: &'static str) {
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+impl WbImportLog for EndRecorder {
+    fn append(&self, _: &str) {
+        self.push("log");
+    }
+    fn location(&self) -> String {
+        String::new()
+    }
+}
+
+impl WbImportNotifier for EndRecorder {
+    fn notify_progress(&self, _: WbImportStage, _: u32, _: Option<u32>) {}
+    fn notify_complete(&self, _: &WbImportSummary) {
+        self.push("complete");
+    }
+    fn notify_failed(&self, _: &str) {
+        self.push("failed");
+    }
+}
+
+impl CatalogNotifier for EndRecorder {
+    fn notify_changed(&self) {
+        self.push("changed");
+    }
+}
+
+impl WatchReconfigurer for EndRecorder {
+    fn reconfigure(&self, _: &[String]) {
+        self.push("reconfigure");
+    }
+}
+
+/// The log is complete before the screen hears of the result, the list is
+/// re-fetched after it, and the watchers are restarted last.
+#[test]
+fn an_import_ends_with_the_log_then_complete_then_changed_then_reconfigure() {
+    let h = harness();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("w.mp4");
+    std::fs::write(&path, b"online bytes").unwrap();
+    let recorder = EndRecorder::default();
+
+    super::import_all(
+        &h.db,
+        &h.paths,
+        &FakeWbSourceAdapter {
+            movies: Ok(vec![row(|r| {
+                r.movie_name = "w.mp4".to_string();
+                r.movie_path = path.to_string_lossy().to_string();
+            })]),
+            ..Default::default()
+        },
+        &no_op_ffmpeg(),
+        &recorder,
+        &recorder,
+        Some(&recorder),
+        &FakeDirLister::default(),
+        &FakeFolderProbe::default(),
+        &FakeVolumeLabelResolver::default(),
+        &FakeWbImportClock::default(),
+        &recorder,
+    );
+
+    let events = recorder.events.lock().unwrap();
+    assert!(
+        events.ends_with(&["log", "complete", "changed", "reconfigure"]),
+        "{events:?}"
+    );
+    for once in ["complete", "changed", "reconfigure"] {
+        assert_eq!(
+            events.iter().filter(|e| **e == once).count(),
+            1,
+            "{once}: {events:?}"
+        );
+    }
+}
+
 /// Integration coverage against the committed, anonymized real-shaped
 /// fixture (`tests/fixtures/wb/sample_small.wb`, 50 rows -- see
 /// `tests/fixtures/wb/README.md`). Reads it once via the production
