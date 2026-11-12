@@ -114,6 +114,80 @@ fn registering_throttles_to_the_interval_then_sends_the_final_count() {
     );
 }
 
+/// `PROGRESS_NOTIFY_INTERVAL + 1` rows with `special` in the slot whose count
+/// is the first interval tick, so whether that row reports progress shows up
+/// as `(PROGRESS_NOTIFY_INTERVAL, _)` being sent or not.
+fn rows_with_special_at_the_interval(special: WbMovieRow) -> Vec<WbMovieRow> {
+    let mut rows: Vec<WbMovieRow> = (1..PROGRESS_NOTIFY_INTERVAL as i64)
+        .map(|i| named_row(i, "Z:\\gone", &format!("v{i}.mp4")))
+        .collect();
+    rows.push(special);
+    rows.push(named_row(1001, "Z:\\gone", "last.mp4"));
+    rows
+}
+
+#[test]
+fn a_row_with_a_bad_date_reports_no_progress_even_at_the_interval() {
+    let rows = rows_with_special_at_the_interval(bad_date_row(1000));
+    let total = rows.len() as u32;
+
+    let notifier = import_rows(rows);
+
+    assert_eq!(registering_progress(&notifier), vec![(total, Some(total))]);
+}
+
+#[test]
+fn a_row_whose_database_write_fails_reports_no_progress_even_at_the_interval() {
+    let h = harness();
+    {
+        let conn = h.db.writer.lock().unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_one_insert BEFORE INSERT ON videos \
+             WHEN NEW.file_path = 'Z:\\gone\\db_fail.mp4' \
+             BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+        )
+        .unwrap();
+    }
+    let rows = rows_with_special_at_the_interval(named_row(1000, "Z:\\gone", "db_fail.mp4"));
+    let total = rows.len() as u32;
+    let notifier = FakeWbImportNotifier::default();
+
+    import_all(
+        &h.db,
+        &h.paths,
+        &FakeWbSourceAdapter {
+            movies: Ok(rows),
+            ..Default::default()
+        },
+        &no_op_ffmpeg(),
+        &notifier,
+        &FakeCatalogNotifier::default(),
+    );
+
+    assert_eq!(
+        notifier.complete_calls.lock().unwrap()[0].failed_rows,
+        1,
+        "the trigger must have made the write fail"
+    );
+    assert_eq!(registering_progress(&notifier), vec![(total, Some(total))]);
+}
+
+#[test]
+fn a_row_refused_for_its_name_still_reports_progress_at_the_interval() {
+    let rows = rows_with_special_at_the_interval(named_row(1000, "Z:\\gone", "bad\u{2460}.mp4"));
+    let total = rows.len() as u32;
+
+    let notifier = import_rows(rows);
+
+    assert_eq!(
+        registering_progress(&notifier),
+        vec![
+            (PROGRESS_NOTIFY_INTERVAL, Some(total)),
+            (total, Some(total))
+        ]
+    );
+}
+
 #[test]
 fn an_empty_wb_reports_zero_for_reading_and_registering() {
     let notifier = import_rows(Vec::new());
