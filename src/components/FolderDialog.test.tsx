@@ -701,6 +701,115 @@ test("別の行で編集を始めると、前の行のエラーを消す", async
   expect(inputs[0].value).toBe("A");
 });
 
+test("編集の途中で閉じて開き直すと、編集をやめた通常の表示に戻る", async () => {
+  const { user, setOpen } = await renderOpen();
+
+  await user.click(inRow("B", "folder-row-edit-btn"));
+  await user.clear(screen.getByTestId("folder-row-path-input"));
+  await user.type(screen.getByTestId("folder-row-path-input"), "B2");
+
+  setOpen(false);
+  setOpen(true);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  await act(async () => {});
+
+  expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
+  expect(paths()).toEqual(["A", "B", "C"]);
+  expect(within(row("B")).getByTestId("folder-row-edit-btn")).toBeInTheDocument();
+  expect(api.renameWatchFolder).not.toHaveBeenCalled();
+});
+
+test("編集のエラーを出したまま閉じて開き直すと、エラーは消えている", async () => {
+  const { user, setOpen } = await renderOpen();
+
+  await user.click(inRow("B", "folder-row-edit-btn"));
+  await user.clear(screen.getByTestId("folder-row-path-input"));
+  await user.click(screen.getByTestId("folder-row-save-btn"));
+  expect(screen.getByTestId("folder-row-edit-error")).toHaveTextContent("パスを入力してください");
+
+  setOpen(false);
+  setOpen(true);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  await act(async () => {});
+
+  expect(screen.queryByTestId("folder-row-edit-error")).toBeNull();
+  expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
+
+  // 同じ行で編集を始め直しても、前のエラーや入力値は出てこない。
+  await user.click(inRow("B", "folder-row-edit-btn"));
+  expect(screen.queryByTestId("folder-row-edit-error")).toBeNull();
+  expect((screen.getByTestId("folder-row-path-input") as HTMLInputElement).value).toBe("B");
+});
+
+test("保存中に閉じて開き直すと、その行は保存中のまま見え、終わったら件数を出して一覧を置き換える", async () => {
+  const save = deferred<RenameWatchFolderResult>();
+  vi.mocked(api.renameWatchFolder).mockReturnValue(save.promise);
+  const { user, setOpen, onChanged } = await renderOpen();
+  const fetchesBefore = vi.mocked(api.listWatchCheckDisabledFolders).mock.calls.length;
+
+  await user.click(inRow("B", "folder-row-edit-btn"));
+  await user.clear(screen.getByTestId("folder-row-path-input"));
+  await user.type(screen.getByTestId("folder-row-path-input"), "B2");
+  await user.click(screen.getByTestId("folder-row-save-btn"));
+  expect(screen.getByTestId("folder-row-save-btn")).toHaveTextContent("保存中...");
+
+  setOpen(false);
+  setOpen(true);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  await act(async () => {});
+
+  // 編集中の行はパスの表示を持たないので、位置で取る。
+  const savingRow = rows()[1];
+  expect(within(savingRow).getByTestId("folder-row-path-input")).toBeDisabled();
+  expect(within(savingRow).getByTestId("folder-row-save-btn")).toBeDisabled();
+  expect(within(savingRow).getByTestId("folder-row-save-btn")).toHaveTextContent("保存中...");
+  expect(within(savingRow).queryByTestId("folder-row-edit-btn")).toBeNull();
+
+  await act(async () => {
+    save.resolve({ folders: ["A", "B2", "C"], renamed_count: 2, collision_skipped_count: 0 });
+  });
+
+  await waitFor(() => expect(renameSummary()).toHaveTextContent(/^2件のパスを更新しました$/));
+  expect(paths()).toEqual(["A", "B2", "C"]);
+  expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
+  expect(screen.queryByTestId("folder-row-edit-error")).toBeNull();
+  expect(api.renameWatchFolder).toHaveBeenCalledWith("B", "B2");
+  expect(onChanged).toHaveBeenCalledTimes(1);
+  // 開き直したときの取得と、保存のあとの取得し直しの2回。
+  await waitFor(() =>
+    expect(api.listWatchCheckDisabledFolders).toHaveBeenCalledTimes(fetchesBefore + 2),
+  );
+});
+
+test("保存中に閉じて開き直したあと、保存が失敗すると、その行にエラーを出して編集を続ける", async () => {
+  const save = deferred<RenameWatchFolderResult>();
+  vi.mocked(api.renameWatchFolder).mockReturnValue(save.promise);
+  const { user, setOpen, onChanged } = await renderOpen();
+
+  await user.click(inRow("B", "folder-row-edit-btn"));
+  await user.clear(screen.getByTestId("folder-row-path-input"));
+  await user.type(screen.getByTestId("folder-row-path-input"), "A");
+  await user.click(screen.getByTestId("folder-row-save-btn"));
+
+  setOpen(false);
+  setOpen(true);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  await act(async () => {});
+
+  await act(async () => {
+    save.reject("duplicate path");
+  });
+
+  const error = await within(rows()[1]).findByTestId("folder-row-edit-error");
+  expect(error).toHaveTextContent("duplicate path");
+  const input = screen.getByTestId("folder-row-path-input") as HTMLInputElement;
+  expect(input).toBeEnabled();
+  expect(input.value).toBe("A");
+  expect(screen.getByTestId("folder-row-save-btn")).toBeEnabled();
+  expect(renameSummary()).toBeNull();
+  expect(onChanged).not.toHaveBeenCalled();
+});
+
 // ---- 登録解除 ----
 
 test("登録解除は、件数を取得してから確認を出す", async () => {
