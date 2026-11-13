@@ -283,17 +283,15 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function requestClose() {
-    // Closing mid-import would unmount this component (and with it, its
-    // wb_import:* event subscriptions above) while the backend import
-    // thread keeps running unattended -- there would be no way to learn the
-    // outcome short of reopening and hoping the events already fired.
-    // Simplest guard: importing must finish (or fail) before the dialog can
-    // be dismissed, mirroring the close button's own `disabled={importing}`.
-    if (!importing) {
-      onClose();
-    }
-  }
+  // Closing mid-import would unmount this component (and with it, its
+  // wb_import:* event subscriptions above) while the backend import
+  // thread keeps running unattended -- there would be no way to learn the
+  // outcome short of reopening and hoping the events already fired.
+  // Simplest guard: importing must finish (or fail) before the overlay click
+  // or Escape can dismiss the dialog, mirroring the close button's own
+  // `disabled={importing}`. While the unmatched-thumbnails dialog is open,
+  // Escape closes only that child.
+  const dismissible = !importing && unmatchedDialog === null;
 
   async function handlePickWbFile() {
     try {
@@ -342,13 +340,12 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
 
   return (
     <>
-    {/* Overlay click closes like every other dialog; requestClose keeps it shut
-        while an import is running, so the outcome can't be lost by a stray click. */}
     <ModalShell
       label=".wbインポート"
       className="wb-import-dialog"
       testId="import-dialog"
-      onOverlayClick={requestClose}
+      onDismiss={onClose}
+      dismissible={dismissible}
     >
       <h2>.wbインポート</h2>
 
@@ -435,7 +432,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
         <button
           type="button"
           data-testid="import-dialog-close-btn"
-          onClick={requestClose}
+          onClick={onClose}
           disabled={importing}
         >
           閉じる

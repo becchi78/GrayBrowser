@@ -1,13 +1,15 @@
-// 各ダイアログが Escape で閉じる条件の現状を固定する特性テスト。
-// 「閉じない」ダイアログのテストは、仕様を変えるときに意図的に更新する前提の記録。
+// 各ダイアログが Escape で閉じる条件を確かめるテスト。どのダイアログも、背景の
+// クリックで閉じられるときだけ Escape でも閉じる(条件は ModalShell の dismissible)。
+import { useEffect, useState } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { getVersion } from "@tauri-apps/api/app";
 import * as api from "../api";
 import { renderWithProviders } from "../testing/render";
 import { AboutDialog } from "./AboutDialog";
 import { BulkTagDialog } from "./BulkTagDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { EditContextMenu } from "./EditContextMenu";
 import { FolderDialog } from "./FolderDialog";
 import { LogViewerDialog } from "./LogViewerDialog";
 import { SettingsDialog } from "./SettingsDialog";
@@ -16,8 +18,8 @@ import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 import { UpdateDialog } from "./UpdateDialog";
 import { WbImportDialog } from "./WbImportDialog";
 
-// 各ダイアログが開いた直後に読む関数だけをフェイクにする。api.ts 全体を
-// 差し替えるのは、未モックの関数が実 IPC に触れて例外になるのを避けるため。
+// 各ダイアログが開いた直後や、確かめる操作の途中で呼ぶ関数だけをフェイクにする。
+// api.ts 全体を差し替えるのは、未モックの関数が実 IPC に触れて例外になるのを避けるため。
 vi.mock("../api", () => ({
   getNasPollIntervalMinutes: vi.fn(),
   getUpdateCheckOnStartup: vi.fn(),
@@ -33,7 +35,14 @@ vi.mock("../api", () => ({
   listUnmatchedThumbnails: vi.fn(),
   listWatchFolders: vi.fn(),
   listWatchCheckDisabledFolders: vi.fn(),
+  countVideosUnderFolder: vi.fn(),
+  removeWatchFolder: vi.fn(),
   listTagsWithVideoCount: vi.fn(),
+  setTagOrder: vi.fn(),
+  deleteTag: vi.fn(),
+  pickWbFile: vi.fn(),
+  pickWbThumbnailFolder: vi.fn(),
+  startWbImport: vi.fn(),
 }));
 
 // WbImportDialog が購読するイベントは、購読解除関数を返すだけの何もしないフェイクにする。
@@ -317,30 +326,91 @@ test("UnmatchedThumbnailsDialog は Escape で onClose を呼ぶ", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-// ---- 現状は Escape で閉じないダイアログ ----
-// 現状は閉じない。仕様を変えるときはこのテストも更新する。
+// ---- 子のダイアログを開くダイアログ ----
+// 子が開いている間は、親は Escape で閉じない。Escape で閉じるのは子だけで、
+// 子が閉じたあとの Escape で親が閉じる。
 
-test("FolderDialog は現状 Escape を押しても onClose を呼ばない", async () => {
+async function openFolderWithRows() {
+  vi.mocked(api.listWatchFolders).mockResolvedValue(["A", "B"]);
+  vi.mocked(api.countVideosUnderFolder).mockResolvedValue(3);
   const onClose = vi.fn();
-  const { user } = renderWithProviders(
+  const view = renderWithProviders(
     <FolderDialog open={true} onClose={onClose} onChanged={() => {}} />,
   );
-  await screen.findByTestId("folder-dialog");
+  await waitFor(() => expect(screen.queryAllByTestId("folder-row")).toHaveLength(2));
   await waitFor(() => expect(api.listWatchCheckDisabledFolders).toHaveBeenCalled());
+  await act(async () => {});
+  return { ...view, onClose };
+}
+
+async function openFolderDeleteConfirm() {
+  const opened = await openFolderWithRows();
+  const row = screen
+    .getAllByTestId("folder-row")
+    .find((r) => within(r).queryByTestId("folder-row-path")?.textContent === "B")!;
+  await opened.user.click(within(row).getByTestId("folder-row-delete-btn"));
+  await screen.findByTestId("confirm-dialog");
+  return opened;
+}
+
+test("FolderDialog は Escape で onClose を呼ぶ", async () => {
+  const { user, onClose } = await openFolderWithRows();
 
   await user.keyboard("{Escape}");
 
-  expect(onClose).not.toHaveBeenCalled();
-  expect(screen.getByTestId("folder-dialog")).toBeInTheDocument();
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-test("TagBarEditDialog は現状 Escape を押しても onClose を呼ばない", async () => {
+test("FolderDialog の登録解除の確認は、Escape で確認だけが閉じ、次の Escape で FolderDialog が閉じる", async () => {
+  const { user, onClose } = await openFolderDeleteConfirm();
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByTestId("confirm-dialog")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByTestId("folder-dialog")).toBeInTheDocument();
+  expect(api.removeWatchFolder).not.toHaveBeenCalled();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("FolderDialog の登録解除の確認は、解除中は Escape で閉じず、FolderDialog も閉じない", async () => {
+  vi.mocked(api.removeWatchFolder).mockReturnValue(never());
+  const { user, onClose } = await openFolderDeleteConfirm();
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+  await waitFor(() => expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeDisabled());
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+async function openTagBarEdit() {
+  vi.mocked(api.listTagsWithVideoCount).mockResolvedValue([{ id: 1, name: "猫", video_count: 2 }]);
   const onClose = vi.fn();
-  const { user } = renderWithProviders(
+  const view = renderWithProviders(
     <TagBarEditDialog open={true} onClose={onClose} onChanged={() => {}} onTagDeleted={() => {}} />,
   );
-  await screen.findByTestId("tag-bar-edit-dialog");
-  await waitFor(() => expect(api.listTagsWithVideoCount).toHaveBeenCalled());
+  await screen.findByTestId("tag-bar-edit-row");
+  return { ...view, onClose };
+}
+
+test("TagBarEditDialog は Escape で onClose を呼ぶ", async () => {
+  const { user, onClose } = await openTagBarEdit();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("TagBarEditDialog は保存中は Escape で閉じない", async () => {
+  vi.mocked(api.setTagOrder).mockReturnValue(never());
+  const { user, onClose } = await openTagBarEdit();
+  await user.click(screen.getByTestId("tag-bar-edit-save-btn"));
+  await waitFor(() => expect(screen.getByTestId("tag-bar-edit-save-btn")).toBeDisabled());
 
   await user.keyboard("{Escape}");
 
@@ -348,16 +418,134 @@ test("TagBarEditDialog は現状 Escape を押しても onClose を呼ばない"
   expect(screen.getByTestId("tag-bar-edit-dialog")).toBeInTheDocument();
 });
 
-test("WbImportDialog は現状 Escape を押しても onClose を呼ばない", async () => {
+test("TagBarEditDialog の削除の確認は、Escape で確認だけが閉じ、次の Escape で TagBarEditDialog が閉じる", async () => {
+  const { user, onClose } = await openTagBarEdit();
+  await user.click(screen.getByTestId("tag-bar-edit-delete-btn"));
+  await screen.findByTestId("confirm-dialog");
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByTestId("confirm-dialog")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByTestId("tag-bar-edit-dialog")).toBeInTheDocument();
+  expect(api.deleteTag).not.toHaveBeenCalled();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("TagBarEditDialog は削除中は Escape で、削除の確認も TagBarEditDialog も閉じない", async () => {
+  vi.mocked(api.deleteTag).mockReturnValue(never());
+  const { user, onClose } = await openTagBarEdit();
+  await user.click(screen.getByTestId("tag-bar-edit-delete-btn"));
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+  await waitFor(() => expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeDisabled());
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+async function openWbImport() {
   const onClose = vi.fn();
-  const { user } = renderWithProviders(
+  const view = renderWithProviders(
     <WbImportDialog onClose={onClose} onImportComplete={() => {}} onThumbnailsReplaced={() => {}} />,
   );
   await screen.findByTestId("import-dialog");
   await waitFor(() => expect(api.listUnmatchedThumbnails).toHaveBeenCalled());
+  await act(async () => {});
+  return { ...view, onClose };
+}
+
+test("WbImportDialog は Escape で onClose を呼ぶ", async () => {
+  const { user, onClose } = await openWbImport();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("WbImportDialog はインポート中は Escape で閉じない", async () => {
+  vi.mocked(api.pickWbFile).mockResolvedValue("C:\\a.wb");
+  vi.mocked(api.pickWbThumbnailFolder).mockResolvedValue("C:\\thumbs");
+  vi.mocked(api.startWbImport).mockReturnValue(never());
+  const { user, onClose } = await openWbImport();
+  await user.click(screen.getByRole("button", { name: ".wbファイルを選択" }));
+  await user.click(screen.getByRole("button", { name: "旧サムネイルフォルダを選択" }));
+  await user.click(screen.getByRole("button", { name: "インポート" }));
+  await waitFor(() => expect(screen.getByTestId("import-dialog-close-btn")).toBeDisabled());
 
   await user.keyboard("{Escape}");
 
   expect(onClose).not.toHaveBeenCalled();
   expect(screen.getByTestId("import-dialog")).toBeInTheDocument();
+});
+
+test("WbImportDialog から開いた UnmatchedThumbnailsDialog は、Escape で子だけが閉じ、次の Escape で WbImportDialog が閉じる", async () => {
+  vi.mocked(api.listUnmatchedThumbnails).mockResolvedValue([
+    {
+      folder_path: "C:\\old",
+      file_name: "a.jpg",
+      kind: "no_matching_video",
+      default_search_term: "a",
+    },
+  ]);
+  const { user, onClose } = await openWbImport();
+  await user.click(await screen.findByTestId("import-unmatched-open-btn"));
+  await screen.findByTestId("unmatched-row");
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByTestId("unmatched-dialog")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByTestId("import-dialog")).toBeInTheDocument();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+// ---- 入力欄の編集メニュー ----
+
+/** App と同じく、入力欄の右クリックで編集メニューをダイアログの外に出す。 */
+function BulkTagWithEditMenu({ onClose }: { onClose: () => void }) {
+  const [target, setTarget] = useState<HTMLInputElement | null>(null);
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (e.target instanceof HTMLInputElement) {
+        e.preventDefault();
+        setTarget(e.target);
+      }
+    }
+    document.addEventListener("contextmenu", handler);
+    return () => document.removeEventListener("contextmenu", handler);
+  }, []);
+  return (
+    <>
+      <BulkTagDialog videoIds={["a"]} onTagged={() => {}} onClose={onClose} />
+      {target && (
+        <EditContextMenu target={target} position={{ x: 0, y: 0 }} onClose={() => setTarget(null)} />
+      )}
+    </>
+  );
+}
+
+test("ダイアログの入力欄から開いた編集メニューは、Escape でメニューだけが閉じ、ダイアログは閉じない", async () => {
+  const onClose = vi.fn();
+  const { user } = renderWithProviders(<BulkTagWithEditMenu onClose={onClose} />);
+  const input = await screen.findByTestId("bulk-tag-input");
+  fireEvent.contextMenu(input);
+  await screen.findByTestId("context-menu");
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByTestId("context-menu")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByTestId("bulk-tag-dialog")).toBeInTheDocument();
+
+  await user.keyboard("{Escape}");
+
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

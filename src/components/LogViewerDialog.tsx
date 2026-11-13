@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { getLogDir, readLog } from "../api";
 import {
@@ -95,8 +94,6 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
     closeRef.current?.focus();
   }, []);
 
-  useEscapeKey(onClose);
-
   const visible = useMemo(
     () => rows.filter((r) => entryMatches(r, levels, query)),
     [rows, levels, query],
@@ -146,7 +143,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <ModalShell label="動作ログ" className="log-viewer-dialog" testId="log-viewer-dialog" onOverlayClick={onClose}>
+    <ModalShell label="動作ログ" className="log-viewer-dialog" testId="log-viewer-dialog" onDismiss={onClose}>
       <h2>動作ログ</h2>
       <div className="log-viewer-controls">
         {LOG_LEVELS.map((level) => (

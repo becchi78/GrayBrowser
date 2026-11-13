@@ -1498,10 +1498,12 @@ button.search-box-clear {
   opacity: 0.75;
 }
 
-.folder-delete-confirm-path {
+/* 解除するフォルダのパスを、タグの削除の確認での強調と揃えて目立たせる。 */
+.confirm-dialog-body .folder-delete-confirm-path {
   font-family: monospace;
-  font-size: 0.9em;
-  opacity: 0.8;
+  font-size: 1.15em;
+  font-weight: bold;
+  color: #b00020;
   overflow-wrap: anywhere;
 }
 
@@ -2189,7 +2191,8 @@ button.link-button:focus-visible {
     color: #ff8a80;
   }
 
-  .confirm-dialog-body .tag-delete-target {
+  .confirm-dialog-body .tag-delete-target,
+  .confirm-dialog-body .folder-delete-confirm-path {
     color: #ff8a80;
   }
 

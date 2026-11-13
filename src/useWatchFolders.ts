@@ -37,6 +37,23 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
   const [reordering, setReordering] = useState(false);
   const [togglingPath, setTogglingPath] = useState<string | null>(null);
   const [orderCheckError, setOrderCheckError] = useState<string | null>(null);
+  const [prevOpen, setPrevOpen] = useState(open);
+
+  // ダイアログは閉じても unmount されずこの状態が残るので、開き直したときは
+  // 編集の途中の状態(行・入力値・エラー)を捨てる。ただし保存中は捨てない。
+  // 捨てると行が通常の表示に戻り、保存の失敗のエラーを出す場所が無くなるため、
+  // 行を「保存中...」のまま見せ、結果(成功なら編集を閉じ、失敗ならエラー)を
+  // その行で届ける。実行中の処理の状態と変更結果の表示は、開き直しても残す。
+  // effect の中ではなく描画の途中で直すのは、古い編集の表示を一度でも
+  // 描画させないため。初回のマウントは prevOpen が open と同じなので何もしない。
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open && !savingEdit) {
+      setEditingPath(null);
+      setEditingValue("");
+      setEditError(null);
+    }
+  }
 
   useEffect(() => {
     if (!open) {

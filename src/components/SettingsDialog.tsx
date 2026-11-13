@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import {
   getNasPollIntervalMinutes,
   getRestoreViewStateEnabled,
@@ -79,9 +78,6 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
     }
   }, [loading]);
 
-  // 保存中は閉じない(結果が見えないまま閉じて、二重実行や中途半端な状態を作らない)。
-  useEscapeKey(onClose, !saving);
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (busy) {
@@ -116,7 +112,9 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       label="設定"
       className="settings-dialog"
       testId="settings-dialog"
-      onOverlayClick={saving ? undefined : onClose}
+      onDismiss={onClose}
+      // 保存中は閉じない(結果が見えないまま閉じて、二重実行や中途半端な状態を作らない)。
+      dismissible={!saving}
       onSubmit={handleSubmit}
     >
       <h2>設定</h2>

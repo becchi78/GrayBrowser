@@ -317,7 +317,7 @@ test("再チェックを始めると、前のエラーを消す", async () => {
 
 // ---- 削除 ----
 
-test("登録解除は確認を出し、確定するまでバックエンドを呼ばない", async () => {
+test("登録解除は危険な確認を出し、確定するまでバックエンドを呼ばない", async () => {
   const { user } = await renderPanel();
 
   await user.click(unregisterButton("b"));
@@ -331,7 +331,7 @@ test("登録解除は確認を出し、確定するまでバックエンドを�
   expect(dialog).toHaveTextContent("このカタログ登録を解除します。");
   expect(dialog).toHaveTextContent("元の動画ファイルは削除されません。");
   expect(confirmButton()).toHaveTextContent("登録を解除する");
-  expect(confirmButton()).not.toHaveClass("confirm-dialog-confirm--danger");
+  expect(confirmButton()).toHaveClass("confirm-dialog-confirm--danger");
   expect(api.deleteDuplicateVideo).not.toHaveBeenCalled();
   expect(api.deleteDuplicateVideoAndFile).not.toHaveBeenCalled();
 });

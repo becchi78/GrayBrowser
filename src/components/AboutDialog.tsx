@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useEscapeKey } from "../useEscapeKey";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { ModalShell } from "./ModalShell";
@@ -63,8 +62,6 @@ function AboutDialogContent({ onClose }: { onClose: () => void }) {
     closeRef.current?.focus();
   }, []);
 
-  useEscapeKey(onClose);
-
   let versionText = "取得中...";
   if (versionFailed) {
     versionText = "取得できませんでした";
@@ -73,7 +70,7 @@ function AboutDialogContent({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <ModalShell label="バージョン情報" className="about-dialog" testId="about-dialog" onOverlayClick={onClose}>
+    <ModalShell label="バージョン情報" className="about-dialog" testId="about-dialog" onDismiss={onClose}>
       <h2>GrayBrowser</h2>
       <p className="about-dialog-version" data-testid="about-dialog-version">
         {versionText}
