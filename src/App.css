@@ -1,11 +1,71 @@
+/* 複数のルールで共有する色。ダークテーマで値が変わるものは、下の
+   `@media (prefers-color-scheme: dark)` の `:root` で上書きする。同じ値でも
+   役割が違えば別の変数にし、一方だけ色を変えても他方に波及しないようにする。 */
+:root {
+  /* 本文の文字色とページの背景。 */
+  --text: #0f0f0f;
+  --page-bg: #f6f6f6;
+  /* ダイアログ・メニュー・ポップオーバーなど、ページの上に重ねる面の背景。 */
+  --surface: #ffffff;
+  /* 一覧の枠・区切り線などの控えめな枠線。 */
+  --border-muted: #ddd;
+  /* 画像が読み込まれる前のサムネイル枠の背景。 */
+  --thumbnail-bg: #ddd;
+  /* バッジ・タグのチップの背景。 */
+  --chip-bg: #e8e8e8;
+  /* メニュー項目にマウスを載せたときの背景。 */
+  --hover-bg: #e8e8e8;
+  /* ボタンのホバー・押下中・押下状態の枠線。ダークでも同じ色。 */
+  --accent: #396cd8;
+  /* リンク風のボタンの文字・フォーカス枠、選択中の候補の枠。 */
+  --link: #396cd8;
+  /* 選択中の項目(左ペインの項目、押下中のバッジ)の背景と文字。 */
+  --selected-bg: #396cd8;
+  --on-selected: #ffffff;
+  /* 操作の失敗を伝えるエラー文。 */
+  --error-text: #8a1f1f;
+  /* 削除の確認で強調する対象・危険な操作の文字。 */
+  --danger: #b00020;
+  /* エラーではないが、手作業での確認が要る旨の文字。 */
+  --warn-text: #7a5a00;
+  /* FFmpeg が見つからない旨の通知。ダークでは文字と背景の色が入れ替わる。 */
+  --notice-text: #5a3d00;
+  --notice-bg: #f8d7a3;
+  /* ★の色は左ペインのレーティング見出しのアイコン(.sidebar-section-icon--rating)
+     と同じ青にそろえる。ライト/ダークどちらの背景でも沈まない明度の固定色なので、
+     ダーク側での上書きはしない。未選択は同じ青を薄くして、色相は揃えたまま
+     選択状態だけ区別する。 */
+  --star-color: #3b82f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f6f6f6;
+    --page-bg: #2f2f2f;
+    --surface: #2f2f2f;
+    --border-muted: #555;
+    --thumbnail-bg: #444;
+    --chip-bg: #444;
+    --hover-bg: #444;
+    --link: #7aa2f7;
+    --selected-bg: #5a8ef0;
+    --on-selected: #0f0f0f;
+    --error-text: #f3caca;
+    --danger: #ff8a80;
+    --warn-text: #f0c674;
+    --notice-text: #f8d7a3;
+    --notice-bg: #5a3d00;
+  }
+}
+
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  color: var(--text);
+  background-color: var(--page-bg);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -42,10 +102,10 @@ button {
 }
 
 button:hover {
-  border-color: #396cd8;
+  border-color: var(--accent);
 }
 button:active {
-  border-color: #396cd8;
+  border-color: var(--accent);
   background-color: #e8e8e8;
 }
 button:disabled {
@@ -73,8 +133,8 @@ button:disabled {
 }
 
 .ffmpeg-notice {
-  background-color: #f8d7a3;
-  color: #5a3d00;
+  background-color: var(--notice-bg);
+  color: var(--notice-text);
   border-radius: 8px;
   padding: 0.75em 1em;
 }
@@ -94,8 +154,10 @@ button:disabled {
   white-space: nowrap;
 }
 
-.wb-import-error {
-  color: #8a1f1f;
+/* ダイアログ内のエラー文。設定・更新のダイアログは `.dialog-error--compact` を
+   併せて付け、一回り小さくする。 */
+.dialog-error {
+  color: var(--error-text);
   font-size: 0.9em;
   margin: 0;
 }
@@ -174,7 +236,7 @@ button.search-box-clear {
 }
 
 .info-pane-toggle[aria-pressed="true"] {
-  border-color: #396cd8;
+  border-color: var(--accent);
   background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
 }
 
@@ -206,8 +268,8 @@ button.search-box-clear {
 
 .folder-sidebar-item--active,
 .rating-bar-item--active {
-  background-color: #396cd8;
-  color: #ffffff;
+  background-color: var(--selected-bg);
+  color: var(--on-selected);
 }
 
 .tag-bar-edit-empty {
@@ -258,7 +320,7 @@ button.search-box-clear {
 }
 
 .tag-bar-edit-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.85em;
   margin: 0;
 }
@@ -284,7 +346,7 @@ button.search-box-clear {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #ddd;
+  border-right: 1px solid var(--border-muted);
   min-height: 0;
   /* 一覧の項目の左 padding。見出しは「開閉の目印(▸/▾)+gap 0.4em」の次にアイコンが
      来るので、アイコンの左端は 0.75em + 目印の幅 + 0.4em。目印は比例グリフで幅が
@@ -415,7 +477,7 @@ button.search-box-clear {
   padding: 0 0.6em;
   font-size: 0.75em;
   box-shadow: none;
-  background-color: #e8e8e8;
+  background-color: var(--chip-bg);
 }
 
 /* Right-aligned jump button; `.status-jump-menu` opens upward from it like
@@ -437,8 +499,8 @@ button.search-box-clear {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #ddd;
+  background-color: var(--surface);
+  border: 1px solid var(--border-muted);
   border-radius: 8px;
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
   padding: 0.25em;
@@ -454,7 +516,7 @@ button.search-box-clear {
 }
 
 .status-jump-item:hover {
-  background-color: #e8e8e8;
+  background-color: var(--hover-bg);
 }
 
 .status-thumbnail-progress {
@@ -464,8 +526,8 @@ button.search-box-clear {
 }
 
 .status-badge[aria-pressed="true"] {
-  background-color: #396cd8;
-  color: #ffffff;
+  background-color: var(--selected-bg);
+  color: var(--on-selected);
 }
 
 /* The popover slot shared by whichever of
@@ -492,8 +554,8 @@ button.search-box-clear {
      assertion, which enforces this empirically rather than by this
      comment's arithmetic alone). */
   width: min(56em, 90vw);
-  background-color: #ffffff;
-  border: 1px solid #ddd;
+  background-color: var(--surface);
+  border: 1px solid var(--border-muted);
   border-radius: 8px;
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
   padding: 0.75em 1em;
@@ -664,7 +726,7 @@ button.search-box-clear {
      does (worst case: a hairline letterbox instead of a crop). */
   object-fit: contain;
   border-radius: 4px;
-  background-color: #ddd;
+  background-color: var(--thumbnail-bg);
 }
 
 .thumbnail-placeholder {
@@ -674,7 +736,7 @@ button.search-box-clear {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  background-color: #ddd;
+  background-color: var(--thumbnail-bg);
   color: #666;
   font-size: 0.85em;
 }
@@ -989,7 +1051,7 @@ button.search-box-clear {
 }
 
 .duplicate-groups-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.9em;
   margin: 0;
 }
@@ -1006,7 +1068,7 @@ button.search-box-clear {
 }
 
 .duplicate-group {
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-muted);
   border-radius: 8px;
   padding: 0.5em 0.75em;
 }
@@ -1042,7 +1104,7 @@ button.search-box-clear {
   height: 72px;
   object-fit: cover;
   border-radius: 4px;
-  background-color: #ddd;
+  background-color: var(--thumbnail-bg);
 }
 
 .duplicate-group-member--offline .duplicate-group-member-thumb img,
@@ -1190,7 +1252,7 @@ button.search-box-clear {
 }
 
 .generation-failures-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.9em;
   margin: 0;
 }
@@ -1224,7 +1286,7 @@ button.search-box-clear {
   align-items: center;
   gap: 0.75em;
   padding: 0.3em 0.5em;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-muted);
   border-radius: 8px;
 }
 
@@ -1232,7 +1294,7 @@ button.search-box-clear {
   flex-shrink: 0;
   font-size: 0.8em;
   font-weight: 600;
-  color: #8a1f1f;
+  color: var(--error-text);
   background-color: #f3caca;
   border-radius: 4px;
   padding: 0.1em 0.5em;
@@ -1267,14 +1329,6 @@ button.search-box-clear {
   gap: 0.2em;
 }
 
-/* ★の色は左ペインのレーティング見出しのアイコン(.sidebar-section-icon--rating)
-   と同じ青にそろえる。ライト/ダークどちらの背景でも沈まない明度の固定色なので、
-   ダーク側での上書きはしない。未選択は同じ青を薄くして、色相は揃えたまま
-   選択状態だけ区別する。 */
-:root {
-  --star-color: #3b82f6;
-}
-
 .star {
   padding: 0.1em 0.3em;
   font-size: 1.2em;
@@ -1307,7 +1361,7 @@ button.search-box-clear {
   display: inline-flex;
   align-items: center;
   gap: 0.3em;
-  background-color: #e8e8e8;
+  background-color: var(--chip-bg);
   border-radius: 999px;
   padding: 0.2em 0.6em;
   font-size: 0.85em;
@@ -1336,7 +1390,7 @@ button.search-box-clear {
 }
 
 .tag-editor-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.85em;
   margin: 0;
 }
@@ -1360,8 +1414,8 @@ button.search-box-clear {
 }
 
 .dialog {
-  background-color: #ffffff;
-  color: #0f0f0f;
+  background-color: var(--surface);
+  color: var(--text);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   padding: 1.5em;
@@ -1450,7 +1504,7 @@ button.search-box-clear {
 }
 
 .folder-row-edit-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.8em;
   margin: 0;
 }
@@ -1475,7 +1529,7 @@ button.search-box-clear {
 }
 
 .folder-dialog-order-check-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.8em;
   margin: 0;
 }
@@ -1503,7 +1557,7 @@ button.search-box-clear {
   font-family: monospace;
   font-size: 1.15em;
   font-weight: bold;
-  color: #b00020;
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 
@@ -1533,7 +1587,7 @@ button.link-button {
   border-radius: 4px;
   box-shadow: none;
   background: transparent;
-  color: #396cd8;
+  color: var(--link);
   text-decoration: underline;
 }
 button.link-button:hover,
@@ -1542,7 +1596,7 @@ button.link-button:active {
   text-decoration: none;
 }
 button.link-button:focus-visible {
-  outline: 2px solid #396cd8;
+  outline: 2px solid var(--link);
 }
 
 .about-dialog-footer {
@@ -1565,16 +1619,15 @@ button.link-button:focus-visible {
   width: 6em;
 }
 
-.settings-dialog-hint {
+.dialog-hint {
   margin: 0;
   font-size: 0.85em;
   opacity: 0.75;
 }
 
-.settings-dialog-error {
-  color: #8a1f1f;
+/* `.dialog-error` と同じ詳細度なので、それより後ろに置いて font-size を上書きする。 */
+.dialog-error--compact {
   font-size: 0.85em;
-  margin: 0;
 }
 
 .settings-dialog-check {
@@ -1623,7 +1676,7 @@ button.link-button:focus-visible {
   gap: 0.75em;
   padding: 0.5em 0.9em;
   font-size: 0.9em;
-  color: #0f0f0f;
+  color: var(--text);
   background-color: #e8eefc;
   border: 1px solid #b9c8ee;
   border-radius: 8px;
@@ -1650,7 +1703,7 @@ button.link-button:focus-visible {
 .confirm-dialog-body .tag-delete-target {
   font-size: 1.15em;
   font-weight: bold;
-  color: #b00020;
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 
@@ -1665,7 +1718,7 @@ button.link-button:focus-visible {
 }
 
 .confirm-dialog-error {
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.9em;
   overflow-wrap: anywhere;
 }
@@ -1675,8 +1728,8 @@ button.link-button:focus-visible {
   z-index: 60;
   min-width: 12em;
   padding: 4px;
-  background-color: #ffffff;
-  color: #0f0f0f;
+  background-color: var(--surface);
+  color: var(--text);
   border: 1px solid #d0d0d0;
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
@@ -1698,11 +1751,11 @@ button.link-button:focus-visible {
 
 .context-menu-item:hover,
 .context-menu-item:focus-visible {
-  background-color: #e8e8e8;
+  background-color: var(--hover-bg);
 }
 
 .context-menu-item--danger {
-  color: #b00020;
+  color: var(--danger);
 }
 
 .context-menu-item:disabled {
@@ -1790,7 +1843,7 @@ button.link-button:focus-visible {
   gap: 0.4em;
 }
 
-.wb-import-result-line {
+.dialog-result-line {
   margin: 0;
   font-size: 0.9em;
 }
@@ -1811,12 +1864,12 @@ button.link-button:focus-visible {
 
 .wb-import-result-attention--amber {
   background-color: #fff3cd;
-  color: #7a5a00;
+  color: var(--warn-text);
 }
 
 .wb-import-result-attention--failed {
   background-color: #fbe3e3;
-  color: #8a1f1f;
+  color: var(--error-text);
   font-weight: 600;
 }
 
@@ -1843,7 +1896,7 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.wb-import-result-detail {
+.dialog-result-detail {
   margin: 0;
   font-size: 0.85em;
   opacity: 0.85;
@@ -1910,7 +1963,7 @@ button.link-button:focus-visible {
 
 .unmatched-kind {
   background-color: #fff3cd;
-  color: #7a5a00;
+  color: var(--warn-text);
 }
 
 .unmatched-badge {
@@ -1960,7 +2013,7 @@ button.link-button:focus-visible {
 }
 
 .unmatched-candidate--selected {
-  outline: 2px solid #396cd8;
+  outline: 2px solid var(--link);
   outline-offset: -2px;
 }
 
@@ -1972,270 +2025,8 @@ button.link-button:focus-visible {
 }
 
 .unmatched-overwrite {
-  color: #7a5a00;
+  color: var(--warn-text);
   font-weight: 600;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  input,
-  button,
-  select {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-
-  button.link-button,
-  button.link-button:hover,
-  button.link-button:active {
-    background: transparent;
-  }
-  button.link-button {
-    color: #7aa2f7;
-  }
-  button.link-button:focus-visible {
-    outline-color: #7aa2f7;
-  }
-
-  /* 上の`button`の背景指定より詳細度を上げて、✕を入力欄に溶け込ませる。 */
-  button.search-box-clear {
-    background: transparent;
-  }
-
-  .ffmpeg-notice {
-    background-color: #5a3d00;
-    color: #f8d7a3;
-  }
-
-  .update-notice {
-    color: #f6f6f6;
-    background-color: #2a3a5c;
-    border-color: #4a5f8f;
-  }
-
-  .update-dialog-notes {
-    background-color: #3a3a3a;
-  }
-
-  .video-row-thumbnail-wrap img,
-  .thumbnail-placeholder {
-    background-color: #444;
-    color: #ccc;
-  }
-
-  .thumbnail-placeholder--failed {
-    background-color: #5a2f2f;
-    color: #f0b4b4;
-  }
-
-  .thumbnail-placeholder--offline {
-    background-color: #3a3a40;
-    color: #a0a0aa;
-  }
-
-  .video-row {
-    border-bottom-color: #444;
-  }
-
-  .video-row--selected {
-    background-color: #2a3a5c;
-  }
-
-  .video-row--multi-selected {
-    background-color: #34497a;
-    box-shadow: inset 4px 0 0 #7aa7ff;
-  }
-
-  .thumbnail-offline-badge,
-  .folder-sidebar-badge {
-    color: #f8d7a3;
-    background-color: #5a3d00;
-  }
-
-  .left-pane {
-    border-right-color: #555;
-  }
-
-  .folder-sidebar-item--active,
-  .rating-bar-item--active {
-    background-color: #5a8ef0;
-    color: #0f0f0f;
-  }
-
-  .tag-chip {
-    background-color: #444;
-  }
-
-  .tag-editor-error {
-    color: #f3caca;
-  }
-
-  .wb-import-error {
-    color: #f3caca;
-  }
-
-  .folder-row-edit-error,
-  .folder-dialog-order-check-error {
-    color: #f3caca;
-  }
-
-  .tag-bar-edit-error,
-  .settings-dialog-error {
-    color: #f3caca;
-  }
-
-  .duplicate-groups-error,
-  .duplicate-group-member-play-error {
-    color: #f3caca;
-  }
-
-  .duplicate-group {
-    border-color: #555;
-  }
-
-  .duplicate-group-member-delete-file {
-    color: #f3caca;
-    border-color: #c75a6a;
-  }
-
-  .duplicate-group-member-delete-file:disabled {
-    color: inherit;
-    border-color: transparent;
-  }
-
-  .duplicate-group-member-diff {
-    background-color: #5a4a14;
-    color: #ffe9a8;
-  }
-
-  .duplicate-group-member-thumb img,
-  .duplicate-group-member-thumb .thumbnail-placeholder {
-    background-color: #444;
-    color: #ccc;
-  }
-
-  .generation-failures-error {
-    color: #f3caca;
-  }
-
-  .generation-failures-notice {
-    color: #cfcfcf;
-  }
-
-  .generation-failure-item {
-    border-color: #555;
-  }
-
-  .generation-failure-badge {
-    color: #f3caca;
-    background-color: #5a1f1f;
-  }
-
-  .status-badge {
-    background-color: #444;
-  }
-
-  .status-thumbnail-progress {
-    color: #bbb;
-  }
-
-  .status-badge[aria-pressed="true"] {
-    background-color: #5a8ef0;
-    color: #0f0f0f;
-  }
-
-  .status-jump-menu {
-    background-color: #2f2f2f;
-    color: #f6f6f6;
-    border-color: #555;
-  }
-
-  .status-jump-item:hover {
-    background-color: #444;
-  }
-
-  .status-panel {
-    background-color: #2f2f2f;
-    color: #f6f6f6;
-    border-color: #555;
-  }
-
-  .dialog {
-    background-color: #2f2f2f;
-    color: #f6f6f6;
-  }
-
-  .confirm-dialog-error {
-    color: #f3caca;
-  }
-
-  .context-menu {
-    background-color: #2f2f2f;
-    color: #f6f6f6;
-    border-color: #555;
-  }
-
-  .context-menu-item:hover,
-  .context-menu-item:focus-visible {
-    background-color: #444;
-  }
-
-  .context-menu-item--danger {
-    color: #ff8a80;
-  }
-
-  .confirm-dialog-body .tag-delete-target,
-  .confirm-dialog-body .folder-delete-confirm-path {
-    color: #ff8a80;
-  }
-
-  .confirm-dialog-confirm--danger {
-    background-color: #c0392b;
-    border-color: #c0392b;
-  }
-
-  .wb-import-result-success {
-    color: #7ed494;
-  }
-
-  .wb-import-result-attention--amber {
-    background-color: #5a4600;
-    color: #f0c674;
-  }
-
-  .wb-import-result-attention--failed {
-    background-color: #5a1f1f;
-    color: #f3caca;
-  }
-
-  .unmatched-row {
-    border-color: #555;
-  }
-
-  .unmatched-kind {
-    background-color: #5a4600;
-    color: #f0c674;
-  }
-
-  .unmatched-badge {
-    background-color: #1f4a2b;
-    color: #7ed494;
-  }
-
-  .unmatched-candidate--selected {
-    outline-color: #7aa2f7;
-  }
-
-  .unmatched-overwrite {
-    color: #f0c674;
-  }
 }
 
 .bulk-tag-dialog form {
@@ -2265,25 +2056,9 @@ button.link-button:focus-visible {
 
 .bulk-tag-error {
   margin: 0;
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.9em;
   overflow-wrap: anywhere;
-}
-
-@media (prefers-color-scheme: dark) {
-  .bulk-tag-error {
-    color: #f3caca;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  .skipped-file-edit-error {
-    color: #f3caca;
-  }
-
-  .skipped-files-notice {
-    color: #b7e4c0;
-  }
 }
 
 .log-viewer-dialog {
@@ -2320,7 +2095,7 @@ button.link-button:focus-visible {
 
 .log-viewer-error {
   margin: 0;
-  color: #8a1f1f;
+  color: var(--error-text);
   font-size: 0.9em;
   overflow-wrap: anywhere;
 }
@@ -2396,8 +2171,163 @@ button.link-button:focus-visible {
 }
 
 @media (prefers-color-scheme: dark) {
-  .log-viewer-error {
+  input,
+  button,
+  select {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+  }
+  button:active {
+    background-color: #0f0f0f69;
+  }
+
+  button.link-button,
+  button.link-button:hover,
+  button.link-button:active {
+    background: transparent;
+  }
+
+  /* 上の`button`の背景指定より詳細度を上げて、✕を入力欄に溶け込ませる。 */
+  button.search-box-clear {
+    background: transparent;
+  }
+
+  .update-notice {
+    background-color: #2a3a5c;
+    border-color: #4a5f8f;
+  }
+
+  .update-dialog-notes {
+    background-color: #3a3a3a;
+  }
+
+  .video-row-thumbnail-wrap img,
+  .thumbnail-placeholder {
+    color: #ccc;
+  }
+
+  .thumbnail-placeholder--failed {
+    background-color: #5a2f2f;
+    color: #f0b4b4;
+  }
+
+  .thumbnail-placeholder--offline {
+    background-color: #3a3a40;
+    color: #a0a0aa;
+  }
+
+  .video-row {
+    border-bottom-color: #444;
+  }
+
+  .video-row--selected {
+    background-color: #2a3a5c;
+  }
+
+  .video-row--multi-selected {
+    background-color: #34497a;
+    box-shadow: inset 4px 0 0 #7aa7ff;
+  }
+
+  .thumbnail-offline-badge,
+  .folder-sidebar-badge {
+    color: #f8d7a3;
+    background-color: #5a3d00;
+  }
+
+  /* `.folder-sidebar-item--active` の背景は、同じ詳細度で後ろにある
+     `.folder-sidebar-item` の `background: none` に負けて、ライトでは透明になる。
+     ダークではこのルールがさらに後ろにあるので、選択中の背景が効く。
+     変数を使っていても、この位置から外すと順序で負けて透明になる。 */
+  .folder-sidebar-item--active {
+    background-color: var(--selected-bg);
+  }
+
+  .duplicate-group-member-play-error {
     color: #f3caca;
+  }
+
+  .duplicate-group-member-delete-file {
+    color: #f3caca;
+    border-color: #c75a6a;
+  }
+
+  .duplicate-group-member-delete-file:disabled {
+    color: inherit;
+    border-color: transparent;
+  }
+
+  .duplicate-group-member-diff {
+    background-color: #5a4a14;
+    color: #ffe9a8;
+  }
+
+  .duplicate-group-member-thumb img,
+  .duplicate-group-member-thumb .thumbnail-placeholder {
+    color: #ccc;
+  }
+
+  .generation-failures-notice {
+    color: #cfcfcf;
+  }
+
+  .generation-failure-badge {
+    background-color: #5a1f1f;
+  }
+
+  .status-thumbnail-progress {
+    color: #bbb;
+  }
+
+  /* ライトでは文字色を指定せず、`:root` の `--text` を継承している。 */
+  .status-jump-menu {
+    color: var(--text);
+  }
+
+  .status-panel {
+    color: var(--text);
+  }
+
+  .context-menu {
+    border-color: #555;
+  }
+
+  .confirm-dialog-confirm--danger {
+    background-color: #c0392b;
+    border-color: #c0392b;
+  }
+
+  .wb-import-result-success {
+    color: #7ed494;
+  }
+
+  .wb-import-result-attention--amber {
+    background-color: #5a4600;
+  }
+
+  .wb-import-result-attention--failed {
+    background-color: #5a1f1f;
+  }
+
+  .unmatched-row {
+    border-color: #555;
+  }
+
+  .unmatched-kind {
+    background-color: #5a4600;
+  }
+
+  .unmatched-badge {
+    background-color: #1f4a2b;
+    color: #7ed494;
+  }
+
+  .skipped-file-edit-error {
+    color: #f3caca;
+  }
+
+  .skipped-files-notice {
+    color: #b7e4c0;
   }
 
   .log-viewer-list {
