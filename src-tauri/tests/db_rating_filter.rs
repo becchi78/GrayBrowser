@@ -157,6 +157,11 @@ fn multiple_ratings_match_any_of_them() {
     let mut reversed = list_with_rating(&db.read_pool, &[2, 1]);
     reversed.sort();
     assert_eq!(reversed, vec!["r1", "r2"]);
+
+    // Listing every rating excludes only the unrated video.
+    let mut all = list_with_rating(&db.read_pool, &[1, 2, 3, 4, 5]);
+    all.sort();
+    assert_eq!(all, vec!["r1", "r2", "r3"]);
 }
 
 #[test]

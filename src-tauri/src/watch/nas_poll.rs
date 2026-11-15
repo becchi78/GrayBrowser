@@ -702,4 +702,62 @@ mod tests {
         assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
         assert_eq!(notifier.call_count.load(Ordering::SeqCst), 0);
     }
+
+    /// A probe that reports it was entered and then blocks until released,
+    /// standing in for a `read_dir` stuck on an unreachable share.
+    struct GateProbe {
+        entered: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl gb_core::ports::folder_probe::FolderProbe for GateProbe {
+        fn is_reachable(&self, _folder: &str) -> bool {
+            self.entered.lock().unwrap().send(()).unwrap();
+            // A dropped sender also releases the probe.
+            let _ = self.release.lock().unwrap().recv();
+            true
+        }
+    }
+
+    /// `stop()` must only raise the flag: with the polling thread stuck inside
+    /// the probe it can never exit, so a `stop()` that waited for it would
+    /// never return. The channel wait is a failure bound, not a pass threshold.
+    #[test]
+    fn stop_returns_while_the_poller_thread_is_blocked_in_the_probe() {
+        use std::sync::mpsc;
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let probe = Arc::new(GateProbe {
+            entered: std::sync::Mutex::new(entered_tx),
+            release: std::sync::Mutex::new(release_rx),
+        });
+
+        let handle = start_nas_polling(
+            db,
+            thumbs_root.path().to_path_buf(),
+            "W:/video".to_string(),
+            Duration::from_secs(600),
+            Arc::new(FakeCatalogNotifier::default()),
+            Arc::new(FollowUp::noop()),
+            ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier)),
+        );
+        entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the poller thread should reach the probe");
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let stopper = thread::spawn(move || {
+            handle.stop();
+            done_tx.send(handle.stop_flag()).unwrap();
+        });
+        let flag = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("stop() must return without waiting for the blocked poller thread");
+        assert!(flag.load(Ordering::SeqCst));
+
+        drop(release_tx);
+        stopper.join().unwrap();
+    }
 }
