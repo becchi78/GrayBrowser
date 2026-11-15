@@ -34,7 +34,7 @@ fn insert_video(conn: &Connection, id: &str, file_path: &str, status: &str, quic
 
 /// Every `path_collisions` row must reference `videos.id` values that still
 /// exist, on both sides -- the app-layer orphan-prevention guarantee
-/// `delete_video_cascade` now extends to this table.
+/// `delete_videos_cascade` enforces for this table.
 fn orphaned_path_collisions(conn: &Connection) -> Vec<(i64, String, String)> {
     let mut stmt = conn
         .prepare(
@@ -143,7 +143,7 @@ fn record_path_collision_refreshes_attempted_path_on_repeat_detection() {
 }
 
 #[test]
-fn delete_video_cascade_removes_path_collisions_referencing_the_deleted_video_from_either_side() {
+fn delete_videos_cascade_removes_path_collisions_referencing_the_deleted_video_from_either_side() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
@@ -163,7 +163,7 @@ fn delete_video_cascade_removes_path_collisions_referencing_the_deleted_video_fr
 
     {
         let mut conn = db.writer.lock().unwrap();
-        queries::delete_video_cascade(&mut conn, "online-1").unwrap();
+        queries::delete_videos_cascade(&mut conn, &["online-1".to_string()]).unwrap();
     }
 
     let rows = queries::list_path_collisions(&db.read_pool).unwrap();
@@ -178,12 +178,12 @@ fn delete_video_cascade_removes_path_collisions_referencing_the_deleted_video_fr
     let conn = db.writer.lock().unwrap();
     assert!(
         orphaned_path_collisions(&conn).is_empty(),
-        "no path_collisions row may reference a nonexistent videos.id after delete_video_cascade"
+        "no path_collisions row may reference a nonexistent videos.id after delete_videos_cascade"
     );
 }
 
 #[test]
-fn delete_video_cascade_removes_path_collisions_where_deleted_video_is_the_video_id_side() {
+fn delete_videos_cascade_removes_path_collisions_where_deleted_video_is_the_video_id_side() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
@@ -197,7 +197,7 @@ fn delete_video_cascade_removes_path_collisions_where_deleted_video_is_the_video
 
     {
         let mut conn = db.writer.lock().unwrap();
-        queries::delete_video_cascade(&mut conn, "offline-1").unwrap();
+        queries::delete_videos_cascade(&mut conn, &["offline-1".to_string()]).unwrap();
     }
 
     let rows = queries::list_path_collisions(&db.read_pool).unwrap();

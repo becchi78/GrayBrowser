@@ -1,7 +1,7 @@
 //! Duplicate-group listing/refresh/cleanup commands. Thin passthroughs to
 //! `dedup::`/`db::queries` -- no additional detection logic lives here.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use gb_core::file_delete_policy::{
@@ -12,6 +12,7 @@ use gb_core::ports::trash::FileTrasher;
 use tauri::State;
 
 use crate::adapters::long_path;
+use crate::commands::catalog_cmds::{remove_videos_from_catalog, thumbnails_root_from_app_dir};
 use crate::db::Db;
 use crate::dedup::{self, DuplicateGroup, DuplicateGroupKind, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
@@ -51,63 +52,6 @@ pub async fn refresh_duplicate_groups(
     Ok(())
 }
 
-/// Deletes the cached thumbnail slot files of `video_id` (only the cache under
-/// `thumbnails_root`, never the source video). Best-effort: the thumbnails may
-/// never have been generated (e.g. an offline video), same "may not exist"
-/// reasoning as thumbnail::worker's own tmp-file cleanup.
-pub(crate) fn delete_thumbnail_files(
-    thumbnails_root: &Path,
-    watch_folders: &[String],
-    file_path: &str,
-    video_id: &str,
-) {
-    let video_dir =
-        crate::thumbnail::paths::video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
-    for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
-        let thumb_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
-        let _ = std::fs::remove_file(&thumb_path);
-    }
-}
-
-/// Removes the catalog entry for `video_id` -- the `videos` row plus every
-/// `video_tags`/`path_collisions` row referencing it
-/// (`queries::delete_video_cascade`) -- and deletes its cached thumbnails
-/// (all 6 `[video_id]_0.webp`..`[video_id]_5.webp` slot files, under
-/// whichever registered-folder subdirectory the video's `file_path`
-/// currently resolves to) if any exist. Never touches the source video file.
-///
-/// `thumbnails_root` is `None` when the app data directory could not be
-/// resolved; the thumbnail cleanup is then skipped but the catalog delete
-/// still happens.
-fn remove_video_from_catalog(
-    db: &Db,
-    thumbnails_root: Option<&Path>,
-    video_id: &str,
-) -> Result<(), String> {
-    // Looked up *before* the DB delete below -- once the row is gone,
-    // `file_path` (and therefore the resolved thumbnail subdirectory) is no
-    // longer recoverable from the DB. A lookup failure/absence is not fatal
-    // to this function: it just means the thumbnail-cleanup step below has
-    // nothing to do.
-    let file_path = crate::db::queries::find_video_by_id(&db.read_pool, video_id)
-        .ok()
-        .flatten()
-        .map(|row| row.file_path);
-
-    if let (Some(file_path), Some(thumbnails_root)) = (file_path, thumbnails_root) {
-        let watch_folders = db
-            .read_pool
-            .get()
-            .ok()
-            .and_then(|conn| crate::db::queries::get_watch_folders(&conn).ok())
-            .unwrap_or_default();
-        delete_thumbnail_files(thumbnails_root, &watch_folders, &file_path, video_id);
-    }
-
-    let mut conn = db.writer.lock().unwrap();
-    crate::db::queries::delete_video_cascade(&mut conn, video_id).map_err(|e| e.to_string())
-}
-
 /// File name and path for log lines. Looked up before a delete, since the row
 /// is gone afterwards; a lookup failure only degrades the log text.
 fn log_identity(db: &Db, video_id: &str) -> (String, String) {
@@ -118,13 +62,7 @@ fn log_identity(db: &Db, video_id: &str) -> (String, String) {
         .unwrap_or_else(|| ("(unknown)".to_string(), "(unknown)".to_string()))
 }
 
-pub(crate) fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
-    crate::paths::app_data_dir()
-        .ok()
-        .map(|app_dir| crate::thumbnail::paths::thumbnails_root(&app_dir))
-}
-
-/// Removes a video from the catalog (see `remove_video_from_catalog`).
+/// Removes a video from the catalog (see `remove_videos_from_catalog`).
 ///
 /// **Does not touch the source video file on disk.** Only the catalog row
 /// and cached thumbnail are removed; there is deliberately no
@@ -146,7 +84,11 @@ pub fn delete_duplicate_video(
     // Read before the delete: the row (and its name) is gone afterwards.
     let (file_name, _) = log_identity(&db, &video_id);
     let thumbnails_root = thumbnails_root_from_app_dir();
-    remove_video_from_catalog(&db, thumbnails_root.as_deref(), &video_id)?;
+    remove_videos_from_catalog(
+        &db,
+        thumbnails_root.as_deref(),
+        std::slice::from_ref(&video_id),
+    )?;
     TauriCatalogNotifier::new(app).notify_changed();
     log::info!("unregistered duplicate video {video_id} ({file_name}) from the catalog");
     Ok(())
@@ -247,7 +189,7 @@ pub fn delete_video_with_file(
         .move_to_trash(Path::new(&row.file_path))
         .map_err(|e| format!("ゴミ箱への移動に失敗しました: {e}"))?;
 
-    remove_video_from_catalog(db, thumbnails_root, video_id).map_err(|e| {
+    remove_videos_from_catalog(db, thumbnails_root, &[video_id.to_string()]).map_err(|e| {
         format!("ファイルはゴミ箱に移動しましたが、カタログからの削除に失敗しました: {e}")
     })?;
     notifier.notify_changed();
@@ -296,6 +238,7 @@ mod tests {
     use gb_core::ports::trash::TrashError;
     use gb_core::testing::fake_drive_type::FakeDriveTypeDetector;
     use gb_core::testing::fake_trash::FakeFileTrasher;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const CONTENT: &[u8] = b"duplicate video bytes";
@@ -830,26 +773,32 @@ mod tests {
     }
 
     #[test]
-    fn catalog_only_removal_leaves_the_source_file_in_place() {
+    fn failed_catalog_delete_after_the_move_keeps_row_tags_and_thumbnails() {
         let env = Env::new();
         let (a, _b) = two_online(&env);
         let thumb = env.add_thumb("a", &a);
+        {
+            let conn = env.db.writer.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER block_a BEFORE DELETE ON videos WHEN OLD.id = 'a'
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+        }
+        let drive = AnyDrive(Ok(DriveKind::Local));
+        let trasher = trash_ok();
+        let notifier = FakeCatalogNotifier::default();
 
-        remove_video_from_catalog(&env.db, Some(&env.thumbs), "a").unwrap();
+        let err = run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a").unwrap_err();
 
-        assert!(!env.row_exists("a"));
-        assert_eq!(env.tag_count("a"), 0);
-        assert!(!thumb.exists());
-        assert!(a.exists());
-        assert!(env.row_exists("b"));
-    }
-
-    #[test]
-    fn catalog_only_removal_without_a_thumbnail_root_still_removes_the_row() {
-        let env = Env::new();
-        let (a, _b) = two_online(&env);
-        remove_video_from_catalog(&env.db, None, "a").unwrap();
-        assert!(!env.row_exists("a"));
-        assert!(a.exists());
+        assert!(
+            err.contains("ファイルはゴミ箱に移動しましたが、カタログからの削除に失敗しました"),
+            "{err}"
+        );
+        assert_eq!(trasher.calls.lock().unwrap().len(), 1);
+        assert!(env.row_exists("a"));
+        assert_eq!(env.tag_count("a"), 1);
+        assert!(thumb.exists());
+        assert_eq!(notifier.calls(), 0);
     }
 }

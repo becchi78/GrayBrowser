@@ -2,7 +2,7 @@
 //! referential-integrity guarantee: with
 //! `PRAGMA foreign_keys` deliberately OFF, nothing in SQLite itself stops an
 //! orphan `video_tags` row, so `assign_tag_to_video`/`delete_tag`/
-//! `delete_video_cascade` must enforce it themselves. Real tempdir-backed
+//! `delete_videos_cascade` must enforce it themselves. Real tempdir-backed
 //! SQLite file, matching `db_queries.rs`'s established convention.
 
 use graybrowser_lib::db::{self, queries};
@@ -424,10 +424,9 @@ fn delete_tag_removes_all_its_video_tags_rows_and_leaves_others_untouched() {
 }
 
 /// The orphan-prevention regression test for video deletion -- exercises
-/// `delete_video_cascade` even though nothing calls it from a command/UI
-/// yet.
+/// `delete_videos_cascade`.
 #[test]
-fn delete_video_cascade_removes_all_its_video_tags_rows_and_leaves_others_untouched() {
+fn delete_videos_cascade_removes_all_its_video_tags_rows_and_leaves_others_untouched() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
@@ -451,7 +450,7 @@ fn delete_video_cascade_removes_all_its_video_tags_rows_and_leaves_others_untouc
 
     {
         let mut conn = db.writer.lock().unwrap();
-        queries::delete_video_cascade(&mut conn, "v1").unwrap();
+        queries::delete_videos_cascade(&mut conn, &["v1".to_string()]).unwrap();
     }
 
     let conn = db.writer.lock().unwrap();
@@ -491,7 +490,7 @@ fn delete_video_cascade_removes_all_its_video_tags_rows_and_leaves_others_untouc
 
     assert!(
         orphaned_video_tags_by_video(&conn).is_empty(),
-        "no video_tags row may reference a nonexistent videos.id after delete_video_cascade"
+        "no video_tags row may reference a nonexistent videos.id after delete_videos_cascade"
     );
 }
 

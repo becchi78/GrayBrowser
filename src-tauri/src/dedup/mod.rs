@@ -674,9 +674,9 @@ mod tests {
 
         {
             let mut conn = db.writer.lock().unwrap();
-            queries::delete_video_cascade(&mut conn, "v1").unwrap();
-            queries::delete_video_cascade(&mut conn, "v3").unwrap();
-            queries::delete_video_cascade(&mut conn, "v4").unwrap();
+            queries::delete_videos_cascade(&mut conn, &["v1".to_string()]).unwrap();
+            queries::delete_videos_cascade(&mut conn, &["v3".to_string()]).unwrap();
+            queries::delete_videos_cascade(&mut conn, &["v4".to_string()]).unwrap();
         }
 
         let refreshed = refresh_group_members(&db, snapshot);
