@@ -545,10 +545,7 @@ mod tests {
 
     #[test]
     fn cancelled_pick_leaves_existing_list_unchanged() {
-        let picker = FakeFolderPicker {
-            result: Ok(None),
-            ..Default::default()
-        };
+        let picker = FakeFolderPicker { result: Ok(None) };
         let existing = vec!["C:/Videos".to_string()];
         assert_eq!(pick_and_merge(&picker, existing.clone()).unwrap(), existing);
     }
@@ -557,7 +554,6 @@ mod tests {
     fn picking_an_already_registered_folder_does_not_duplicate_it() {
         let picker = FakeFolderPicker {
             result: Ok(Some(vec![PathBuf::from("C:/Videos")])),
-            ..Default::default()
         };
         let existing = vec!["C:/Videos".to_string()];
         assert_eq!(pick_and_merge(&picker, existing.clone()).unwrap(), existing);
@@ -567,7 +563,6 @@ mod tests {
     fn picked_folders_are_merged_into_existing() {
         let picker = FakeFolderPicker {
             result: Ok(Some(vec![PathBuf::from("D:/Movies")])),
-            ..Default::default()
         };
         let existing = vec!["C:/Videos".to_string()];
         assert_eq!(
@@ -580,7 +575,6 @@ mod tests {
     fn dialog_failure_is_propagated_as_an_error() {
         let picker = FakeFolderPicker {
             result: Err(DialogError::Failed("boom".into())),
-            ..Default::default()
         };
         assert!(pick_and_merge(&picker, vec![]).is_err());
     }

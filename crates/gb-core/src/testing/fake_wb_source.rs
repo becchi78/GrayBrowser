@@ -1,20 +1,10 @@
-use std::sync::Mutex;
-
 use crate::ports::wb_source::{WbMovieRow, WbSourceAdapter, WbSourceError, WbTextCell};
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum FakeCall {
-    ReadMovies,
-    ReadAllTextCells,
-    ReadProfileValue(String),
-}
 
 pub struct FakeWbSourceAdapter {
     pub movies: Result<Vec<WbMovieRow>, WbSourceError>,
     pub text_cells: Result<Vec<WbTextCell>, WbSourceError>,
     /// Returned for every key, whatever was asked.
     pub profile_values: Result<Vec<String>, WbSourceError>,
-    pub calls: Mutex<Vec<FakeCall>>,
 }
 
 impl Default for FakeWbSourceAdapter {
@@ -28,27 +18,20 @@ impl Default for FakeWbSourceAdapter {
             movies: Err(not_configured()),
             text_cells: Err(not_configured()),
             profile_values: Err(not_configured()),
-            calls: Mutex::new(Vec::new()),
         }
     }
 }
 
 impl WbSourceAdapter for FakeWbSourceAdapter {
     fn read_movies(&self) -> Result<Vec<WbMovieRow>, WbSourceError> {
-        self.calls.lock().unwrap().push(FakeCall::ReadMovies);
         self.movies.clone()
     }
 
     fn read_all_text_cells(&self) -> Result<Vec<WbTextCell>, WbSourceError> {
-        self.calls.lock().unwrap().push(FakeCall::ReadAllTextCells);
         self.text_cells.clone()
     }
 
-    fn read_profile_value(&self, key: &str) -> Result<Vec<String>, WbSourceError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(FakeCall::ReadProfileValue(key.to_string()));
+    fn read_profile_value(&self, _key: &str) -> Result<Vec<String>, WbSourceError> {
         self.profile_values.clone()
     }
 }
@@ -58,16 +41,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_the_canned_movies_and_records_the_call() {
+    fn returns_the_canned_movies() {
         let fake = FakeWbSourceAdapter {
             movies: Ok(vec![]),
             ..Default::default()
         };
         assert_eq!(fake.read_movies().unwrap(), vec![]);
-        assert_eq!(
-            fake.calls.lock().unwrap().as_slice(),
-            [FakeCall::ReadMovies]
-        );
     }
 
     #[test]
