@@ -2,23 +2,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileDeleteDisabledReason } from "./duplicateDelete.ts";
+import { makeMember } from "../testing/fixtures.ts";
 import type { DuplicateGroup, DuplicateGroupMember } from "../types.ts";
 
 const LAST = "このグループで到達できる最後の1件のため削除できません";
 const OFFLINE = "オフラインのため削除できません";
 
+// status の値の揺れ(大文字など)も試すため、型を緩めた引数で受ける。
 function member(id: string, status: string): DuplicateGroupMember {
-  return {
-    video_id: id,
-    file_path: `/v/${id}.mp4`,
-    file_name: `${id}.mp4`,
-    file_size: 1000,
-    status: status as DuplicateGroupMember["status"],
-    created_at: "2026-01-01 00:00:00",
-    duration: 60,
-    width: 1920,
-    height: 1080,
-  };
+  return makeMember(id, { status: status as DuplicateGroupMember["status"] });
 }
 
 function group(

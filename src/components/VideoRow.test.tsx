@@ -4,7 +4,7 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import * as api from "../api";
 import { THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import { THUMBNAIL_PLACEHOLDER_LABELS } from "../lib/thumbnailPlaceholder";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import type { VideoDto, VideoPropertiesDto } from "../types";
 import { VideoRow } from "./VideoRow";
@@ -19,22 +19,6 @@ vi.mock("../api", () => ({
   listTagsForVideo: vi.fn(),
   removeTag: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。処理が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 function video(overrides: Partial<VideoDto> = {}): VideoDto {
   return {
@@ -92,13 +76,6 @@ beforeEach(() => {
   vi.mocked(api.listAllTags).mockResolvedValue([]);
 });
 
-/** 連なった Promise の解決と、それに続く再描画を落ち着かせる。 */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await act(async () => {});
-  }
-}
-
 interface RowProps {
   video: VideoDto;
   thumbnailVersion: number;
@@ -135,15 +112,9 @@ async function renderRow({
   // 値も用意しておく。
   const firstImgs = view.container.querySelectorAll("img").length;
   await settle();
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 行が作り直されて状態が消え、同じ行での props の変化を確かめられない。
   const update = async (next: Partial<RowProps>) => {
     current = { ...current, ...next };
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={unreachableFolders}>
-        {ui(current)}
-      </UnreachableFoldersContext.Provider>,
-    );
+    view.rerender(ui(current));
     await settle();
   };
   return { ...view, cache, onSelect, onContextMenu, update, firstImgs };

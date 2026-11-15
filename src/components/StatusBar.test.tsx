@@ -3,7 +3,6 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { useEffect } from "react";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import * as api from "../api";
-import { UnreachableFoldersContext } from "../reachabilityContext";
 import { renderWithProviders } from "../testing/render";
 import { StatusBar } from "./StatusBar";
 
@@ -183,26 +182,16 @@ test("動画が0件のときジャンプのボタンは無効で、押しても�
   expect(screen.queryByTestId("status-jump-menu")).toBeNull();
 });
 
-// rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-// 作り直されて状態が消え、「開き直さない」ことを確かめられない。
 test("メニューを開いたまま動画が0件になると閉じ、件数が戻っても開き直さない", async () => {
   const { user, rerender, onJump } = await renderBar({ videoCount: 10 });
   await user.click(jumpButton());
   expect(screen.getByTestId("status-jump-menu")).toBeInTheDocument();
 
-  rerender(
-    <UnreachableFoldersContext.Provider value={[]}>
-      <StatusBar refreshKey={0} videoCount={0} selectedCount={0} onJump={onJump} />
-    </UnreachableFoldersContext.Provider>,
-  );
+  rerender(<StatusBar refreshKey={0} videoCount={0} selectedCount={0} onJump={onJump} />);
   await waitFor(() => expect(screen.queryByTestId("status-jump-menu")).toBeNull());
   expect(jumpButton()).toBeDisabled();
 
-  rerender(
-    <UnreachableFoldersContext.Provider value={[]}>
-      <StatusBar refreshKey={0} videoCount={10} selectedCount={0} onJump={onJump} />
-    </UnreachableFoldersContext.Provider>,
-  );
+  rerender(<StatusBar refreshKey={0} videoCount={10} selectedCount={0} onJump={onJump} />);
 
   expect(screen.queryByTestId("status-jump-menu")).toBeNull();
   expect(jumpButton()).toBeEnabled();

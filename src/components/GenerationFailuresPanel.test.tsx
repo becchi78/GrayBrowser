@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
 import * as events from "../events";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "../types";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
@@ -21,22 +21,6 @@ vi.mock("../api", () => ({
 vi.mock("../events", () => ({
   onCatalogChanged: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。処理が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 const pathOf = (name: string) => `C:\\videos\\sub\\${name}.mp4`;
 
@@ -93,13 +77,6 @@ beforeEach(() => {
   vi.mocked(api.retryMetadataProbe).mockResolvedValue(undefined);
 });
 
-/** 連なった Promise の解決と、それに続く再描画を落ち着かせる。 */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await act(async () => {});
-  }
-}
-
 /** catalog:changed を届け、取り直しの結果が描画されるまで待つ。 */
 async function emitCatalogChanged() {
   await act(async () => {
@@ -129,13 +106,9 @@ async function renderPanel({
   const view = renderWithProviders(ui(current));
   await waitFor(() => expect(api.listGenerationFailures).toHaveBeenCalled());
   await settle();
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 作り直されて状態が消え、閉じても状態が残ることを前提にした確認ができない。
   const update = async (next: Partial<PanelProps>) => {
     current = { ...current, ...next };
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={[]}>{ui(current)}</UnreachableFoldersContext.Provider>,
-    );
+    view.rerender(ui(current));
     await settle();
   };
   return { ...view, onCountChange, update };

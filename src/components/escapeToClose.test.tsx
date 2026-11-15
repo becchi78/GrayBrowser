@@ -5,6 +5,8 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { getVersion } from "@tauri-apps/api/app";
 import * as api from "../api";
+import { never } from "../testing/async";
+import { fakeUpdate } from "../testing/fakes";
 import { renderWithProviders } from "../testing/render";
 import { AboutDialog } from "./AboutDialog";
 import { BulkTagDialog } from "./BulkTagDialog";
@@ -52,11 +54,6 @@ vi.mock("../events", () => ({
   onWbImportComplete: vi.fn(() => () => {}),
   onWbImportFailed: vi.fn(() => () => {}),
 }));
-
-/** 解決しない Promise。「処理中」の状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 beforeEach(() => {
   vi.mocked(getVersion).mockResolvedValue("1.2.3");
@@ -163,16 +160,6 @@ test("SettingsDialog は open が false なら描画されず、Escape でも on
 });
 
 // ---- UpdateDialog ----
-
-function fakeUpdate(downloadAndInstall: () => Promise<void>) {
-  return {
-    version: "2.0.0",
-    currentVersion: "1.0.0",
-    body: "ノート",
-    close: vi.fn().mockResolvedValue(undefined),
-    downloadAndInstall: vi.fn(downloadAndInstall),
-  } as unknown as NonNullable<Awaited<ReturnType<typeof api.checkForUpdate>>>;
-}
 
 test("UpdateDialog は確認中でも Escape で onClose を呼ぶ", async () => {
   vi.mocked(api.checkForUpdate).mockReturnValue(never());

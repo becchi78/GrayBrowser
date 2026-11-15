@@ -4,37 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyTagsAssigned } from "./wbImportTagsDisplay.ts";
-import type { WbImportSummary } from "../types.ts";
-
-// 各テストで意味を持たせるのは registered/skipped/tags_assigned/source_tag_count のみ。
-// 他フィールドは分類ロジックに関与しないため0で埋める。
-function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
-  return {
-    total: 0,
-    registered: 0,
-    registered_online: 0,
-    registered_offline: 0,
-    failed_rows: 0,
-    skipped: 0,
-    skipped_invalid_name: 0,
-    clamped_scores: 0,
-    tags_assigned: 0,
-    source_tag_count: 0,
-    ratings_from_star_tags: 0,
-    thumbnails_linked: 0,
-    thumbnails_linked_by_name: 0,
-    thumbnails_failed: 0,
-    thumbnails_unmatched: 0,
-    thumbnails_unmatched_empty_hash: 0,
-    thumbnails_skipped_online: 0,
-    watch_folders_added: [],
-    watch_folders_skipped_roots: [],
-    volume_label_resolved: 0,
-    volume_label_unresolved: 0,
-    volume_label_unresolved_labels: [],
-    ...overrides,
-  };
-}
+import { makeSummary } from "../testing/fixtures.ts";
 
 test("tags_assigned > 0 なら success", () => {
   const s = makeSummary({ registered: 3, skipped: 0, tags_assigned: 3, source_tag_count: 5 });

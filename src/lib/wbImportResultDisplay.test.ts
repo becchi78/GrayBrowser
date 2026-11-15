@@ -3,35 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildWbImportResultDisplay } from "./wbImportResultDisplay.ts";
-import type { WbImportSummary } from "../types.ts";
-
-function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
-  return {
-    total: 0,
-    registered: 0,
-    registered_online: 0,
-    registered_offline: 0,
-    failed_rows: 0,
-    skipped: 0,
-    skipped_invalid_name: 0,
-    clamped_scores: 0,
-    tags_assigned: 0,
-    source_tag_count: 0,
-    ratings_from_star_tags: 0,
-    thumbnails_linked: 0,
-    thumbnails_linked_by_name: 0,
-    thumbnails_failed: 0,
-    thumbnails_unmatched: 0,
-    thumbnails_unmatched_empty_hash: 0,
-    thumbnails_skipped_online: 0,
-    watch_folders_added: [],
-    watch_folders_skipped_roots: [],
-    volume_label_resolved: 0,
-    volume_label_unresolved: 0,
-    volume_label_unresolved_labels: [],
-    ...overrides,
-  };
-}
+import { makeSummary } from "../testing/fixtures.ts";
 
 const keys = (items: { key: string }[]) => items.map((i) => i.key);
 

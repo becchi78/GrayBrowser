@@ -3,7 +3,8 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
 import * as events from "../events";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never, settle } from "../testing/async";
+import { makeMember as member, memberPath as pathOf } from "../testing/fixtures";
 import { renderWithProviders } from "../testing/render";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
@@ -20,39 +21,6 @@ vi.mock("../api", () => ({
 vi.mock("../events", () => ({
   onDedupUpdated: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。処理が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
-
-const pathOf = (id: string) => `C:\\videos\\${id}.mp4`;
-
-function member(id: string, overrides: Partial<DuplicateGroupMember> = {}): DuplicateGroupMember {
-  return {
-    video_id: id,
-    file_path: pathOf(id),
-    file_name: `${id}.mp4`,
-    file_size: 100 * 1024 * 1024,
-    status: "online",
-    created_at: "2024-01-01 00:00:00",
-    duration: 60,
-    width: 1920,
-    height: 1080,
-    ...overrides,
-  };
-}
 
 function group(
   members: DuplicateGroupMember[],
@@ -87,13 +55,6 @@ beforeEach(() => {
   vi.mocked(api.playVideo).mockResolvedValue(undefined);
 });
 
-/** 連なった Promise の解決と、それに続く再描画を落ち着かせる。 */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await act(async () => {});
-  }
-}
-
 async function emit(groups: DuplicateGroup[]) {
   await act(async () => {
     emitDedup!(groups);
@@ -123,15 +84,9 @@ async function renderPanel({
   const view = renderWithProviders(ui(current), { unreachableFolders });
   await waitFor(() => expect(api.listDuplicateGroups).toHaveBeenCalled());
   await settle();
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 作り直されて状態が消え、閉じても状態が残ることを前提にした確認ができない。
   const update = async (next: Partial<PanelProps>) => {
     current = { ...current, ...next };
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={unreachableFolders}>
-        {ui(current)}
-      </UnreachableFoldersContext.Provider>,
-    );
+    view.rerender(ui(current));
     await settle();
   };
   return { ...view, onCountChange, update };
