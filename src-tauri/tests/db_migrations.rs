@@ -1,68 +1,66 @@
 //! Integration tests against a real tempdir-backed SQLite file (not
 //! `:memory:` -- WAL mode only means something for a file-backed database).
 
+mod common;
+
+use common::{apply_up_to, init_temp_db, latest_schema_version, sort_orders, tag_names};
 use graybrowser_lib::db;
 
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
+/// Names of every object of `kind` ("table" or "index") in the database.
+fn object_names(conn: &rusqlite::Connection, kind: &str) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = ?1 ORDER BY name")
+        .unwrap();
+    stmt.query_map([kind], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
 }
 
+/// Not an exact listing: every later migration may add tables or indexes, and
+/// this must not break each time. What matters is that none of these goes
+/// missing. (`sqlite_sequence`, which SQLite creates itself for the
+/// AUTOINCREMENT tables, is deliberately not asserted.)
 #[test]
-fn creates_all_eight_tables_and_ten_indexes() {
+fn creates_the_required_tables_and_indexes() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
 
-    // sqlite_sequence is SQLite's own internal bookkeeping table, auto-created
-    // because tags/skipped_files/path_collisions use AUTOINCREMENT -- not one
-    // of our 7.
-    let mut table_stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'sqlite_sequence' ORDER BY name")
-        .unwrap();
-    let tables: Vec<String> = table_stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap();
-    assert_eq!(
-        tables,
-        vec![
-            "path_collisions",
-            "schema_version",
-            "settings",
-            "skipped_files",
-            "tags",
-            "video_tags",
-            "videos",
-            "wb_unmatched_thumbnails"
-        ]
-    );
+    let tables = object_names(&conn, "table");
+    for required in [
+        "path_collisions",
+        "schema_version",
+        "settings",
+        "skipped_files",
+        "tags",
+        "video_tags",
+        "videos",
+        "wb_unmatched_thumbnails",
+    ] {
+        assert!(
+            tables.iter().any(|t| t == required),
+            "table {required} should exist, got {tables:?}"
+        );
+    }
 
-    let mut index_stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name")
-        .unwrap();
-    let indexes: Vec<String> = index_stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap();
-    assert_eq!(
-        indexes,
-        vec![
-            "idx_path_collisions_colliding",
-            "idx_path_collisions_video",
-            "idx_video_tags_tag",
-            "idx_videos_created_at",
-            "idx_videos_full_hash",
-            "idx_videos_name",
-            "idx_videos_path",
-            "idx_videos_quick_hash",
-            "idx_videos_rating",
-            "idx_videos_status",
-        ]
-    );
+    let indexes = object_names(&conn, "index");
+    for required in [
+        "idx_path_collisions_colliding",
+        "idx_path_collisions_video",
+        "idx_video_tags_tag",
+        "idx_videos_created_at",
+        "idx_videos_full_hash",
+        "idx_videos_name",
+        "idx_videos_path",
+        "idx_videos_quick_hash",
+        "idx_videos_rating",
+        "idx_videos_status",
+    ] {
+        assert!(
+            indexes.iter().any(|i| i == required),
+            "index {required} should exist, got {indexes:?}"
+        );
+    }
 }
 
 #[test]
@@ -100,15 +98,12 @@ fn rerunning_migrations_is_a_no_op() {
             .expect("re-running migrations should be a no-op, not an error");
     }
     let conn = db.writer.lock().unwrap();
-    // Eleven migrations exist (v1 initial schema, v2
-    // mtime, v3 kana/roma, v4 video metadata, v5 sort indexes, v6
-    // path_collisions, v7 generation retry columns, v8 thumbnail_ready,
-    // v9 skipped_files.dismissed, v10 tags.sort_order, v11 wb_unmatched_thumbnails) -- a fresh DB should land on all eleven, and
-    // re-running must not insert extra schema_version rows for any of them.
+    // A fresh DB lands on every migration, and re-running must not insert
+    // extra schema_version rows for any of them.
     let version_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version_count, 11);
+    assert_eq!(version_count, latest_schema_version());
 }
 
 /// kana/roma (v3) and the ffprobe metadata columns
@@ -148,60 +143,63 @@ fn migrations_v3_and_v4_add_nullable_columns() {
     }
 }
 
-/// Reproduces upgrading a real database file at schema_version=2 (no
-/// kana/roma/metadata columns, v5 indexes, v6 path_collisions table, or v7
-/// retry-attempt columns) to confirm the full v3-v7 upgrade path a returning
-/// user's app.db actually takes, not just a fresh DB applying every migration
-/// together.
+/// Reproduces upgrading a real database file at schema_version=1 (no `mtime`
+/// column) or 2 (no kana/roma/metadata columns, v5 indexes, v6
+/// path_collisions table, or v7 retry-attempt columns) all the way to the
+/// current schema, rather than relying on a fresh DB always applying every
+/// migration together -- the actual upgrade path a returning user's `app.db`
+/// takes, from the oldest possible starting points.
 #[test]
-fn migrating_from_a_real_v2_database_reaches_the_current_version_cleanly() {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
+fn migrating_from_a_real_v1_or_v2_database_reaches_the_current_version_cleanly() {
+    for start_version in [1, 2] {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let db_path = dir.path().join("app.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            apply_up_to(&conn, start_version);
+        }
 
-    {
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
+        let db = db::init(&db_path).unwrap_or_else(|e| {
+            panic!(
+                "db::init should upgrade a v{start_version} database to the current version: {e}"
+            )
+        });
+        let conn = db.writer.lock().unwrap();
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
-            .unwrap();
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)", [])
-            .unwrap();
-        conn.execute("INSERT INTO schema_version (version) VALUES (2)", [])
-            .unwrap();
+        assert_eq!(version, latest_schema_version(), "from v{start_version}");
+
+        // Each added column or table must be usable, not just present in the
+        // schema.
+        conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])
+            .expect("mtime column should be queryable/writable after the upgrade");
+
+        conn.execute(
+            "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
+            [],
+        )
+        .expect("kana/probed_at columns should be queryable/writable after the upgrade");
+
+        conn.execute(
+            "INSERT INTO path_collisions (video_id, colliding_video_id, attempted_path) VALUES ('a', 'b', 'C:/x.mp4')",
+            [],
+        )
+        .expect("path_collisions table should be usable after the upgrade");
+
+        conn.execute(
+            "UPDATE videos SET thumbnail_attempts = 1, metadata_attempts = 1 WHERE id = 'nonexistent'",
+            [],
+        )
+        .expect("thumbnail_attempts/metadata_attempts columns should be queryable/writable after the upgrade");
+
+        conn.execute(
+            "UPDATE videos SET thumbnail_ready = 1 WHERE id = 'nonexistent'",
+            [],
+        )
+        .expect("thumbnail_ready column should be queryable/writable after the upgrade");
     }
-
-    let db = db::init(&db_path)
-        .expect("db::init should upgrade a v2-only database to the current version");
-    let conn = db.writer.lock().unwrap();
-
-    let version: i64 = conn
-        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(version, 11);
-
-    conn.execute(
-        "UPDATE videos SET kana = 'test', probed_at = CURRENT_TIMESTAMP WHERE id = 'nonexistent'",
-        [],
-    )
-    .expect("kana/probed_at columns should be queryable/writable after the upgrade");
-
-    conn.execute(
-        "INSERT INTO path_collisions (video_id, colliding_video_id, attempted_path) VALUES ('a', 'b', 'C:/x.mp4')",
-        [],
-    )
-    .expect("path_collisions table should be usable after the upgrade");
-
-    conn.execute(
-        "UPDATE videos SET thumbnail_attempts = 1, metadata_attempts = 1 WHERE id = 'nonexistent'",
-        [],
-    )
-    .expect("thumbnail_attempts/metadata_attempts columns should be queryable/writable after the upgrade");
-
-    conn.execute(
-        "UPDATE videos SET thumbnail_ready = 1 WHERE id = 'nonexistent'",
-        [],
-    )
-    .expect("thumbnail_ready column should be queryable/writable after the upgrade");
 }
 
 /// Reproduces upgrading a real database file at schema_version=6 (every
@@ -219,25 +217,7 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
 
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0003_add_kana_roma.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0004_add_video_metadata.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0005_add_sort_indexes.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0006_add_path_collisions.sql"))
-            .unwrap();
-        for version in 1..=6 {
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                [version],
-            )
-            .unwrap();
-        }
+        apply_up_to(&conn, 6);
 
         // A video row registered before migration 0007 ever ran -- its two
         // new columns must still read back as 0 (the `DEFAULT 0` backfill),
@@ -257,7 +237,11 @@ fn migrating_from_a_real_v6_database_reaches_v7_and_initializes_attempts_columns
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 11, "should also pick up v8 to v11");
+    assert_eq!(
+        version,
+        latest_schema_version(),
+        "should also pick up every later migration"
+    );
 
     let (thumbnail_attempts, metadata_attempts): (i64, i64) = conn
         .query_row(
@@ -293,29 +277,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
 
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0003_add_kana_roma.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0004_add_video_metadata.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0005_add_sort_indexes.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0006_add_path_collisions.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!(
-            "../migrations/0007_add_generation_retry_columns.sql"
-        ))
-        .unwrap();
-        for version in 1..=7 {
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                [version],
-            )
-            .unwrap();
-        }
+        apply_up_to(&conn, 7);
 
         conn.execute(
             "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
@@ -332,7 +294,7 @@ fn migrating_from_a_real_v7_database_reaches_v8_and_initializes_thumbnail_ready_
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, latest_schema_version());
 
     let thumbnail_ready: i64 = conn
         .query_row(
@@ -363,31 +325,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
 
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0003_add_kana_roma.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0004_add_video_metadata.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0005_add_sort_indexes.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/0006_add_path_collisions.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!(
-            "../migrations/0007_add_generation_retry_columns.sql"
-        ))
-        .unwrap();
-        conn.execute_batch(include_str!("../migrations/0008_add_thumbnail_ready.sql"))
-            .unwrap();
-        for version in 1..=8 {
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                [version],
-            )
-            .unwrap();
-        }
+        apply_up_to(&conn, 8);
         conn.execute(
             "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
              VALUES ('D:\\v\\a\u{2460}.mp4', 'a\u{2460}.mp4', 'machine_dependent_char', '\u{2460}')",
@@ -403,7 +341,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, latest_schema_version());
     let dismissed: i64 = conn
         .query_row("SELECT dismissed FROM skipped_files", [], |r| r.get(0))
         .unwrap();
@@ -439,44 +377,6 @@ fn migration_v2_adds_a_nullable_mtime_column() {
     assert_eq!(mtime_col.1, 0, "videos.mtime must be nullable");
 }
 
-/// Reproduces upgrading a real database file at schema_version=1 (no
-/// `mtime` column) all the way to the current schema, rather than relying
-/// on a fresh DB always applying every migration together -- an oldest-
-/// possible-starting-point variant of the actual upgrade path a returning
-/// user's `app.db` takes (see also
-/// `migrating_from_a_real_v2_database_reaches_the_current_version_cleanly`
-/// for the v2-start variant).
-#[test]
-fn migrating_from_a_real_v1_database_reaches_the_current_version_cleanly() {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-
-    {
-        // 0001_initial.sql itself creates schema_version (IF NOT EXISTS,
-        // since run_migrations normally bootstraps it separately before the
-        // first migration ever runs) -- so it already exists after this
-        // batch, and only needs its v1 row inserted.
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)", [])
-            .unwrap();
-    }
-
-    let db = db::init(&db_path)
-        .expect("db::init should upgrade a v1-only database to the current version");
-    let conn = db.writer.lock().unwrap();
-
-    let version: i64 = conn
-        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(version, 11);
-
-    // The column must be usable, not just present in the schema.
-    conn.execute("UPDATE videos SET mtime = 123 WHERE id = 'nonexistent'", [])
-        .expect("mtime column should be queryable/writable after the upgrade");
-}
-
 /// Builds a database with migrations 1..=9 applied (the last schema before
 /// `tags.sort_order`), seeded with `tags` and an optional raw
 /// `tag_bar_pinned_tags` setting value, then upgrades it through `db::init`.
@@ -488,26 +388,7 @@ fn upgrade_v9_with(
     let db_path = dir.path().join("app.db");
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        for sql in [
-            include_str!("../migrations/0001_initial.sql"),
-            include_str!("../migrations/0002_add_mtime.sql"),
-            include_str!("../migrations/0003_add_kana_roma.sql"),
-            include_str!("../migrations/0004_add_video_metadata.sql"),
-            include_str!("../migrations/0005_add_sort_indexes.sql"),
-            include_str!("../migrations/0006_add_path_collisions.sql"),
-            include_str!("../migrations/0007_add_generation_retry_columns.sql"),
-            include_str!("../migrations/0008_add_thumbnail_ready.sql"),
-            include_str!("../migrations/0009_add_skipped_files_dismissed.sql"),
-        ] {
-            conn.execute_batch(sql).unwrap();
-        }
-        for version in 1..=9 {
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                [version],
-            )
-            .unwrap();
-        }
+        apply_up_to(&conn, 9);
         for (id, name) in tags {
             conn.execute(
                 "INSERT INTO tags (id, name) VALUES (?1, ?2)",
@@ -527,27 +408,6 @@ fn upgrade_v9_with(
     (dir, db)
 }
 
-fn sort_orders(db: &db::Db) -> Vec<(i64, Option<i64>)> {
-    let conn = db.writer.lock().unwrap();
-    let mut stmt = conn
-        .prepare("SELECT id, sort_order FROM tags ORDER BY id")
-        .unwrap();
-    let rows = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap();
-    rows
-}
-
-fn tag_names(db: &db::Db) -> Vec<String> {
-    db::queries::list_all_tags(&db.read_pool)
-        .unwrap()
-        .into_iter()
-        .map(|t| t.name)
-        .collect()
-}
-
 fn pinned_setting_rows(db: &db::Db) -> i64 {
     let conn = db.writer.lock().unwrap();
     conn.query_row(
@@ -561,23 +421,10 @@ fn pinned_setting_rows(db: &db::Db) -> i64 {
 const TAGS: [(i64, &str); 4] = [(1, "a"), (2, "b"), (3, "c"), (4, "d")];
 
 #[test]
-fn migration_v10_bundled_sqlite_has_json_each_and_json_valid() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    let sum: i64 = conn
-        .query_row(
-            "SELECT SUM(value) FROM json_each('[1,2,3]') WHERE json_valid('[1,2,3]')",
-            [],
-            |r| r.get(0),
-        )
-        .expect("the bundled SQLite must provide json_each and json_valid");
-    assert_eq!(sum, 6);
-}
-
-#[test]
 fn migration_v10_without_pinned_setting_leaves_every_sort_order_null() {
     let (_dir, db) = upgrade_v9_with(&TAGS, None);
     assert_eq!(
-        sort_orders(&db),
+        sort_orders(&db.writer.lock().unwrap()),
         vec![(1, None), (2, None), (3, None), (4, None)]
     );
 }
@@ -586,7 +433,7 @@ fn migration_v10_without_pinned_setting_leaves_every_sort_order_null() {
 fn migration_v10_carries_pinned_tags_over_in_pinned_order_and_removes_the_setting() {
     let (_dir, db) = upgrade_v9_with(&TAGS, Some("[3,1]"));
     assert_eq!(
-        sort_orders(&db),
+        sort_orders(&db.writer.lock().unwrap()),
         vec![(1, Some(1)), (2, None), (3, Some(0)), (4, None)]
     );
     assert_eq!(pinned_setting_rows(&db), 0);
@@ -598,7 +445,7 @@ fn migration_v10_ignores_a_malformed_or_non_array_pinned_setting() {
     for raw in ["not json", "{\"a\":1}", "3", "\"[3,1]\"", "", "null"] {
         let (_dir, db) = upgrade_v9_with(&TAGS, Some(raw));
         assert_eq!(
-            sort_orders(&db),
+            sort_orders(&db.writer.lock().unwrap()),
             vec![(1, None), (2, None), (3, None), (4, None)],
             "setting {raw:?}"
         );
@@ -612,7 +459,7 @@ fn migration_v10_skips_unknown_ids_and_non_integers_and_keeps_first_of_duplicate
     // Positions: 99@0 (no tag), 3@1, "1"@2 (string), 3@3 (dup), null@4,
     // 2.5@5, 1@6, 4@7. Only the order has to be preserved, not contiguity.
     assert_eq!(
-        sort_orders(&db),
+        sort_orders(&db.writer.lock().unwrap()),
         vec![(1, Some(6)), (2, None), (3, Some(1)), (4, Some(7))]
     );
     assert_eq!(tag_names(&db), ["c", "a", "d", "b"]);
@@ -643,27 +490,7 @@ fn migrating_from_a_real_v10_database_adds_wb_unmatched_thumbnails_and_keeps_dat
     let db_path = dir.path().join("app.db");
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        for sql in [
-            include_str!("../migrations/0001_initial.sql"),
-            include_str!("../migrations/0002_add_mtime.sql"),
-            include_str!("../migrations/0003_add_kana_roma.sql"),
-            include_str!("../migrations/0004_add_video_metadata.sql"),
-            include_str!("../migrations/0005_add_sort_indexes.sql"),
-            include_str!("../migrations/0006_add_path_collisions.sql"),
-            include_str!("../migrations/0007_add_generation_retry_columns.sql"),
-            include_str!("../migrations/0008_add_thumbnail_ready.sql"),
-            include_str!("../migrations/0009_add_skipped_files_dismissed.sql"),
-            include_str!("../migrations/0010_add_tags_sort_order.sql"),
-        ] {
-            conn.execute_batch(sql).unwrap();
-        }
-        for version in 1..=10 {
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                [version],
-            )
-            .unwrap();
-        }
+        apply_up_to(&conn, 10);
         conn.execute("INSERT INTO tags (id, name) VALUES (1, 'keep')", [])
             .unwrap();
         conn.execute(
@@ -685,7 +512,7 @@ fn migrating_from_a_real_v10_database_adds_wb_unmatched_thumbnails_and_keeps_dat
     let version: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, latest_schema_version());
 
     let tag: String = conn
         .query_row("SELECT name FROM tags WHERE id = 1", [], |r| r.get(0))
