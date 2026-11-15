@@ -8,7 +8,7 @@
 //! `PRAGMA foreign_keys` is deliberately OFF (see `db::disable_foreign_keys`),
 //! nothing in SQLite itself stops an orphan `video_tags` row. The multi-
 //! statement functions in `tags` and `folders` (`assign_tag_to_video`,
-//! `delete_tag`, `delete_video_cascade`) take `&mut Connection` specifically so they can
+//! `delete_tag`, `delete_videos_cascade`) take `&mut Connection` specifically so they can
 //! open a real `conn.transaction()` and enforce that integrity in the
 //! application layer, mirroring `db::migrations::run_migrations`'s
 //! transaction pattern: multiple `tx.execute()`/`tx.query_row()` calls, then

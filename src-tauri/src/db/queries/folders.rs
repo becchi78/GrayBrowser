@@ -5,36 +5,12 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use super::duplicates::record_path_collision;
 
-/// Deletes a video row and every `video_tags` row referencing it, in one
-/// transaction.
-///
-/// Provides the orphan-prevention guarantee video deletion needs; used by
-/// `commands::dedup_cmds::delete_duplicate_video`. Does not touch
-/// `thumbnails/[id].webp` -- callers that also want to remove the cached
-/// thumbnail files must do that separately.
-pub fn delete_video_cascade(conn: &mut Connection, video_id: &str) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
-    tx.execute(
-        "DELETE FROM video_tags WHERE video_id = ?1",
-        params![video_id],
-    )?;
-    // path_collisions rows reference video_id from either side (the
-    // offline row that attempted the move, or the online row that already
-    // occupied the path) -- both must go, same app-layer orphan prevention
-    // as the video_tags delete above.
-    tx.execute(
-        "DELETE FROM path_collisions WHERE video_id = ?1 OR colliding_video_id = ?1",
-        params![video_id],
-    )?;
-    tx.execute("DELETE FROM videos WHERE id = ?1", params![video_id])?;
-    tx.commit()
-}
-
-/// Batch form of `delete_video_cascade`: deletes every listed video row plus
-/// the `video_tags`/`path_collisions` rows referencing any of them, all in one
-/// transaction so a failure part-way leaves no video half-removed. Ids with no
-/// matching row are ignored; returns how many `videos` rows were deleted.
-/// Does not touch thumbnail files.
+/// Deletes every listed video row plus the `video_tags`/`path_collisions` rows
+/// referencing any of them, all in one transaction so a failure part-way leaves
+/// no video half-removed. Ids with no matching row are ignored; returns how
+/// many `videos` rows were deleted. This is the orphan-prevention guarantee
+/// video deletion needs. Does not touch thumbnail files -- callers that also
+/// want to remove the cached thumbnails must do that separately.
 pub fn delete_videos_cascade(conn: &mut Connection, ids: &[String]) -> rusqlite::Result<usize> {
     if ids.is_empty() {
         return Ok(0);
@@ -43,7 +19,10 @@ pub fn delete_videos_cascade(conn: &mut Connection, ids: &[String]) -> rusqlite:
     let mut deleted = 0;
     for id in ids {
         tx.execute("DELETE FROM video_tags WHERE video_id = ?1", params![id])?;
-        // Both sides of a collision pair, same as `delete_video_cascade`.
+        // path_collisions rows reference a video from either side (the
+        // offline row that attempted the move, or the online row that already
+        // occupied the path) -- both must go, same app-layer orphan prevention
+        // as the video_tags delete above.
         tx.execute(
             "DELETE FROM path_collisions WHERE video_id = ?1 OR colliding_video_id = ?1",
             params![id],
@@ -91,10 +70,10 @@ pub fn list_video_ids_and_paths(conn: &Connection) -> anyhow::Result<Vec<(String
 /// `LIKE` matching as `count_videos_under_folder`/`list_videos_filtered`),
 /// plus every `video_tags`/`path_collisions` row referencing one of them, in
 /// a **single transaction** -- the app-layer orphan-
-/// prevention guarantee, extended from `delete_video_cascade`'s one-video
-/// case to "every video under a folder" without looping that function call
-/// by call (which would split the work across many transactions and risk
-/// leaving a partially-deleted folder behind on a mid-loop failure).
+/// prevention guarantee, applied to "every video under a folder" without
+/// looping `delete_videos_cascade` per video (which would split the work
+/// across many transactions and risk leaving a partially-deleted folder
+/// behind on a mid-loop failure).
 ///
 /// The three `DELETE`s below intentionally re-run the same `videos`-matching
 /// `LIKE` subquery/condition (rather than collecting ids into a bound `IN

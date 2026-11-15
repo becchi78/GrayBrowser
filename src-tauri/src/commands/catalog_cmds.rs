@@ -1,12 +1,35 @@
 //! Catalog-wide commands that act on a set of videos chosen in the list.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::State;
 
-use crate::commands::dedup_cmds::{delete_thumbnail_files, thumbnails_root_from_app_dir};
 use crate::db::Db;
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
+
+/// Deletes the cached thumbnail slot files of `video_id` (only the cache under
+/// `thumbnails_root`, never the source video). Best-effort: the thumbnails may
+/// never have been generated (e.g. an offline video), same "may not exist"
+/// reasoning as thumbnail::worker's own tmp-file cleanup.
+fn delete_thumbnail_files(
+    thumbnails_root: &Path,
+    watch_folders: &[String],
+    file_path: &str,
+    video_id: &str,
+) {
+    let video_dir =
+        crate::thumbnail::paths::video_thumbnail_dir(thumbnails_root, watch_folders, file_path);
+    for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
+        let thumb_path = crate::thumbnail::paths::slot_path(&video_dir, video_id, i);
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+}
+
+pub(crate) fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
+    crate::paths::app_data_dir()
+        .ok()
+        .map(|app_dir| crate::thumbnail::paths::thumbnails_root(&app_dir))
+}
 
 /// Removes `video_ids` from the catalog in one transaction (rows, tags, path
 /// collisions) and then deletes their cached thumbnails. Returns how many
