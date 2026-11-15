@@ -343,7 +343,7 @@ mod skipped_file_tests {
     }
 
     #[test]
-    fn wb_style_upsert_does_not_resurrect_a_dismissed_row() {
+    fn a_plain_upsert_does_not_resurrect_a_dismissed_row() {
         let (_d, db) = init_temp_db();
         upsert_skipped_file(&db.writer.lock().unwrap(), &skipped("C:/v/a.mp4")).unwrap();
         let id = id_of(&db, "C:/v/a.mp4");
