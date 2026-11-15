@@ -2,6 +2,8 @@
 //! merging newly-picked folders, reordering, and per-folder update-check
 //! filtering.
 
+use crate::paths::PATH_SEPARATORS;
+
 /// Appends `picked` to `existing`, skipping any that are already present.
 /// Preserves `existing`'s order; new entries are appended in the order given.
 pub fn merge(existing: Vec<String>, picked: Vec<String>) -> Vec<String> {
@@ -21,7 +23,7 @@ pub fn merge(existing: Vec<String>, picked: Vec<String>) -> Vec<String> {
 /// its `\` back, since `D:` alone means "current directory on D"). `None` for
 /// a path with no folder part.
 fn parent_folder(video_path: &str) -> Option<String> {
-    let idx = video_path.rfind(['\\', '/'])?;
+    let idx = video_path.rfind(PATH_SEPARATORS)?;
     let folder = video_path[..idx].replace('/', "\\");
     let folder = folder.trim_end_matches('\\');
     if folder.is_empty() {

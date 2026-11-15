@@ -6,12 +6,8 @@
 //! character was lost here". The lost character is recovered by listing the
 //! parent folder and looking for the one entry that fits.
 
-use crate::paths::extract_drive_root;
+use crate::paths::{extract_drive_root, is_path_sep};
 use crate::ports::dir_lister::DirLister;
-
-fn is_sep(c: char) -> bool {
-    c == '\\' || c == '/'
-}
 
 /// Length in bytes of the leading root of `path` (`D:\`, `\\server\share\`),
 /// as written in the original string so separators are preserved. `None` when
@@ -24,16 +20,16 @@ fn root_len(path: &str) -> Option<usize> {
         return None;
     }
     let first = path.chars().next()?;
-    if is_sep(first) {
+    if is_path_sep(first) {
         // UNC: two separators, server, separator, share, separator.
         let mut end = 2;
         for _ in 0..2 {
-            end += path[end..].find(is_sep)? + 1;
+            end += path[end..].find(is_path_sep)? + 1;
         }
         Some(end)
     } else {
         // Drive: `X:` followed by a separator.
-        path[2..].starts_with(is_sep).then_some(3)
+        path[2..].starts_with(is_path_sep).then_some(3)
     }
 }
 
@@ -75,14 +71,14 @@ pub fn restore_path(path: &str, lister: &impl DirLister) -> Option<String> {
     }
 
     let mut resolved = root.to_string();
-    for piece in rest.split_inclusive(is_sep) {
-        let segment = piece.trim_end_matches(is_sep);
+    for piece in rest.split_inclusive(is_path_sep) {
+        let segment = piece.trim_end_matches(is_path_sep);
         let separator = &piece[segment.len()..];
         if segment.contains('?') {
             let dir = if resolved.len() == root.len() {
                 root
             } else {
-                resolved.trim_end_matches(is_sep)
+                resolved.trim_end_matches(is_path_sep)
             };
             let names = lister.list_names(dir)?;
             let mut matches = names.iter().filter(|n| segment_matches(segment, n));
@@ -101,7 +97,7 @@ pub fn restore_path(path: &str, lister: &impl DirLister) -> Option<String> {
 
 /// The last `\`- or `/`-separated component of `path`.
 pub fn last_segment(path: &str) -> &str {
-    path.rsplit(is_sep).next().unwrap_or(path)
+    path.rsplit(is_path_sep).next().unwrap_or(path)
 }
 
 // フェイクは Cargo feature `testing` 限定のため、feature なしの

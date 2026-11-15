@@ -28,6 +28,13 @@ pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Characters that separate path components; Windows accepts both.
+pub(crate) const PATH_SEPARATORS: [char; 2] = ['\\', '/'];
+
+pub(crate) fn is_path_sep(c: char) -> bool {
+    PATH_SEPARATORS.contains(&c)
+}
+
 /// Extracts the drive root of a Windows path, for drive-type detection: a
 /// drive-letter path (`D:\Videos\a.mp4`) becomes
 /// `D:\`, a UNC path (`\\nas\share\videos\a.mp4`) becomes `\\nas\share\`
@@ -42,19 +49,15 @@ pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
 /// to the adapter layer (`src-tauri::adapters::drive_type`) while keeping
 /// this decomposition logic OS-independent and unit-testable here.
 pub fn extract_drive_root(path: &str) -> Option<String> {
-    fn is_sep(c: char) -> bool {
-        c == '\\' || c == '/'
-    }
-
     let trimmed = path.trim_start();
     let mut chars = trimmed.chars();
     let first = chars.next()?;
 
-    if is_sep(first) {
+    if is_path_sep(first) {
         // UNC: \\server\share\... (or //server/share/...)
-        if chars.next().is_some_and(is_sep) {
+        if chars.next().is_some_and(is_path_sep) {
             let rest = &trimmed[2..];
-            let mut parts = rest.splitn(3, is_sep);
+            let mut parts = rest.splitn(3, is_path_sep);
             let server = parts.next().filter(|s| !s.is_empty())?;
             let share = parts.next().filter(|s| !s.is_empty())?;
             return Some(format!("\\\\{server}\\{share}\\"));

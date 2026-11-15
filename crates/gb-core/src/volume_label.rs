@@ -4,14 +4,14 @@
 
 use std::collections::HashMap;
 
-const SEPARATORS: [char; 2] = ['\\', '/'];
+use crate::paths::PATH_SEPARATORS;
 
 /// Splits `::LABEL\rest` into `("LABEL", "\rest")`. The rest keeps its leading
 /// separator and is empty for a bare `::LABEL`. `None` when the path does not
 /// start with `::` or the label is empty.
 pub fn split_volume_label_path(path: &str) -> Option<(&str, &str)> {
     let body = path.strip_prefix("::")?;
-    let end = body.find(SEPARATORS).unwrap_or(body.len());
+    let end = body.find(PATH_SEPARATORS).unwrap_or(body.len());
     let (label, rest) = body.split_at(end);
     if label.is_empty() {
         return None;
@@ -22,7 +22,7 @@ pub fn split_volume_label_path(path: &str) -> Option<(&str, &str)> {
 /// Puts `rest` (as returned by `split_volume_label_path`) under `root`
 /// (`E:\` or `E:`), giving `E:\rest`.
 pub fn apply_drive_root(rest: &str, root: &str) -> String {
-    let drive = root.trim_end_matches(SEPARATORS);
+    let drive = root.trim_end_matches(PATH_SEPARATORS);
     if rest.is_empty() {
         return format!("{drive}\\");
     }
