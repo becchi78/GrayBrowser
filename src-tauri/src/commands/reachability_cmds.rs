@@ -61,10 +61,7 @@ pub fn check_folder_reachability(
     registry: State<ReachabilityRegistry>,
     folder: String,
 ) -> Result<(), String> {
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
-    };
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
     start_folder_reachability_check(
         &registry,
         &watch_folders,

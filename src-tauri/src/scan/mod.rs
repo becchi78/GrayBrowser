@@ -141,6 +141,17 @@ pub enum ProcessOutcome {
     SkippedUnreadable,
 }
 
+impl ProcessOutcome {
+    /// Whether the catalog changed, i.e. the frontend must be told and the
+    /// thumbnail/metadata queues woken. The other outcomes never write.
+    pub fn changed_catalog(&self) -> bool {
+        matches!(
+            self,
+            Self::Registered | Self::Reconciled | Self::PathFollowed { .. }
+        )
+    }
+}
+
 /// Processes one already-detected file end to end: validates its name, then
 /// reconciles it against any existing DB row or registers it as new.
 ///
@@ -866,6 +877,40 @@ pub fn scan_folders_with_existence(
     Ok(summary)
 }
 
+/// Logs what the missing-video decision withheld or double-checked, so the
+/// manual scan and the NAS poll report it in the same shape. `scan_label`
+/// names the caller; `hold_qualifier` is spliced after "online" in the
+/// "holding" line (the poll says " this cycle").
+pub(crate) fn log_missing_video_decision(
+    scan_label: &str,
+    folder: &str,
+    hold_qualifier: &str,
+    decision: &reconcile::MissingVideoDecision,
+) {
+    if let Some(check) = &decision.individually_checked {
+        if check.confirmed_missing_count > 0 {
+            log::info!(
+                "{scan_label} for {folder}: {} of {} withheld video(s) confirmed not found \
+                 one by one (guard reason={:?}), marking them offline",
+                check.confirmed_missing_count,
+                check.checked_count,
+                check.reason
+            );
+        }
+    }
+    if let Some(guard) = &decision.suppressed {
+        log::warn!(
+            "{scan_label} for {folder}: holding {} video(s) online{hold_qualifier} (known={}, \
+             discovered={}, reason={:?}) -- enumeration looks broken, not treating this as \
+             genuine deletion",
+            guard.candidate_count,
+            guard.known_online_count,
+            guard.discovered_count,
+            guard.reason
+        );
+    }
+}
+
 /// Missing-video determination for one folder, run once that folder's
 /// `WalkDir` walk has fully completed. This is the manual-scan escape hatch
 /// for videos the NAS-polling ratio guard can't self-resolve on its own --
@@ -916,27 +961,7 @@ fn reconcile_missing_videos(
         reconcile::decide_missing_video_ids(&known_online, &diff),
         existence,
     );
-    if let Some(check) = &decision.individually_checked {
-        if check.confirmed_missing_count > 0 {
-            log::info!(
-                "manual scan for {folder}: {} of {} withheld video(s) confirmed not found \
-                 one by one (guard reason={:?}), marking them offline",
-                check.confirmed_missing_count,
-                check.checked_count,
-                check.reason
-            );
-        }
-    }
-    if let Some(guard) = &decision.suppressed {
-        log::warn!(
-            "manual scan for {folder}: holding {} video(s) online (known={}, discovered={}, \
-             reason={:?}) -- enumeration looks broken, not treating this as genuine deletion",
-            guard.candidate_count,
-            guard.known_online_count,
-            guard.discovered_count,
-            guard.reason
-        );
-    }
+    log_missing_video_decision("manual scan", folder, "", &decision);
     if !decision.missing_ids.is_empty() {
         let conn = db.writer.lock().unwrap();
         for id in &decision.missing_ids {
@@ -2259,5 +2284,32 @@ mod tests {
 
         assert_eq!(summary.went_offline, 0);
         assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
+    }
+}
+
+#[cfg(test)]
+mod process_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn only_outcomes_that_write_to_the_catalog_count_as_changes() {
+        let changed = [
+            ProcessOutcome::Registered,
+            ProcessOutcome::Reconciled,
+            ProcessOutcome::PathFollowed {
+                video_id: "v".into(),
+            },
+        ];
+        let unchanged = [
+            ProcessOutcome::Unchanged,
+            ProcessOutcome::BlockedByCollision {
+                video_id: "a".into(),
+                colliding_video_id: "b".into(),
+            },
+            ProcessOutcome::SkippedInvalidName { detected_char: '?' },
+            ProcessOutcome::SkippedUnreadable,
+        ];
+        assert!(changed.iter().all(ProcessOutcome::changed_catalog));
+        assert!(!unchanged.iter().any(ProcessOutcome::changed_catalog));
     }
 }

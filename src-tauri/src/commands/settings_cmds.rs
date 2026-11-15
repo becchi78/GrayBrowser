@@ -47,8 +47,7 @@ pub fn pick_watch_folders(
 
     if picked.is_none() {
         // Cancelled: nothing to write, so read the list without the writer lock.
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        return queries::get_watch_folders(&conn).map_err(|e| e.to_string());
+        return queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string());
     }
 
     let (existing, merged, nas_poll_interval_secs) = {
@@ -62,9 +61,8 @@ pub fn pick_watch_folders(
         // does its own DB reads/watcher-startup work.
     };
 
-    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
-        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-    );
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
     // Thumbnails of videos already registered sit where the old folder list
     // resolved them (typically `_unassigned/`); move them before anything
     // reads them through the new list.
@@ -96,8 +94,7 @@ pub fn pick_watch_folders(
 
 #[tauri::command]
 pub fn list_watch_folders(db: State<Db>) -> Result<Vec<String>, String> {
-    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-    queries::get_watch_folders(&conn).map_err(|e| e.to_string())
+    queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())
 }
 
 /// Validates `ordered` against the stored list and persists it. Takes the
@@ -170,9 +167,8 @@ pub fn set_watch_folder_check_enabled(
     folder_path: String,
     enabled: bool,
 ) -> Result<Vec<String>, String> {
-    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
-        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-    );
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
 
     let (disabled, folders, nas_poll_interval_secs) = {
         let conn = db.writer.lock().unwrap();
@@ -238,9 +234,8 @@ pub fn set_nas_poll_interval_minutes(
 ) -> Result<u32, String> {
     // Resolved before the DB write so a failure here cannot leave the new
     // value saved while the command returns `Err`.
-    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
-        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-    );
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
 
     let (secs, folders) = {
         let conn = db.writer.lock().unwrap();
@@ -326,9 +321,8 @@ pub fn remove_watch_folder(
     // leave the DB already changed while the command still returns `Err`
     // (and `notify_changed` never fires, so the frontend never learns the
     // DB actually changed).
-    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
-        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-    );
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
 
     let (remaining, nas_poll_interval_secs) = {
         let mut conn = db.writer.lock().unwrap();
@@ -440,9 +434,8 @@ pub fn rename_watch_folder(
     // the DB, never after (which would otherwise leave the DB already
     // renamed while the command still returns `Err` and `notify_changed`
     // never fires).
-    let thumbnails_root = crate::thumbnail::paths::thumbnails_root(
-        &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-    );
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
 
     let (result, nas_poll_interval_secs, renamed_videos) = {
         let mut conn = db.writer.lock().unwrap();
@@ -531,6 +524,7 @@ pub fn rename_watch_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thumbnail::paths::slot_path;
     use gb_core::ports::dialog::DialogError;
     use gb_core::testing::fake_dialog::FakeFolderPicker;
 
@@ -817,11 +811,7 @@ mod tests {
         std::fs::create_dir_all(&old_dir).unwrap();
         for id in ["clashing", "free"] {
             for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
-                std::fs::write(
-                    old_dir.join(format!("{id}_{i}.webp")),
-                    format!("{id}-slot-{i}"),
-                )
-                .unwrap();
+                std::fs::write(slot_path(&old_dir, id, i), format!("{id}-slot-{i}")).unwrap();
             }
         }
 
@@ -856,11 +846,11 @@ mod tests {
         // "free" (actually renamed) must have moved to the new subdirectory.
         for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
             assert!(
-                !old_dir.join(format!("free_{i}.webp")).exists(),
+                !slot_path(&old_dir, "free", i).exists(),
                 "free's slot {i} must no longer be in the old folder's subdirectory"
             );
             assert_eq!(
-                std::fs::read_to_string(new_dir.join(format!("free_{i}.webp"))).unwrap(),
+                std::fs::read_to_string(slot_path(&new_dir, "free", i)).unwrap(),
                 format!("free-slot-{i}")
             );
         }
@@ -870,15 +860,15 @@ mod tests {
         // new one -- the core guarantee this test exists to protect.
         for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
             assert!(
-                old_dir.join(format!("clashing_{i}.webp")).exists(),
+                slot_path(&old_dir, "clashing", i).exists(),
                 "clashing's slot {i} must remain in the old folder's subdirectory"
             );
             assert_eq!(
-                std::fs::read_to_string(old_dir.join(format!("clashing_{i}.webp"))).unwrap(),
+                std::fs::read_to_string(slot_path(&old_dir, "clashing", i)).unwrap(),
                 format!("clashing-slot-{i}")
             );
             assert!(
-                !new_dir.join(format!("clashing_{i}.webp")).exists(),
+                !slot_path(&new_dir, "clashing", i).exists(),
                 "clashing's slot {i} must NOT have been moved to the new folder's subdirectory"
             );
         }

@@ -151,11 +151,7 @@ pub(crate) fn delete_video_with_file(
         .count();
     let group_content = group_content_of(&group.kind);
 
-    let watch_folders = db
-        .read_pool
-        .get()
-        .map_err(|e| e.to_string())
-        .and_then(|conn| crate::db::queries::get_watch_folders(&conn).map_err(|e| e.to_string()))
+    let watch_folders = crate::db::queries::read_watch_folders(&db.read_pool)
         .map_err(|e| format!("登録フォルダを取得できませんでした: {e}"))?;
     let under_registered_folder =
         gb_core::paths::is_under_any_folder(&row.file_path, &watch_folders);

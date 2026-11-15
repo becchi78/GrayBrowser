@@ -248,13 +248,8 @@ pub fn retry_metadata_probe(
 /// `thumbnails_root` failure is an error here: the bulk command must not touch
 /// the DB when it cannot go on to generate anything.
 fn resolve_thumbnail_context(db: &Db) -> Result<(PathBuf, Vec<String>), String> {
-    let thumbnails_root = crate::paths::app_data_dir()
-        .map(|dir| thumbnail::paths::thumbnails_root(&dir))
-        .map_err(|e| e.to_string())?;
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
-    };
+    let thumbnails_root = thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
     Ok((thumbnails_root, watch_folders))
 }
 

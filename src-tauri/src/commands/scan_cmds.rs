@@ -223,9 +223,8 @@ pub async fn start_scan(
         let conn = db.writer.lock().unwrap();
         load_scan_target_folders(&conn).map_err(|e| e.to_string())?
     };
-    let thumbnails_root = crate::paths::app_data_dir()
-        .map(|dir| crate::thumbnail::paths::thumbnails_root(&dir))
-        .map_err(|e| e.to_string())?;
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
     let summary = scan_reachable_folders(&folders, &reachability, &db, &thumbnails_root)
         .map_err(|e| e.to_string())?;
     // Cloned before `app` moves into `TauriCatalogNotifier` below --
@@ -310,10 +309,7 @@ pub fn list_videos(
     let ratings = ratings
         .unwrap_or_default()
         .into_iter()
-        .map(|r| {
-            gb_core::rating::validate_rating(r)
-                .map_err(|e| format!("rating {} is out of range (must be 0-5)", e.value))
-        })
+        .map(super::rating_cmds::validate_rating_arg)
         .collect::<Result<Vec<u8>, String>>()?;
 
     queries::list_videos_filtered(
@@ -335,11 +331,7 @@ fn list_skipped_files_impl(
     fs: &dyn PathExistence,
 ) -> Result<Vec<SkippedFileDto>, String> {
     let rows = queries::list_skipped_files(&db.read_pool).map_err(|e| e.to_string())?;
-    let watch_folders = db
-        .read_pool
-        .get()
-        .map_err(|e| e.to_string())
-        .and_then(|conn| queries::get_watch_folders(&conn).map_err(|e| e.to_string()))?;
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
     Ok(rows
         .into_iter()
         .map(|row| {

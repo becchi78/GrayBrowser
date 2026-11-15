@@ -7,6 +7,7 @@ pub mod logging;
 pub mod metadata;
 pub mod offline_sync;
 pub mod paths;
+mod queue_support;
 pub mod reachability;
 pub mod scan;
 pub mod thumbnail;

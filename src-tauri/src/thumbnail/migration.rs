@@ -73,10 +73,7 @@ pub fn migrate_flat_thumbnails_to_folder_subdirs(
         return Ok(summary);
     }
 
-    let watch_folders = {
-        let conn = db.read_pool.get()?;
-        queries::get_watch_folders(&conn)?
-    };
+    let watch_folders = queries::read_watch_folders(&db.read_pool)?;
 
     for (video_id, slot_files) in by_video_id {
         let video = match queries::find_video_by_id(&db.read_pool, &video_id) {
