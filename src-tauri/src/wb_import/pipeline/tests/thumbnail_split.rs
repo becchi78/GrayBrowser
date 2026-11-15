@@ -393,3 +393,41 @@ fn an_unreadable_size_imports_whole_as_before() {
     assert_eq!(crops(&ffmpeg).len(), 0);
     assert_eq!(converts(&ffmpeg), 2);
 }
+
+#[test]
+fn a_rename_failure_names_the_frame_and_the_io_error_in_the_failure_text() {
+    let h = harness();
+    let video_id = "fixed-video-id-for-rename-message-test";
+    let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
+    std::fs::create_dir_all(&video_dir).unwrap();
+    let src = h.paths.thumbnail_folder.join("MyVideo.mp4.#deadbeef.jpg");
+    std::fs::write(&src, b"fake jpg").unwrap();
+    let blocker = video_dir.join(format!("{video_id}_2.webp"));
+    std::fs::create_dir(&blocker).unwrap();
+    // The io::Error text of a file renamed onto a directory, taken from this
+    // machine instead of hard-coding an OS- and locale-dependent string.
+    let probe = h.paths.thumbnail_folder.join("probe.tmp");
+    std::fs::write(&probe, b"probe").unwrap();
+    let io_text = std::fs::rename(&probe, &blocker).unwrap_err().to_string();
+    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
+    let layout = six_by_one_layout();
+
+    let result = super::super::thumbnails::convert_thumbnail_to_slots(
+        &ffmpeg,
+        &h.paths.thumbnails_dir,
+        &[],
+        video_id,
+        "Z:\rename-message.mp4",
+        &src,
+        Some(&layout),
+    );
+
+    match result {
+        super::super::thumbnails::ItemResult::Failed(message) => {
+            assert_eq!(message, format!("分割に失敗: frame 2: {io_text}"));
+        }
+        super::super::thumbnails::ItemResult::Linked { .. } => {
+            panic!("a blocked rename must fail the item")
+        }
+    }
+}

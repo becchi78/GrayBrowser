@@ -5,6 +5,7 @@
 
 pub mod migration;
 pub mod paths;
+pub(crate) mod publish;
 pub mod reassign;
 pub mod worker;
 
