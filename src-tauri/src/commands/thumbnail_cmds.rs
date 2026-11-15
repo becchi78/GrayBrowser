@@ -7,11 +7,6 @@ use crate::thumbnail::paths as thumbnail_paths;
 use crate::thumbnail::worker::THUMBNAILS_PER_VIDEO;
 use crate::thumbnail::ThumbnailQueueHandle;
 
-#[tauri::command]
-pub fn toggle_thumbnail_pause(queue: State<ThumbnailQueueHandle>, paused: bool) {
-    queue.set_paused(paused);
-}
-
 #[derive(serde::Serialize)]
 pub struct ThumbnailProgressDto {
     pub done: u32,

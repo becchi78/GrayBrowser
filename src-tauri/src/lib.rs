@@ -86,7 +86,6 @@ pub fn run() {
             commands::skipped_cmds::rename_skipped_file,
             commands::skipped_cmds::dismiss_skipped_file,
             commands::skipped_cmds::register_missing_skipped_file,
-            commands::thumbnail_cmds::toggle_thumbnail_pause,
             commands::thumbnail_cmds::get_thumbnails,
             commands::thumbnail_cmds::get_thumbnail_progress,
             commands::player_cmds::play_video,

@@ -26,9 +26,8 @@ const WORKER_THREAD_COUNT: usize = 2;
 /// `thumbnail::enqueue_missing_thumbnails`'s shape (same fixed-pool-pulls-
 /// from-shared-iterator structure, same per-item `notify_changed` -- no new
 /// event name, reusing the established "frontend just re-fetches" pattern).
-/// Metadata probing doesn't need pause/resume control the way thumbnail
-/// generation does, so unlike `ThumbnailQueueHandle` there's no pause flag
-/// here.
+/// Concurrency is bounded by the fixed worker pool, so there is no queue
+/// handle or shared state of its own.
 ///
 /// Like the thumbnail queue, videos under an unreachable watch folder are
 /// skipped without spending a retry, and are picked up again by the follow-up
