@@ -244,8 +244,8 @@ pub struct ExhaustedThumbnailRow {
 
 /// `status='online'` videos whose `thumbnail_attempts` has reached (or
 /// somehow exceeded) `gb_core::retry::MAX_GENERATION_ATTEMPTS` -- i.e. every
-/// video `gb_core::retry::classify_retry_status` would call `Exhausted` for
-/// the thumbnail pipeline. For the "these files could not get a
+/// video for which `gb_core::retry::is_eligible_for_automatic_retry` is false
+/// in the thumbnail pipeline. For the "these files could not get a
 /// thumbnail" notification panel.
 pub fn list_videos_with_exhausted_thumbnail_attempts(
     pool: &r2d2::Pool<SqliteConnectionManager>,
