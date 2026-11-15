@@ -92,32 +92,20 @@ beforeEach(() => {
 test("注意項目ごとに決まった data-testid が付く", async () => {
   renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
-  await screen.findByTestId("import-result-needs-review");
+  await screen.findByTestId("import-result-unmatched");
 
-  expect(screen.getByTestId("import-result-empty-hash")).toBeInTheDocument();
-  expect(screen.getByTestId("import-result-needs-review")).toBeInTheDocument();
-  expect(screen.getByTestId("import-result-skipped-invalid-name")).toBeInTheDocument();
+  expect(screen.getByTestId("import-result-unmatched-empty-hash")).toBeInTheDocument();
+  expect(screen.getByTestId("import-result-unmatched")).toBeInTheDocument();
+  expect(screen.getByTestId("import-result-invalid-name")).toBeInTheDocument();
   expect(screen.getByTestId("import-result-failed-rows")).toBeInTheDocument();
   expect(screen.getByTestId("import-result-skipped-roots")).toBeInTheDocument();
   expect(screen.getByTestId("import-result-volume-label-unresolved")).toBeInTheDocument();
 });
 
-test("旧サムネイル変換の失敗とタグの項目には専用の data-testid が付かない", async () => {
-  renderDialog();
-  completeImport(ALL_ATTENTION_SUMMARY);
-  await screen.findByTestId("import-result-needs-review");
-
-  // 項目自身に testid が無ければ、最も近い testid は外側のダイアログのものになる。
-  const failed = screen.getByText(/旧サムネイル変換に失敗/);
-  expect(failed.closest("[data-testid]")).toHaveAttribute("data-testid", "import-dialog");
-  const tags = screen.getByText(/元データには5件のタグがありましたが/);
-  expect(tags.closest("[data-testid]")).toHaveAttribute("data-testid", "import-dialog");
-});
-
 test("「確認する」は自動対応できなかった項目にだけ出る", async () => {
   renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
-  await screen.findByTestId("import-result-needs-review");
+  await screen.findByTestId("import-result-unmatched");
 
   expect(screen.getByTestId("import-unmatched-review-btn-unmatched")).toBeInTheDocument();
   expect(screen.getByTestId("import-unmatched-review-btn-unmatched-empty-hash")).toBeInTheDocument();
@@ -153,8 +141,8 @@ test("一覧の読み込み中は、自動対応できなかった項目を出�
 
   await screen.findByTestId("import-result-failed-rows");
 
-  expect(screen.queryByTestId("import-result-needs-review")).toBeNull();
-  expect(screen.queryByTestId("import-result-empty-hash")).toBeNull();
+  expect(screen.queryByTestId("import-result-unmatched")).toBeNull();
+  expect(screen.queryByTestId("import-result-unmatched-empty-hash")).toBeNull();
 });
 
 test("一覧に該当する原因の行が残っていなければ、その項目を出さない", async () => {
@@ -164,9 +152,9 @@ test("一覧に該当する原因の行が残っていなければ、その項�
   renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
 
-  await screen.findByTestId("import-result-empty-hash");
+  await screen.findByTestId("import-result-unmatched-empty-hash");
 
-  expect(screen.queryByTestId("import-result-needs-review")).toBeNull();
+  expect(screen.queryByTestId("import-result-unmatched")).toBeNull();
 });
 
 test("一覧の取得に失敗したときは、自動対応できなかった項目を隠さずに出す", async () => {
@@ -175,7 +163,7 @@ test("一覧の取得に失敗したときは、自動対応できなかった�
   renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
 
-  await screen.findByTestId("import-result-needs-review");
+  await screen.findByTestId("import-result-unmatched");
 
-  expect(screen.getByTestId("import-result-empty-hash")).toBeInTheDocument();
+  expect(screen.getByTestId("import-result-unmatched-empty-hash")).toBeInTheDocument();
 });

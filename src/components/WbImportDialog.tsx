@@ -14,7 +14,6 @@ import {
 } from "../events";
 import { abbreviatePath } from "../lib/abbreviatePath";
 import { countUnmatchedByKind, unmatchedCountText } from "../lib/unmatchedThumbnails";
-import { attentionTestId } from "../lib/wbImportAttentionTestId";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import type { WbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import {
@@ -148,7 +147,7 @@ function WbImportResult({
           <div
             key={item.key}
             className={`wb-import-result-attention wb-import-result-attention--${item.tone}`}
-            data-testid={attentionTestId(item.key)}
+            data-testid={`import-result-${item.key}`}
           >
             <p className="dialog-result-line">{item.text}</p>
             {showReview && (
