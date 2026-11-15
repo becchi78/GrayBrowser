@@ -22,9 +22,6 @@ pub fn split_tags(tag: &str) -> Vec<String> {
         .collect()
 }
 
-/// Max star rating; also the cap for a star-only tag with more stars than that.
-const MAX_RATING: u8 = 5;
-
 /// If `tag` consists solely of `★` (after width folding and trimming),
 /// returns the star count capped at 5. WhiteBrowser users encoded ratings as
 /// tags like `★★★`; anything mixed with other characters (`★お気に入り`) or
@@ -36,7 +33,7 @@ pub(crate) fn star_tag_rating(tag: &str) -> Option<u8> {
         return None;
     }
     let count = trimmed.chars().count();
-    Some(count.min(MAX_RATING as usize) as u8)
+    Some(count.min(crate::rating::MAX_RATING as usize) as u8)
 }
 
 /// Splits a `.wb` `tag` column into ordinary tags and the rating encoded by
