@@ -32,10 +32,10 @@ pub fn list_duplicate_groups(
 }
 
 /// Fire-and-forget: kicks off a fresh duplicate-detection pass in the
-/// background (mirrors `scan_cmds::start_scan`'s post-scan thumbnail/
-/// metadata enqueue calls) and returns immediately. The frontend learns of
-/// the result via the `dedup:updated` event, or by calling
-/// `list_duplicate_groups` again later.
+/// background and returns immediately. Detection only: it does not rescan
+/// folders or register/remove videos. The frontend learns of the result via
+/// the `dedup:updated` event, or by calling `list_duplicate_groups` again
+/// later.
 #[tauri::command]
 pub async fn refresh_duplicate_groups(
     app: tauri::AppHandle,

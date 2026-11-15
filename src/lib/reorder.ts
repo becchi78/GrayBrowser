@@ -1,9 +1,9 @@
-// Pure ↑/↓ reorder operations behind TagBarEditDialog's tag list and
-// FolderDialog's folder list. Generic over the element type so both can share
-// them (tag objects, string paths). Split out into this JSX非依存 file so
-// they're unit-testable without mounting the dialog. Every function returns a new
-// array (never mutates `ids`), matching how React state setters are used
-// at each call site (`setDraftTags((tags) => moveUp(tags, index))`).
+// Pure ↑/↓ reorder operations behind TagBarEditDialog's tag list and the
+// watch folder list (useWatchFolders). Generic over the element type so both
+// can share them (tag objects, string paths). Split out into this JSX非依存
+// file so they're unit-testable without mounting the dialog. Every function
+// returns a new array (never mutates `ids`), matching how React state setters
+// are used at each call site (`setDraftTags((tags) => moveUp(tags, index))`).
 
 /**
  * Swaps the element at `index` with the one before it. A no-op (returns

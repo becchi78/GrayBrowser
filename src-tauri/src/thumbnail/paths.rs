@@ -1,8 +1,7 @@
 //! Common helpers for building/moving/removing the per-video thumbnail
 //! files (`thumbnails/<folder-subdir>/<video_id>_<slot>.webp`), so the
 //! filename/directory-layout convention lives in exactly one place instead
-//! of being re-derived at each call site (`scan/`, `watch/`, and several
-//! `commands/` modules).
+//! of being re-derived at each call site.
 //!
 //! Thumbnails are grouped into a subdirectory per registered
 //! watch folder (`gb_core::paths::resolve_thumbnail_subdir`) rather than

@@ -10,7 +10,7 @@ import {
   setWatchFolderCheckEnabled,
   startScan,
 } from "./api";
-import { moveDown, moveUp } from "./lib/reorderablePinnedTags";
+import { moveDown, moveUp } from "./lib/reorder";
 import { buildScanSummaryMessage } from "./lib/scanSummaryMessage";
 import { rescanState } from "./lib/scanTargets";
 import { errorText } from "./lib/errorText";

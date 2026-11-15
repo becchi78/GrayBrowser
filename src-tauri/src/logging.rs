@@ -19,10 +19,9 @@ use flexi_logger::{Cleanup, Criterion, FileSpec, Logger, LoggerHandle, Naming};
 /// stderr warning and `None` is returned; the caller is free to ignore it.
 ///
 /// The returned handle is only a side effect of keeping `log`'s global
-/// registration alive -- there's no runtime log-level toggling yet
-/// (that would back a `GRAY_BROWSER_LOG` env var, but the settings screen
-/// it would belong to doesn't exist yet), so
-/// callers may just drop it or hold it as `let _ = logging::init(...)`.
+/// registration alive -- the level is fixed at "info" and nothing toggles it
+/// at runtime, so callers may just drop it or hold it as
+/// `let _ = logging::init(...)`.
 pub fn init(app_dir: &Path) -> Option<LoggerHandle> {
     let logs_dir = app_dir.join("logs");
     let result = Logger::try_with_str("info").and_then(|logger| {

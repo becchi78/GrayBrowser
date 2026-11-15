@@ -15,7 +15,7 @@ interface Props {
   video: VideoDto;
   /** Bumped when this video's thumbnail files were replaced; part of the cache key. */
   thumbnailVersion: number;
-  /** Shared across every row (owned by VideoList/ThumbnailGrid), keyed by video id. */
+  /** Shared across every row (owned by ThumbnailGrid), keyed by video id. */
   cache: Map<string, string[]>;
   /** Bumped by the parent on every list re-fetch; see useVideoProperties. */
   catalogVersion: number;
@@ -35,10 +35,12 @@ const THUMBNAILS_PER_VIDEO = 6;
 // metadata/rating/tags on the right, no explicit play button (ダブルクリック
 // が再生の唯一の手段).
 //
-// The caller renders it with `key={video.id}`. The virtualizer maps one
-// virtual row to exactly one video, so keying by video id makes React remount
-// the row whenever the video at a given scroll position changes, resyncing
-// `rating`'s lazy initializer without a manual effect.
+// The caller renders it with `key={`${video.id}:${thumbnailVersion}`}`. The
+// virtualizer maps one virtual row to exactly one video, so keying by video id
+// makes React remount the row whenever the video at a given scroll position
+// changes, resyncing `rating`'s lazy initializer without a manual effect. The
+// thumbnail version in the key also remounts the row when its thumbnail files
+// are replaced.
 export function VideoRow({
   video,
   thumbnailVersion,

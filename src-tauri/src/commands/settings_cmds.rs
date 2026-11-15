@@ -24,10 +24,12 @@ fn merge_picked(existing: Vec<String>, picked: Option<Vec<PathBuf>>) -> Vec<Stri
     }
 }
 
-/// Re-classifying and restarting watchers/pollers (`RealtimeWatchManager::
-/// reconfigure`) is what closes the "restart required to pick up a new
-/// folder" gap: every successful pick immediately routes the merged folder
-/// list through drive-type detection again, not just at the next app start.
+/// Lets the user pick folders to add to the watch list, merges them with the
+/// existing list and persists it. Re-classifying and restarting
+/// watchers/pollers (`RealtimeWatchManager::reconfigure`) is what avoids a
+/// "restart required to pick up a new folder" gap: every successful pick
+/// immediately routes the merged folder list through drive-type detection
+/// again, not just at the next app start.
 ///
 /// `async` so it runs off the main thread: a sync command runs on the UI
 /// thread on Windows, and the blocking folder dialog would freeze the window.
@@ -313,8 +315,7 @@ pub fn remove_watch_folder(
     watch_manager: State<RealtimeWatchManager>,
     folder_path: String,
 ) -> Result<Vec<String>, String> {
-    // Resolved *before* any DB write below (mirrors `dedup_cmds::
-    // delete_duplicate_video`/`scan_cmds::start_scan`'s ordering): this
+    // Resolved *before* any DB write below: this
     // command's whole point is the DB mutation that follows, so if the
     // `thumbnails/` root can't even be resolved, the command must fail
     // before touching the DB at all -- never after, which would otherwise
