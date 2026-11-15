@@ -12,7 +12,7 @@ import {
   onWbImportProgress,
   onWbImportStage,
 } from "../events";
-import { abbreviatePath } from "../lib/abbreviatePath";
+import { PATH_DISPLAY_MAX_CHARS, abbreviatePath } from "../lib/abbreviatePath";
 import { countUnmatchedByKind, unmatchedCountText } from "../lib/unmatchedThumbnails";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import type { WbImportResultDisplay } from "../lib/wbImportResultDisplay";
@@ -38,9 +38,6 @@ interface Props {
   /** 手動の紐付けで動画のサムネイルが置き換わったとき(一覧側の表示を更新させる)。 */
   onThumbnailsReplaced: (videoId: string) => void;
 }
-
-// 表示用に省略するパスの最大文字数。全体は title で見られる。
-const PATH_DISPLAY_MAX_CHARS = 60;
 
 function PathLabel({ path }: { path: string }) {
   return (

@@ -5,7 +5,7 @@ import {
   listUnmatchedThumbnails,
   searchLinkCandidates,
 } from "../api";
-import { abbreviatePath } from "../lib/abbreviatePath";
+import { PATH_DISPLAY_MAX_CHARS, abbreviatePath } from "../lib/abbreviatePath";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import { withoutKey } from "../lib/withoutKey";
 import { ModalShell } from "./ModalShell";
@@ -26,7 +26,6 @@ interface Props {
   kind?: UnmatchedThumbnailKind;
 }
 
-const PATH_DISPLAY_MAX_CHARS = 60;
 const CANDIDATE_LIMIT = 50;
 const SEARCH_DEBOUNCE_MS = 300;
 
