@@ -75,18 +75,57 @@ fn read_chunk<R: Read + Seek>(reader: &mut R, from: SeekFrom, max_len: u64) -> i
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use xxhash_rust::xxh64::xxh64;
+
+    const CHUNK: usize = QUICK_HASH_CHUNK_SIZE as usize;
 
     fn hash_of(bytes: &[u8]) -> u64 {
-        let file_size = bytes.len() as u64;
+        hash_with_size(bytes, bytes.len() as u64)
+    }
+
+    fn hash_with_size(bytes: &[u8], file_size: u64) -> u64 {
         let mut cursor = Cursor::new(bytes.to_vec());
         quick_hash(&mut cursor, file_size)
             .expect("quick_hash should not fail on an in-memory buffer")
     }
 
+    /// The documented definition, built in one shot rather than streamed:
+    /// head chunk, tail chunk, then the size as little-endian bytes.
+    fn expected_quick_hash(head: &[u8], tail: &[u8], file_size: u64) -> u64 {
+        let mut input = head.to_vec();
+        input.extend_from_slice(tail);
+        input.extend_from_slice(&file_size.to_le_bytes());
+        xxh64(&input, 0)
+    }
+
+    /// 3MB of a non-repeating-looking pattern, so a read from the wrong
+    /// region changes the hash.
+    fn three_chunks() -> Vec<u8> {
+        (0..CHUNK * 3).map(|i| (i % 251) as u8).collect()
+    }
+
+    fn hash_after_flipping(original: &[u8], index: usize) -> u64 {
+        let mut changed = original.to_vec();
+        changed[index] ^= 0xFF;
+        hash_of(&changed)
+    }
+
     #[test]
-    fn is_deterministic_for_the_same_input() {
-        let bytes = vec![7u8; 500];
-        assert_eq!(hash_of(&bytes), hash_of(&bytes));
+    fn a_small_file_hashes_its_content_twice_plus_its_size() {
+        // head and tail both cover the whole file when it is under one chunk.
+        let bytes: Vec<u8> = (0..10).collect();
+        assert_eq!(
+            hash_of(&bytes),
+            expected_quick_hash(&bytes, &bytes, bytes.len() as u64)
+        );
+    }
+
+    #[test]
+    fn a_small_file_hash_is_pinned_to_a_known_value() {
+        // Stored quick_hash values must stay comparable across versions: a
+        // change here means every existing library row stops matching.
+        let bytes: Vec<u8> = (0..10).collect();
+        assert_eq!(hash_of(&bytes), 15_660_087_041_596_590_088);
     }
 
     #[test]
@@ -103,42 +142,48 @@ mod tests {
         // hash must still change, since move-detection relies on file_size
         // being mixed in, not just head/tail bytes.
         let bytes = vec![9u8; 100];
-        let mut cursor_a = Cursor::new(bytes.clone());
-        let mut cursor_b = Cursor::new(bytes);
-        let hash_a = quick_hash(&mut cursor_a, 100).unwrap();
-        let hash_b = quick_hash(&mut cursor_b, 200).unwrap();
-        assert_ne!(hash_a, hash_b);
+        assert_ne!(
+            hash_with_size(&bytes, 100),
+            hash_with_size(&bytes, 200),
+            "file_size must be mixed into the hash"
+        );
     }
 
     #[test]
-    fn handles_files_smaller_than_one_chunk_without_panicking() {
-        let bytes = vec![3u8; 10]; // 10 bytes, far below the 1MB chunk size
-        let mut cursor = Cursor::new(bytes);
-        let result = quick_hash(&mut cursor, 10);
-        assert!(result.is_ok());
+    fn an_empty_file_hashes_just_its_zero_size() {
+        assert_eq!(hash_of(&[]), expected_quick_hash(&[], &[], 0));
     }
 
     #[test]
-    fn handles_empty_files_without_panicking() {
-        let mut cursor = Cursor::new(Vec::<u8>::new());
-        let result = quick_hash(&mut cursor, 0);
-        assert!(result.is_ok());
+    fn a_file_larger_than_two_chunks_hashes_only_the_head_tail_and_size() {
+        let bytes = three_chunks();
+        let size = bytes.len() as u64;
+        assert_eq!(
+            hash_of(&bytes),
+            expected_quick_hash(&bytes[..CHUNK], &bytes[bytes.len() - CHUNK..], size)
+        );
     }
 
     #[test]
-    fn handles_files_larger_than_two_chunks() {
-        // 3MB buffer: head and tail reads should come from disjoint regions.
-        let size = (QUICK_HASH_CHUNK_SIZE * 3) as usize;
-        let mut bytes = vec![0u8; size];
-        // Make head and tail distinguishable so a bug that reads the wrong
-        // region would still produce *a* hash, but we mainly assert no panic
-        // and determinism here; distinctness is covered by `differs_when_content_differs`.
-        bytes[0] = 0xAA;
-        bytes[size - 1] = 0xBB;
-        let file_size = size as u64;
-        let mut cursor = Cursor::new(bytes);
-        let result = quick_hash(&mut cursor, file_size);
-        assert!(result.is_ok());
+    fn bytes_in_the_middle_of_a_large_file_do_not_change_the_hash() {
+        let bytes = three_chunks();
+        let original = hash_of(&bytes);
+        // First byte past the head chunk, the middle, and the last byte
+        // before the tail chunk: none are read.
+        for index in [CHUNK, CHUNK * 3 / 2, CHUNK * 2 - 1] {
+            assert_eq!(hash_after_flipping(&bytes, index), original, "{index}");
+        }
+    }
+
+    #[test]
+    fn bytes_in_the_head_or_tail_of_a_large_file_change_the_hash() {
+        let bytes = three_chunks();
+        let original = hash_of(&bytes);
+        // First and last byte of the head chunk; first and last byte of the
+        // tail chunk (the file's final byte).
+        for index in [0, CHUNK - 1, CHUNK * 2, CHUNK * 3 - 1] {
+            assert_ne!(hash_after_flipping(&bytes, index), original, "{index}");
+        }
     }
 
     fn full_hash_of(bytes: &[u8]) -> String {
@@ -147,9 +192,19 @@ mod tests {
     }
 
     #[test]
-    fn full_hash_is_deterministic_for_the_same_input() {
-        let bytes = vec![7u8; 5000];
-        assert_eq!(full_hash_of(&bytes), full_hash_of(&bytes));
+    fn full_hash_of_empty_input_is_the_known_blake3_digest() {
+        assert_eq!(
+            full_hash_of(&[]),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+    }
+
+    #[test]
+    fn full_hash_matches_one_shot_blake3_across_the_read_buffer_boundary() {
+        // Larger than the 64KiB internal read buffer, so the streaming loop
+        // runs several times and ends on a partial read.
+        let bytes: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        assert_eq!(full_hash_of(&bytes), blake3::hash(&bytes).to_hex().as_str());
     }
 
     #[test]
@@ -168,23 +223,5 @@ mod tests {
         let mut b = a.clone();
         b[100_000] = 6u8;
         assert_ne!(full_hash_of(&a), full_hash_of(&b));
-    }
-
-    #[test]
-    fn full_hash_handles_empty_files_without_panicking() {
-        let result = full_hash_of(&[]);
-        // BLAKE3 has a well-defined hash for the empty input; just assert we
-        // get a plausible hex digest back rather than panicking.
-        assert_eq!(result.len(), 64);
-    }
-
-    #[test]
-    fn full_hash_returns_lowercase_hex_of_expected_length() {
-        let bytes = vec![0xABu8; 1234];
-        let digest = full_hash_of(&bytes);
-        assert_eq!(digest.len(), 64);
-        assert!(digest
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 }

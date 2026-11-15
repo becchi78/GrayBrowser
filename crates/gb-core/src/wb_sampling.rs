@@ -239,9 +239,9 @@ mod tests {
     }
 
     #[test]
-    fn fill_step_respects_target_count_as_a_floor_not_a_ceiling_violation() {
-        // With a tiny dataset, target_count larger than available rows should
-        // just return everything, not panic.
+    fn a_target_larger_than_the_dataset_returns_every_row() {
+        // target_count larger than available rows should just return
+        // everything, not panic.
         let dataset = sample_dataset();
         let selected = select_sample_rows(&dataset, 1000);
         assert_eq!(selected.len(), dataset.len());
