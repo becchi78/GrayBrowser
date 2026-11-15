@@ -33,75 +33,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_string_yields_no_terms() {
-        assert_eq!(parse_search_terms(""), Vec::<String>::new());
+    fn parse_search_terms_splits_on_half_and_full_width_whitespace() {
+        let cases: [(&str, &[&str]); 7] = [
+            ("", &[]),
+            ("   \u{3000}  ", &[]),
+            // Trimmed.
+            ("  action  ", &["action"]),
+            ("action comedy", &["action", "comedy"]),
+            ("action\u{3000}comedy", &["action", "comedy"]),
+            // Mixed widths and repeats collapse.
+            (
+                " action  \u{3000} comedy \u{3000}\u{3000}drama",
+                &["action", "comedy", "drama"],
+            ),
+            // Tabs and newlines are whitespace too.
+            ("a\tb\nc", &["a", "b", "c"]),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(parse_search_terms(raw), expected, "{raw:?}");
+        }
     }
 
     #[test]
-    fn whitespace_only_yields_no_terms() {
-        assert_eq!(parse_search_terms("   \u{3000}  "), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_single_term_is_returned_trimmed() {
-        assert_eq!(parse_search_terms("  action  "), vec!["action".to_string()]);
-    }
-
-    #[test]
-    fn multiple_terms_split_on_regular_spaces() {
-        assert_eq!(
-            parse_search_terms("action comedy"),
-            vec!["action".to_string(), "comedy".to_string()]
-        );
-    }
-
-    #[test]
-    fn multiple_terms_split_on_full_width_space() {
-        assert_eq!(
-            parse_search_terms("action\u{3000}comedy"),
-            vec!["action".to_string(), "comedy".to_string()]
-        );
-    }
-
-    #[test]
-    fn mixed_half_and_full_width_spaces_and_repeats_collapse() {
-        assert_eq!(
-            parse_search_terms(" action  \u{3000} comedy \u{3000}\u{3000}drama"),
-            vec![
-                "action".to_string(),
-                "comedy".to_string(),
-                "drama".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn escape_leaves_plain_text_unchanged() {
-        assert_eq!(escape_like_pattern("action"), "action");
-    }
-
-    #[test]
-    fn escape_escapes_percent() {
-        assert_eq!(escape_like_pattern("100%"), "100\\%");
-    }
-
-    #[test]
-    fn escape_escapes_underscore() {
-        assert_eq!(escape_like_pattern("a_b"), "a\\_b");
-    }
-
-    #[test]
-    fn escape_escapes_a_literal_backslash() {
-        assert_eq!(escape_like_pattern(r"a\b"), r"a\\b");
-    }
-
-    #[test]
-    fn escape_handles_all_three_metacharacters_together() {
-        assert_eq!(escape_like_pattern(r"100%_\done"), r"100\%\_\\done");
-    }
-
-    #[test]
-    fn escape_preserves_japanese_text_unchanged() {
-        assert_eq!(escape_like_pattern("アクション"), "アクション");
+    fn escape_like_pattern_escapes_only_the_like_metacharacters() {
+        let cases = [
+            ("action", "action"),
+            ("100%", r"100\%"),
+            ("a_b", r"a\_b"),
+            // The escape character itself.
+            (r"a\b", r"a\\b"),
+            (r"100%_\done", r"100\%\_\\done"),
+            ("アクション", "アクション"),
+            ("", ""),
+        ];
+        for (term, expected) in cases {
+            assert_eq!(escape_like_pattern(term), expected, "{term:?}");
+        }
     }
 }

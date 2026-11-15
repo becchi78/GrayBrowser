@@ -128,25 +128,57 @@ mod tests {
         assert_eq!(snap(&p), (1, 2));
     }
 
+    const ALL_OUTCOMES: [FinishOutcome; 5] = [
+        Generated,
+        AlreadyGenerated,
+        Failed,
+        SkippedBusy,
+        SkippedUnreachable,
+    ];
+
     #[test]
-    fn untracked_ids_are_ignored() {
-        let mut p = ThumbnailProgress::new();
-        p.finish("ghost", Generated);
-        assert_eq!(snap(&p), (0, 0));
-        p.add(["a", "b"]);
-        p.finish("ghost", Generated);
-        assert_eq!(snap(&p), (0, 2));
+    fn untracked_ids_are_ignored_whatever_the_outcome() {
+        for outcome in ALL_OUTCOMES {
+            let mut p = ThumbnailProgress::new();
+            p.finish("ghost", outcome);
+            assert_eq!(snap(&p), (0, 0), "{outcome:?}");
+            p.add(["a", "b"]);
+            p.finish("ghost", outcome);
+            assert_eq!(snap(&p), (0, 2), "{outcome:?}");
+        }
     }
 
     #[test]
-    fn failure_is_processed_but_not_done() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a", "b"]);
-        p.finish("a", Failed);
-        assert_eq!(snap(&p), (0, 2));
-        // A failed video is no longer pending, so finishing it again is a no-op.
-        p.finish("a", Generated);
-        assert_eq!(snap(&p), (0, 2));
+    fn only_generated_and_already_generated_count_as_done() {
+        // Every outcome removes the video from the pending set (so a second
+        // finish for it is a no-op), but only the successful ones add to `done`.
+        let cases = [
+            (Generated, 1),
+            (AlreadyGenerated, 1),
+            (Failed, 0),
+            // A claim holder finishing later must not be counted either.
+            (SkippedBusy, 0),
+            (SkippedUnreachable, 0),
+        ];
+        for (outcome, expected_done) in cases {
+            let mut p = ThumbnailProgress::new();
+            p.add(["a", "b"]);
+            p.finish("a", outcome);
+            assert_eq!(snap(&p), (expected_done, 2), "{outcome:?}");
+            p.finish("a", Generated);
+            assert_eq!(snap(&p), (expected_done, 2), "{outcome:?}: repeat finish");
+        }
+    }
+
+    #[test]
+    fn the_batch_resets_when_its_last_video_finishes_with_any_outcome() {
+        for outcome in ALL_OUTCOMES {
+            let mut p = ThumbnailProgress::new();
+            p.add(["a", "b"]);
+            p.finish("a", Generated);
+            p.finish("b", outcome);
+            assert_eq!(snap(&p), (0, 0), "{outcome:?}");
+        }
     }
 
     #[test]
@@ -157,14 +189,6 @@ mod tests {
         p.finish("b", Failed);
         assert_eq!(snap(&p), (1, 3));
         p.finish("c", AlreadyGenerated);
-        assert_eq!(snap(&p), (0, 0));
-    }
-
-    #[test]
-    fn all_failed_still_resets() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a"]);
-        p.finish("a", Failed);
         assert_eq!(snap(&p), (0, 0));
     }
 
@@ -187,54 +211,5 @@ mod tests {
         p.finish("a", Generated);
         p.add(["b", "c"]);
         assert_eq!(snap(&p), (1, 3));
-    }
-
-    #[test]
-    fn skipped_busy_is_processed_but_not_done() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a", "b"]);
-        p.finish("a", SkippedBusy);
-        assert_eq!(snap(&p), (0, 2));
-        // The claim holder finishing later is ignored: already untracked.
-        p.finish("a", Generated);
-        assert_eq!(snap(&p), (0, 2));
-    }
-
-    #[test]
-    fn skipped_busy_on_the_last_video_resets() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a", "b"]);
-        p.finish("a", Generated);
-        p.finish("b", SkippedBusy);
-        assert_eq!(snap(&p), (0, 0));
-    }
-
-    #[test]
-    fn skipped_busy_for_an_untracked_id_is_ignored() {
-        let mut p = ThumbnailProgress::new();
-        p.finish("ghost", SkippedBusy);
-        assert_eq!(snap(&p), (0, 0));
-        p.add(["a"]);
-        p.finish("ghost", SkippedBusy);
-        assert_eq!(snap(&p), (0, 1));
-    }
-
-    #[test]
-    fn skipped_unreachable_lets_the_batch_complete_without_counting_as_done() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a", "b", "c"]);
-        p.finish("a", Generated);
-        p.finish("b", SkippedUnreachable);
-        assert_eq!(snap(&p), (1, 3));
-        p.finish("c", SkippedUnreachable);
-        assert_eq!(snap(&p), (0, 0));
-    }
-
-    #[test]
-    fn already_generated_counts_as_success() {
-        let mut p = ThumbnailProgress::new();
-        p.add(["a", "b"]);
-        p.finish("a", AlreadyGenerated);
-        assert_eq!(snap(&p), (1, 2));
     }
 }

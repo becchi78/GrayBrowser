@@ -31,146 +31,78 @@ pub fn is_machine_dependent_filename(name: &str) -> Option<char> {
 mod tests {
     use super::*;
 
-    // -- 丸囲み数字 (U+2460..=U+24FF) --
-    #[test]
-    fn enclosed_alphanumerics_just_before_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{245F}.mp4"), None);
-    }
-    #[test]
-    fn enclosed_alphanumerics_range_start_is_flagged() {
-        assert_eq!(is_machine_dependent_filename("①.mp4"), Some('①'));
-    }
-    #[test]
-    fn enclosed_alphanumerics_range_end_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{24FF}.mp4"),
-            Some('\u{24FF}')
-        );
-    }
-    #[test]
-    fn enclosed_alphanumerics_just_after_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{2500}.mp4"), None);
+    fn flagged(c: char) -> Option<char> {
+        is_machine_dependent_filename(&format!("{c}.mp4"))
     }
 
-    // -- ローマ数字 (U+2160..=U+2188) --
     #[test]
-    fn roman_numerals_just_before_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{215F}.mp4"), None);
-    }
-    #[test]
-    fn roman_numerals_range_start_is_flagged() {
-        assert_eq!(is_machine_dependent_filename("Ⅰ.mp4"), Some('Ⅰ'));
-    }
-    #[test]
-    fn roman_numerals_range_end_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{2188}.mp4"),
-            Some('\u{2188}')
-        );
-    }
-    #[test]
-    fn roman_numerals_just_after_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{2189}.mp4"), None);
-    }
-
-    // -- 単位記号・元号合字・丸囲み漢字拡張 (U+3200..=U+33FF) --
-    #[test]
-    fn enclosed_cjk_just_before_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{31FF}.mp4"), None);
-    }
-    #[test]
-    fn enclosed_cjk_range_start_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{3200}.mp4"),
-            Some('\u{3200}')
-        );
-    }
-    #[test]
-    fn enclosed_cjk_range_end_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{33FF}.mp4"),
-            Some('\u{33FF}')
-        );
-    }
-    #[test]
-    fn enclosed_cjk_just_after_range_is_not_flagged() {
-        // U+3400 is the start of CJK Unified Ideographs Extension A.
-        assert_eq!(is_machine_dependent_filename("\u{3400}.mp4"), None);
-    }
-    #[test]
-    fn circled_kanji_subset_is_flagged() {
-        // U+3251..=U+32FF is a subset of the enclosed-CJK range above; spot-check it.
-        assert_eq!(is_machine_dependent_filename("㉑.mp4"), Some('㉑'));
+    fn each_range_flags_its_start_and_end_but_not_the_codepoints_just_outside() {
+        // (range name, first flagged, last flagged, just before, just after).
+        // Just-outside values are the nearest valid `char`s: for the PUA,
+        // U+D800..=U+DFFF are surrogates and cannot be a `char`, so U+D7FF
+        // stands in for "just before".
+        let ranges = [
+            (
+                "Enclosed Alphanumerics",
+                '\u{2460}',
+                '\u{24FF}',
+                '\u{245F}',
+                '\u{2500}',
+            ),
+            (
+                "Number Forms (Roman numerals)",
+                '\u{2160}',
+                '\u{2188}',
+                '\u{215F}',
+                '\u{2189}',
+            ),
+            // U+3400 just after is the start of CJK Unified Ideographs Extension A.
+            (
+                "Enclosed CJK / CJK Compatibility",
+                '\u{3200}',
+                '\u{33FF}',
+                '\u{31FF}',
+                '\u{3400}',
+            ),
+            ("Card suits", '\u{2660}', '\u{2667}', '\u{265F}', '\u{2668}'),
+            // U+F900 just after is the start of CJK Compatibility Ideographs.
+            (
+                "Private Use Area",
+                '\u{E000}',
+                '\u{F8FF}',
+                '\u{D7FF}',
+                '\u{F900}',
+            ),
+        ];
+        for (name, start, end, before, after) in ranges {
+            assert_eq!(flagged(start), Some(start), "{name}: start");
+            assert_eq!(flagged(end), Some(end), "{name}: end");
+            assert_eq!(flagged(before), None, "{name}: just before");
+            assert_eq!(flagged(after), None, "{name}: just after");
+        }
     }
 
-    // -- トランプ柄記号 (U+2660..=U+2667) --
     #[test]
-    fn card_suits_just_before_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{265F}.mp4"), None);
-    }
-    #[test]
-    fn card_suits_range_start_is_flagged() {
-        assert_eq!(is_machine_dependent_filename("♠.mp4"), Some('♠'));
-    }
-    #[test]
-    fn card_suits_range_end_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{2667}.mp4"),
-            Some('\u{2667}')
-        );
-    }
-    #[test]
-    fn card_suits_just_after_range_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("\u{2668}.mp4"), None);
+    fn well_known_machine_dependent_characters_are_flagged() {
+        // Spot-checks with real characters; U+3251..=U+32FF (circled kanji)
+        // is a subset of the enclosed-CJK range above.
+        for c in ['①', 'Ⅰ', '㉑', '♠'] {
+            assert_eq!(flagged(c), Some(c));
+        }
     }
 
-    // -- 外字領域 PUA (U+E000..=U+F8FF) --
     #[test]
-    fn pua_just_before_range_is_not_flagged() {
-        // U+D800..=U+DFFF are UTF-16 surrogates and not valid Rust `char`
-        // values, so U+D7FF (the nearest representable codepoint below the
-        // surrogate block) is used as the "just before PUA" boundary case.
-        assert_eq!(is_machine_dependent_filename("\u{D7FF}.mp4"), None);
-    }
-    #[test]
-    fn pua_range_start_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{E000}.mp4"),
-            Some('\u{E000}')
-        );
-    }
-    #[test]
-    fn pua_range_end_is_flagged() {
-        assert_eq!(
-            is_machine_dependent_filename("\u{F8FF}.mp4"),
-            Some('\u{F8FF}')
-        );
-    }
-    #[test]
-    fn pua_just_after_range_is_not_flagged() {
-        // U+F900 is the start of CJK Compatibility Ideographs.
-        assert_eq!(is_machine_dependent_filename("\u{F900}.mp4"), None);
+    fn ordinary_filenames_are_not_flagged() {
+        for name in ["movie.mp4", "旅行の思い出.mp4", ""] {
+            assert_eq!(is_machine_dependent_filename(name), None, "{name:?}");
+        }
     }
 
-    // -- 正常系 --
-    #[test]
-    fn ascii_filename_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("movie.mp4"), None);
-    }
-    #[test]
-    fn japanese_filename_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename("旅行の思い出.mp4"), None);
-    }
-    #[test]
-    fn empty_string_is_not_flagged() {
-        assert_eq!(is_machine_dependent_filename(""), None);
-    }
-
-    // -- 複合ケース --
     #[test]
     fn returns_the_first_offending_character_when_multiple_are_present() {
         assert_eq!(is_machine_dependent_filename("①②③.mp4"), Some('①'));
     }
+
     #[test]
     fn detects_offending_characters_in_the_extension() {
         assert_eq!(is_machine_dependent_filename("movie.①mp4"), Some('①'));
