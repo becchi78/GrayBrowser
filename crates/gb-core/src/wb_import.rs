@@ -98,15 +98,6 @@ impl UnmatchedReason {
             UnmatchedReason::NoMatchingVideo => "no_matching_video",
         }
     }
-
-    /// Inverse of [`Self::as_db_str`]; `None` for any other text.
-    pub fn from_db_str(value: &str) -> Option<Self> {
-        match value {
-            "empty_hash" => Some(UnmatchedReason::EmptyHash),
-            "no_matching_video" => Some(UnmatchedReason::NoMatchingVideo),
-            _ => None,
-        }
-    }
 }
 
 /// The search text to start from when a person picks the video for an
@@ -1033,21 +1024,12 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_reason_db_strings_are_stable_and_round_trip() {
+    fn unmatched_reason_db_strings_are_stable() {
         assert_eq!(UnmatchedReason::EmptyHash.as_db_str(), "empty_hash");
         assert_eq!(
             UnmatchedReason::NoMatchingVideo.as_db_str(),
             "no_matching_video"
         );
-        for reason in [UnmatchedReason::EmptyHash, UnmatchedReason::NoMatchingVideo] {
-            assert_eq!(
-                UnmatchedReason::from_db_str(reason.as_db_str()),
-                Some(reason)
-            );
-        }
-        for bad in ["", "EmptyHash", "empty_hash ", "other"] {
-            assert_eq!(UnmatchedReason::from_db_str(bad), None, "{bad:?}");
-        }
     }
 
     #[test]
