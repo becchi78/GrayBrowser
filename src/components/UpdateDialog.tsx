@@ -159,7 +159,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
             max={100}
             value={percent ?? undefined}
           />
-          <p className="settings-dialog-hint" data-testid="update-dialog-progress-text">
+          <p className="dialog-hint" data-testid="update-dialog-progress-text">
             {percent === null
               ? formatBytes(state.downloaded)
               : `${percent}%(${formatBytes(state.downloaded)}${state.total !== null ? ` / ${formatBytes(state.total)}` : ""})`}
@@ -183,7 +183,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
           <p>
             {state.phase === "check" ? "更新を確認できませんでした。" : "更新に失敗しました。"}
           </p>
-          <p className="settings-dialog-error" role="alert" data-testid="update-dialog-error">
+          <p className="dialog-error dialog-error--compact" role="alert" data-testid="update-dialog-error">
             {state.reason}
           </p>
         </>
@@ -232,7 +232,7 @@ function AvailableBody({ update }: { update: { version: string; currentVersion: 
           {update.notes}
         </pre>
       )}
-      <p className="settings-dialog-hint">
+      <p className="dialog-hint">
         更新するとアプリを終了してインストーラーを実行します。登録したフォルダやタグなどのデータは変わりません。
       </p>
     </>

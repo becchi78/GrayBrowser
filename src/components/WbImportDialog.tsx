@@ -71,11 +71,11 @@ function ImportLogLink() {
       <button type="button" data-testid="import-open-log-btn" onClick={handleOpenLog}>
         ログを確認する
       </button>
-      <p className="wb-import-result-detail">
+      <p className="dialog-result-detail">
         ログには実際のファイル名・パスが含まれます。不具合報告に添付するときはご注意ください。
       </p>
       {openError && (
-        <p className="wb-import-error" data-testid="import-open-log-error">
+        <p className="dialog-error" data-testid="import-open-log-error">
           {openError}
         </p>
       )}
@@ -98,35 +98,35 @@ function WbImportResult({
 }: ResultProps) {
   return (
     <div className="wb-import-result">
-      <p className="wb-import-result-line" data-testid="import-result-total">
+      <p className="dialog-result-line" data-testid="import-result-total">
         {resultDisplay.totalText}
       </p>
       <p
-        className="wb-import-result-line wb-import-result-success"
+        className="dialog-result-line wb-import-result-success"
         data-testid="import-result-success"
       >
         {resultDisplay.registeredText}
       </p>
       {resultDisplay.offlineThumbnailsText && (
-        <p className="wb-import-result-line" data-testid="import-result-offline-thumbnails">
+        <p className="dialog-result-line" data-testid="import-result-offline-thumbnails">
           {resultDisplay.offlineThumbnailsText}
         </p>
       )}
       {resultDisplay.linkedByNameText && (
-        <p className="wb-import-result-line" data-testid="import-result-linked-by-name">
+        <p className="dialog-result-line" data-testid="import-result-linked-by-name">
           {resultDisplay.linkedByNameText}
         </p>
       )}
       {resultDisplay.watchFoldersAddedText && (
-        <p className="wb-import-result-line">{resultDisplay.watchFoldersAddedText}</p>
+        <p className="dialog-result-line">{resultDisplay.watchFoldersAddedText}</p>
       )}
       {resultDisplay.volumeLabelResolvedText && (
-        <p className="wb-import-result-line" data-testid="import-result-volume-label-resolved">
+        <p className="dialog-result-line" data-testid="import-result-volume-label-resolved">
           {resultDisplay.volumeLabelResolvedText}
         </p>
       )}
       {resultDisplay.skippedText && (
-        <p className="wb-import-result-line" data-testid="import-result-skipped">
+        <p className="dialog-result-line" data-testid="import-result-skipped">
           {resultDisplay.skippedText}
         </p>
       )}
@@ -150,7 +150,7 @@ function WbImportResult({
             className={`wb-import-result-attention wb-import-result-attention--${item.tone}`}
             data-testid={attentionTestId(item.key)}
           >
-            <p className="wb-import-result-line">{item.text}</p>
+            <p className="dialog-result-line">{item.text}</p>
             {showReview && (
               <button
                 type="button"
@@ -423,7 +423,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
 
       {error && (
         <>
-          <p className="wb-import-error">移行に失敗しました: {error}</p>
+          <p className="dialog-error">移行に失敗しました: {error}</p>
           <ImportLogLink />
         </>
       )}

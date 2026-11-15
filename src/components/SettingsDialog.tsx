@@ -135,7 +135,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
           />
           <span>分</span>
         </div>
-        <p className="settings-dialog-hint">
+        <p className="dialog-hint">
           {MIN_MINUTES}〜{MAX_MINUTES} 分。ローカルドライブは、変更を検知して即座に反映するため、この設定は関係しません。
         </p>
       </div>
@@ -150,7 +150,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
           />
           起動時に更新を確認する
         </label>
-        <p className="settings-dialog-hint">
+        <p className="dialog-hint">
           オフにしても、「ヘルプ &gt; 更新の確認...」からいつでも確認できます。
         </p>
       </div>
@@ -165,12 +165,12 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
           />
           前回終了時の検索・フォルダなどの状態を、起動時に復元する
         </label>
-        <p className="settings-dialog-hint">
+        <p className="dialog-hint">
           検索語、フォルダ、並び順、タグ、レーティングの絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
         </p>
       </div>
       {error !== null && (
-        <p className="settings-dialog-error" role="alert" data-testid="settings-dialog-error">
+        <p className="dialog-error dialog-error--compact" role="alert" data-testid="settings-dialog-error">
           {error}
         </p>
       )}

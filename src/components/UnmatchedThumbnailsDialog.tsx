@@ -83,12 +83,12 @@ function LinkPicker({ row, busy, onLink }: PickerProps) {
         disabled={busy}
       />
       {searchError && (
-        <p className="wb-import-error" role="alert">
+        <p className="dialog-error" role="alert">
           {searchError}
         </p>
       )}
       {candidates !== null && candidates.length === 0 && !searchError && (
-        <p className="wb-import-result-detail" data-testid="unmatched-picker-empty">
+        <p className="dialog-result-detail" data-testid="unmatched-picker-empty">
           紐付けできるオフラインの動画が見つかりません。
         </p>
       )}
@@ -123,11 +123,11 @@ function LinkPicker({ row, busy, onLink }: PickerProps) {
       )}
       {selected && (
         <div className="unmatched-confirm" data-testid="unmatched-confirm">
-          <p className="wb-import-result-line">
+          <p className="dialog-result-line">
             「{selected.file_name}」に、この旧サムネイルを紐付けます。
           </p>
           {notice && (
-            <p className="wb-import-result-line unmatched-overwrite" data-testid="unmatched-overwrite">
+            <p className="dialog-result-line unmatched-overwrite" data-testid="unmatched-overwrite">
               {notice}
             </p>
           )}
@@ -225,19 +225,19 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
     >
       <h2>自動対応できなかった旧サムネイル</h2>
       {rows !== null && rows.length > 0 && (
-        <p className="wb-import-result-detail" data-testid="unmatched-count">
+        <p className="dialog-result-detail" data-testid="unmatched-count">
           {unmatchedCountText(rows.length)}
         </p>
       )}
 
       {loadError && (
-        <p className="wb-import-error" role="alert">
+        <p className="dialog-error" role="alert">
           一覧を読み込めませんでした: {loadError}
         </p>
       )}
-      {rows === null && !loadError && <p className="wb-import-result-detail">読み込み中...</p>}
+      {rows === null && !loadError && <p className="dialog-result-detail">読み込み中...</p>}
       {rows !== null && rows.length === 0 && (
-        <p className="wb-import-result-line" data-testid="unmatched-empty">
+        <p className="dialog-result-line" data-testid="unmatched-empty">
           自動対応できなかった旧サムネイルはありません。
         </p>
       )}
@@ -283,7 +283,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
                   </div>
                 </div>
                 {error && (
-                  <p className="wb-import-error" role="alert" data-testid="unmatched-row-error">
+                  <p className="dialog-error" role="alert" data-testid="unmatched-row-error">
                     {error}
                   </p>
                 )}
