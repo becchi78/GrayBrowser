@@ -90,7 +90,11 @@ export function useGenerationFailures(
     };
   }, []);
 
+  // エラーは利用者が次の操作を始めたときに消し、refresh() では消さない。
+  // 再試行のたびに catalog:changed が届いて refresh() が走るため、そこで消すと
+  // 直前の再試行の失敗が出た直後に消えてしまう。
   async function runRetry(key: string, retry: () => Promise<unknown>) {
+    setError(null);
     setRetrying((prev) => new Set(prev).add(key));
     try {
       await retry();
@@ -119,6 +123,7 @@ export function useGenerationFailures(
 
   async function requestBulk(kind: BulkKind) {
     setNotice(null);
+    setError(null);
     setCounting(true);
     try {
       const count = await BULK_ACTIONS[kind].count();
@@ -137,6 +142,7 @@ export function useGenerationFailures(
 
   async function confirmBulk() {
     if (!pending) return;
+    setError(null);
     setRunning(true);
     try {
       // Returns right away; progress shows in the status bar and the list

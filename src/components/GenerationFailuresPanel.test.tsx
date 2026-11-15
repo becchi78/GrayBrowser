@@ -660,6 +660,115 @@ test("件数は、サムネイル失敗とメタデータ失敗の合計が変�
   expect(onCountChange.mock.calls).toEqual([[0], [3], [1], [4], [0]]);
 });
 
+// ---- エラー表示を消すタイミング ----
+// 利用者が次の操作を始めたときに消す。自動の再取得(catalog:changed など)では
+// 消さない。再試行のたびに catalog:changed が届くので、そこで消すと直前の
+// 再試行の失敗が出た瞬間に消えてしまう。
+
+test("エラーは、自動の再取得が成功しても消えず、次の操作を始めたときに消える", async () => {
+  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("first failed");
+  const retry = deferred<void>();
+  vi.mocked(api.retryThumbnailGeneration).mockReturnValue(retry.promise);
+  const { user, update } = await renderPanel();
+  expect(panelError()).toHaveTextContent("first failed");
+
+  vi.mocked(api.listGenerationFailures).mockResolvedValue(DEFAULT());
+  await update({ refreshKey: 1 });
+
+  expect(items()).toHaveLength(3);
+  expect(panelError()).toHaveTextContent(/^first failed$/);
+
+  await emitCatalogChanged();
+
+  expect(panelError()).toHaveTextContent(/^first failed$/);
+
+  await user.click(retryButton(thumbRow("t1")));
+
+  expect(panelError()).toBeNull();
+});
+
+test("再試行を押すと前のエラーを消し、失敗したら新しいエラーだけを出す", async () => {
+  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("first failed");
+  const retry = deferred<void>();
+  vi.mocked(api.retryThumbnailGeneration).mockReturnValue(retry.promise);
+  const { user, update } = await renderPanel();
+  vi.mocked(api.listGenerationFailures).mockResolvedValue(DEFAULT());
+  await update({ refreshKey: 1 });
+  expect(panelError()).toHaveTextContent(/^first failed$/);
+
+  await user.click(retryButton(thumbRow("t1")));
+
+  expect(document.querySelectorAll(".generation-failures-error")).toHaveLength(0);
+
+  await act(async () => {
+    retry.reject("retry failed");
+  });
+  await settle();
+
+  expect(document.querySelectorAll(".generation-failures-error")).toHaveLength(1);
+  expect(panelError()).toHaveTextContent(/^retry failed$/);
+});
+
+test("一括操作の件数確認を始めると前のエラーを消し、確認に失敗したら新しいエラーだけを出す", async () => {
+  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("first failed");
+  const count = deferred<number>();
+  vi.mocked(api.countMissingThumbnails).mockReturnValue(count.promise);
+  const { user } = await renderPanel();
+  expect(panelError()).toHaveTextContent(/^first failed$/);
+
+  await user.click(thumbBulkButton());
+
+  expect(panelError()).toBeNull();
+
+  await act(async () => {
+    count.reject("count failed");
+  });
+  await settle();
+
+  expect(document.querySelectorAll(".generation-failures-error")).toHaveLength(1);
+  expect(panelError()).toHaveTextContent(/^count failed$/);
+});
+
+/** 確認を出したまま、自動の再取得の失敗でエラーを立てた状態にする。 */
+async function renderWithConfirmAndError() {
+  vi.mocked(api.countMissingThumbnails).mockResolvedValue(6);
+  const view = await renderPanel();
+  await view.user.click(thumbBulkButton());
+  await settle();
+  expect(confirmDialog()).toBeInTheDocument();
+  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("refresh failed");
+  await emitCatalogChanged();
+  expect(panelError()).toHaveTextContent(/^refresh failed$/);
+  return view;
+}
+
+test("一括操作を実行しはじめると前のエラーを消し、失敗したら新しいエラーだけを出す", async () => {
+  const run = deferred<number>();
+  vi.mocked(api.regenerateMissingThumbnails).mockReturnValue(run.promise);
+  const { user } = await renderWithConfirmAndError();
+
+  await user.click(confirmButton());
+
+  expect(panelError()).toBeNull();
+
+  await act(async () => {
+    run.reject("run failed");
+  });
+  await settle();
+
+  expect(document.querySelectorAll(".generation-failures-error")).toHaveLength(1);
+  expect(panelError()).toHaveTextContent(/^run failed$/);
+});
+
+test("確認をキャンセルしても、エラーは消えない", async () => {
+  const { user } = await renderWithConfirmAndError();
+
+  await user.click(cancelButton());
+
+  expect(confirmDialog()).toBeNull();
+  expect(panelError()).toHaveTextContent(/^refresh failed$/);
+});
+
 // ---- 現状の挙動(直さない) ----
 
 // 今の動作を固めている: 保留中の確認は閉じても捨てない。
@@ -689,37 +798,6 @@ test("現状: 確認を出したまま閉じて開き直すと、確認がまだ
 
   expect(api.regenerateMissingThumbnails).toHaveBeenCalledTimes(1);
   expect(confirmDialog()).toBeNull();
-});
-
-// 今の動作を固めている: エラーを消す経路が無い。
-test("現状: エラーは一度出ると、その後の取得が成功しても消えない", async () => {
-  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("first failed");
-  const { update } = await renderPanel();
-  expect(panelError()).toHaveTextContent("first failed");
-
-  vi.mocked(api.listGenerationFailures).mockResolvedValue(DEFAULT());
-  await update({ refreshKey: 1 });
-
-  expect(items()).toHaveLength(3);
-  expect(panelError()).toHaveTextContent(/^first failed$/);
-
-  await emitCatalogChanged();
-
-  expect(panelError()).toHaveTextContent(/^first failed$/);
-});
-
-test("現状: 後から出たエラーは前のエラーを置き換える", async () => {
-  vi.mocked(api.listGenerationFailures).mockRejectedValueOnce("first failed");
-  vi.mocked(api.retryThumbnailGeneration).mockRejectedValue("retry failed");
-  const { user, update } = await renderPanel();
-
-  vi.mocked(api.listGenerationFailures).mockResolvedValue(DEFAULT());
-  await update({ refreshKey: 1 });
-  await user.click(retryButton(thumbRow("t1")));
-  await settle();
-
-  expect(document.querySelectorAll(".generation-failures-error")).toHaveLength(1);
-  expect(panelError()).toHaveTextContent(/^retry failed$/);
 });
 
 // ---- 見た目 ----

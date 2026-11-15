@@ -202,9 +202,9 @@ test("開き直したときは、前回のエラー表示を消す", async () =>
   expect(paths()).toEqual(["A", "B", "C"]);
 });
 
-// 今の動作を固めている: エラーを消すのは、開き直したときの一覧の取得が
-// 成功したときだけ。望ましい動作と決めたものではなく、変えるときは意図して更新する。
-test("現状: 開き直したときに一覧の取得が失敗すると、前回のエラー表示が残る", async () => {
+// 前回の並べ替えの失敗は、開き直した時点では過去の操作の結果で、いまの一覧とは
+// 対応しない。取得の成否を待たずに消し、取得が失敗したときは、その失敗だけを出す。
+test("開き直したときに一覧の取得が失敗したら、前回のエラーを消し、取得失敗のエラーだけを出す", async () => {
   vi.mocked(api.reorderWatchFolders).mockRejectedValue("rejected order");
   const { user, setOpen } = await renderOpen();
 
@@ -220,7 +220,24 @@ test("現状: 開き直したときに一覧の取得が失敗すると、前回
   );
   await act(async () => {});
 
-  expect(orderCheckError()).toHaveTextContent("rejected order");
+  expect(orderCheckError()).toHaveTextContent("Error: boom");
+  expect(orderCheckError()).not.toHaveTextContent("rejected order");
+  expect(paths()).toEqual(["A", "B", "C"]);
+});
+
+test("開き直して一覧の取得を待っているあいだは、前回のエラーが出ていない", async () => {
+  vi.mocked(api.reorderWatchFolders).mockRejectedValue("rejected order");
+  const { user, setOpen } = await renderOpen();
+
+  await user.click(inRow("A", "folder-row-move-down-btn"));
+  await waitFor(() => expect(orderCheckError()).toHaveTextContent("rejected order"));
+
+  vi.mocked(api.listWatchFolders).mockReturnValueOnce(never());
+  setOpen(false);
+  setOpen(true);
+  await act(async () => {});
+
+  expect(orderCheckError()).toBeNull();
   expect(paths()).toEqual(["A", "B", "C"]);
 });
 
