@@ -98,7 +98,7 @@ fn prune(dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Highest applied schema version, or 0 for a database without any.
-pub fn current_schema_version(conn: &rusqlite::Connection) -> rusqlite::Result<i64> {
+pub(crate) fn current_schema_version(conn: &rusqlite::Connection) -> rusqlite::Result<i64> {
     let has_table: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version')",
         [],

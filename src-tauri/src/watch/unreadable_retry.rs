@@ -17,11 +17,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// How often pending paths are re-evaluated.
-pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
 /// A copy of a very large file can hold the lock for tens of minutes; past
 /// this since the first deferral the path is dropped so a file that never
 /// becomes readable cannot be retried forever.
-pub const DEFAULT_GIVE_UP: Duration = Duration::from_secs(30 * 60);
+pub(crate) const DEFAULT_GIVE_UP: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryOutcome {

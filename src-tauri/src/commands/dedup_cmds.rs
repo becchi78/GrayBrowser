@@ -122,7 +122,7 @@ fn group_content_of(kind: &DuplicateGroupKind) -> GroupContent {
 /// the move has succeeded, so a failed move leaves the entry in place; if the
 /// catalog delete fails after a successful move, the file is already in the
 /// recycle bin and the error says so.
-pub fn delete_video_with_file(
+pub(crate) fn delete_video_with_file(
     db: &Db,
     groups: Vec<DuplicateGroup>,
     drive_detector: &impl DriveTypeDetector,

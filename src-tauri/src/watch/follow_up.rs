@@ -13,10 +13,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Wait this long after the last trigger before running.
-pub const DEFAULT_QUIET: Duration = Duration::from_secs(2);
+pub(crate) const DEFAULT_QUIET: Duration = Duration::from_secs(2);
 /// Never defer longer than this since the first un-run trigger, so a copy
 /// that keeps producing events still gets periodic thumbnails/metadata.
-pub const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(15);
+pub(crate) const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 struct State {

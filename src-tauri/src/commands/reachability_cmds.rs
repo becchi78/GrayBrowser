@@ -11,7 +11,7 @@ use crate::reachability::{ReachabilityRegistry, DEFAULT_OPEN_RECHECK_MIN_AGE};
 /// follows `reachability:changed`.
 ///
 /// Reads memory only -- it never probes -- so it cannot block on a dead share.
-pub fn current_unreachable_folders(registry: &ReachabilityRegistry) -> Vec<String> {
+pub(crate) fn current_unreachable_folders(registry: &ReachabilityRegistry) -> Vec<String> {
     registry.unreachable_folders()
 }
 
@@ -32,7 +32,7 @@ pub fn get_unreachable_folders(registry: State<ReachabilityRegistry>) -> Vec<Str
 /// sends back; a differently spelled path would only create a second,
 /// unrelated entry. Returns the thread so a test can wait for it; production
 /// drops it.
-pub fn start_folder_reachability_check(
+pub(crate) fn start_folder_reachability_check(
     registry: &ReachabilityRegistry,
     watch_folders: &[String],
     folder: &str,

@@ -132,7 +132,7 @@ impl Inner {
 /// while the probe carries on. Short enough that a stalled share is flagged
 /// well before the OS gives up on it (20s to a minute), long enough that a
 /// slow but alive share does not flicker offline.
-pub const DEFAULT_PROVISIONAL_AFTER: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_PROVISIONAL_AFTER: Duration = Duration::from_secs(5);
 
 /// How often folders that are currently unreachable are probed again. Long
 /// enough that a share which keeps failing costs next to nothing, short enough

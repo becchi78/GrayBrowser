@@ -33,7 +33,7 @@ use crate::reachability::ReachabilityRegistry;
 /// `scan::hash_file`'s full_hash counterpart: same long-path + `File::open`
 /// shape, but `gb_core::hash::full_hash` only needs `Read` (not `Read +
 /// Seek`), so there's no `file_size` argument to thread through.
-pub fn full_hash_file(file_path: &str) -> anyhow::Result<String> {
+pub(crate) fn full_hash_file(file_path: &str) -> anyhow::Result<String> {
     let mut file = File::open(long_path::to_long_path(Path::new(file_path)))?;
     Ok(gb_core::hash::full_hash(&mut file)?)
 }
