@@ -117,7 +117,7 @@ pub fn generate_thumbnail_for_video(
     let failure = match extraction_err {
         None => match publish_all_slots(thumbnails_dir, video_id, &tmp_paths) {
             Ok(()) => {
-                // Keeps videos.thumbnail_ready (migration 0008) in
+                // Keeps videos.thumbnail_ready in
                 // sync with the files that were just written, so
                 // list_videos's hot path never has to stat() these
                 // files itself. Best-effort: a failure to write this
@@ -217,7 +217,7 @@ fn record_failure(
 /// added to avoid. As a
 /// side effect, it also backfills `thumbnail_ready` for any row where the
 /// file already exists on disk but the DB flag is still stale (e.g. every
-/// row that existed before migration 0008 ever ran, or any other reason the
+/// row written before the flag existed, or any other reason the
 /// flag write was missed) -- reusing this loop's existing `.exists()` result
 /// rather than adding a second filesystem check anywhere.
 ///
@@ -964,7 +964,7 @@ mod tests {
 
     /// The backfill guard: a row whose thumbnail files are
     /// already on disk but whose `thumbnail_ready` flag is still 0 (e.g. a
-    /// pre-migration-0008 row) must (a) be excluded from the "missing"
+    /// row written before the flag existed) must (a) be excluded from the "missing"
     /// result -- it already has all 6 files, so it never needed
     /// (re)generating -- and (b) come out of this call with its DB flag
     /// corrected to 1, without this function performing any extra

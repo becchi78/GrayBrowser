@@ -63,8 +63,8 @@ test("registered === 0 かつ skipped > 0 なら muted（全行既登録スキ�
   assert.match(result.text, /すべて既に登録済み/);
 });
 
-// これが今回のPlan差し戻しで追加された回帰対象: registered === 0 だけでは
-// 「全行スキップ（正常）」と「全行失敗（異常）」を区別できない。
+// registered === 0 だけでは「全行スキップ（正常）」と「全行失敗（異常）」を
+// 区別できない。
 // skipped === 0 まで確認して初めて実失敗の推定として扱う。
 test("registered === 0 かつ skipped === 0 かつ failed_rows > 0 なら failed（全行失敗、ケース4）", () => {
   const s = makeSummary({

@@ -1,5 +1,4 @@
-// needsPropertiesRefresh と thumbnailWidthPx のユニットテスト。src/lib/ratingBar.test.ts と
-// 同じパターン(package.jsonのtest:unit参照)。
+// needsPropertiesRefresh と thumbnailWidthPx のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { needsPropertiesRefresh, thumbnailWidthPx } from "./videoProperties.ts";

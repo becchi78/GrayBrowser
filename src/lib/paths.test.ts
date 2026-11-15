@@ -1,6 +1,4 @@
 // splitDirAndFileName のユニットテスト。
-// src/lib/boundedCache.test.ts と同じパターン（Node組み込みtest runnerを
-// `node --experimental-strip-types --test` で実行、package.jsonのtest:unit参照）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { splitDirAndFileName } from "./paths.ts";

@@ -3,10 +3,10 @@
 //! segments, using the 6 interior boundary points), falling back to a
 //! fixed 1s point for all 6 slots when the duration is unknown.
 //!
-//! Unlike the single-thumbnail policy this replaces, no short-video special
-//! case is needed here: each of the 6 fractions (1/7 .. 6/7) is always
-//! strictly less than `duration` whenever `duration > 0`, so every computed
-//! position is a valid seek target within the video.
+//! No short-video special case is needed: each of the 6 fractions
+//! (1/7 .. 6/7) is always strictly less than `duration` whenever
+//! `duration > 0`, so every computed position is a valid seek target within
+//! the video.
 
 /// Fallback seek point used for every one of the 6 slots when duration is
 /// unknown, zero, non-finite, or negative.

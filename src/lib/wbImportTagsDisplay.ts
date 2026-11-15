@@ -1,14 +1,12 @@
 // `.wb`インポート結果ダイアログ（WbImportDialog.tsx）の「タグをインポート」行が
 // tags_assigned===0になる原因を区別するための、pure functionのロジック切り出し。
-// src/lib/boundedCache.ts と同じパターン（OS/UIランタイムに依存しないロジックを
-// src/lib/ に置き、node --experimental-strip-types --test で単体テストする）。
 //
 // tags_assigned===0 になる原因は少なくとも次の4通りがあり、区別しないと
 // 「正常動作を失敗のように見せる」（元データにタグが無かっただけ／全行が
 // 既登録スキップだっただけ）ことになりかねない一方、逆に「失敗を正常寄りに
 // 見せる」（全行が取り込みエラーで失敗した）ことも避けなければならない。
 //
-// src-tauri/src/wb_import/pipeline.rs の import_all では、1行の処理結果は
+// src-tauri/src/wb_import/pipeline の import_all では、1行の処理結果は
 // 「Inserted（タグも書き込み済み）」「Skipped（既登録、タグ含め一切書き込まない）」
 // 「機種依存文字で未登録」「失敗（不正な日付形式・DB書き込みエラー等。
 // failed_rows に数える）」のどれか1つ。DB書き込みはトランザクション内で

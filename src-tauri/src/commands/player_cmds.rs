@@ -4,8 +4,8 @@ use gb_core::ports::player::PlayerLauncher;
 
 use crate::adapters;
 
-/// `override_player` is always `None` (confirmed decision: OS
-/// default file association only, no player-picker UI).
+/// `override_player` is always `None`: the OS default file association is
+/// the only supported way to pick a player (there is no player-picker UI).
 ///
 /// The existence check runs first so an unreachable path (e.g. a powered-off
 /// NAS) never reaches `ShellExecuteExW`: that call would block for ~20s and

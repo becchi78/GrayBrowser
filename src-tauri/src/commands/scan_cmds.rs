@@ -34,7 +34,8 @@ pub struct VideoDto {
 
 impl VideoDto {
     /// `thumbnail_ready` is read straight off `VideoRow.thumbnail_ready`
-    /// (migration 0008) -- **no filesystem `stat()` call happens here**.
+    /// (a DB column kept in sync when thumbnails are written) -- **no
+    /// filesystem `stat()` call happens here**.
     /// Checking whether `thumbnails/[id].webp` exists on every call would cost
     /// up to 100,000 stat() calls for a 100k-video full-library browse, which
     /// would dominate `list_videos`, not the LIKE-based search query itself.

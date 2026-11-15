@@ -1,5 +1,4 @@
 // computeDuplicateDiff のユニットテスト。
-// src/lib/paths.test.ts と同じパターン（package.jsonのtest:unit参照）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeDuplicateDiff } from "./duplicateDiff.ts";

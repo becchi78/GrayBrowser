@@ -1,5 +1,4 @@
 // LeftPane/TagBar から切り出した、JSX非依存の純粋関数群。
-// src/lib/sidebarResize.ts と同じパターン(コンポーネント側からimportして使う)。
 
 export type SidebarSectionId = "folders" | "rating" | "tags";
 

@@ -1,4 +1,4 @@
-// jumpTargetIndex のユニットテスト。ratingBar.test.ts と同じパターン。
+// jumpTargetIndex のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JUMP_PERCENTS, jumpTargetIndex } from "./jumpToPercent.ts";

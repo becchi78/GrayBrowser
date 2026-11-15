@@ -13,7 +13,7 @@ use xxhash_rust::xxh64::xxh64;
 ///
 /// If the executable's parent directory is already named `GrayBrowser`
 /// (case-insensitive), that directory itself is returned unchanged --
-/// otherwise a `GrayBrowser` subfolder is appended, as before. Returns `None`
+/// otherwise a `GrayBrowser` subfolder is appended. Returns `None`
 /// if `exe_path` has no parent directory.
 pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
     let dir = exe_path.parent()?;

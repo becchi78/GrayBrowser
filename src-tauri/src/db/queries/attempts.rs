@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 // --- Generation retry-limit tracking (gb_core::retry's pure classification)
 // ----------------------------------------------------------------------
 //
-// `thumbnail_attempts`/`metadata_attempts` (migration 0007) count *failed*
+// `thumbnail_attempts`/`metadata_attempts` count *failed*
 // attempts only -- a successful generation is recorded elsewhere (a
 // `thumbnails/[id].webp` file existing, `probed_at` being non-NULL) and never
 // increments these columns. Whether a given attempts count still permits an
@@ -55,7 +55,7 @@ pub fn increment_metadata_attempts(conn: &Connection, video_id: &str) -> rusqlit
     Ok(())
 }
 
-/// Sets `thumbnail_ready = 1` for `video_id` (migration 0008).
+/// Sets `thumbnail_ready = 1` for `video_id`.
 /// Called by `thumbnail::worker::generate_thumbnail_for_video` right after a
 /// successful generation, and by `list_videos_missing_thumbnails`'s resume
 /// pass as a backfill for rows whose file already exists but whose flag

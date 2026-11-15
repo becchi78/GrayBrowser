@@ -1,11 +1,9 @@
--- Persists the route-X UNIQUE collision the path-follow rewrite
+-- Persists the UNIQUE path collision the path-follow rewrite
 -- (update_video_path_and_status) can hit when the new path is already
 -- occupied by a different online video. The two files should be treated as
--- duplicate candidates -- this migration adds a table to make that
--- persistence concrete rather than losing the collision the moment it's
--- detected. (The same table is also reused, unmodified, for route-Y's
--- coincidental-rehash-match collisions -- see src/scan/mod.rs's
--- `reconcile_known_path`.)
+-- duplicate candidates, so the collision is stored rather than lost the
+-- moment it's detected. (The same table also holds coincidental-rehash-match
+-- collisions -- see src/scan/mod.rs's `reconcile_known_path`.)
 --
 -- video_id: the offline-side row that attempted (and failed) to follow the
 -- path. colliding_video_id: the online-side row that already owns

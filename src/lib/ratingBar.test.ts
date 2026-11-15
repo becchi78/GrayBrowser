@@ -1,7 +1,4 @@
-// toggleRating のユニットテスト。src/lib/sidebarResize.test.ts と
-// 同じパターン(Node組み込みtest runnerを
-// `node --experimental-strip-types --test`で実行、package.jsonのtest:unit
-// 参照)。
+// toggleRating のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { toggleRating } from "./ratingBar.ts";

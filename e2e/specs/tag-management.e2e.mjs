@@ -38,12 +38,10 @@ test("tag can be assigned to a video and removed again", async () => {
     await searchBox.click();
     await browser.keys(token.split(""));
 
-    // UI/UX re-design note: the detail panel is now folded into each
-    // `.video-row` -- there's no "詳細" button/separate panel to open
-    // anymore (App.css's `.main-area` comment, VideoRow.tsx). The tag
-    // editor is always rendered inline inside the row, so once the search
-    // above has narrowed the list to this run's single fixture, waiting for
-    // that one `.video-row` to exist is enough before interacting with its
+    // The tag editor is always rendered inline inside each `.video-row`
+    // (there is no separate detail panel to open), so once the search above
+    // has narrowed the list to this run's single fixture, waiting for that
+    // one `.video-row` to exist is enough before interacting with its
     // (already-mounted) tag form directly.
     const videoRow = await browser.$('[data-testid="video-row"]');
     await videoRow.waitForExist({ timeout: 30_000 });

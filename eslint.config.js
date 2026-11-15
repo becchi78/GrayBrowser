@@ -8,8 +8,8 @@ const DIALOG_MESSAGE =
   "tauri-plugin-dialog が window.confirm / alert / prompt を非同期関数に差し替え、Promise を返すため、確認が機能しない。自前のモーダル(ConfirmDialog)を使うこと";
 
 export default tseslint.config(
-  // "target" (not "src-tauri/target"): PR1's Cargo workspace split moved the
-  // build output to the repo root (ci.yml's build job has the same note).
+  // "target" (not "src-tauri/target"): the Cargo workspace puts the build
+  // output at the repo root (ci.yml's build job has the same note).
   { ignores: ["dist", "target"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],

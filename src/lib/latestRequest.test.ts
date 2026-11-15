@@ -1,7 +1,4 @@
-// createLatestOnlyGuard のユニットテスト。src/lib/ratingBar.test.ts と
-// 同じパターン(Node組み込みtest runnerを
-// `node --experimental-strip-types --test`で実行、package.jsonのtest:unit
-// 参照)。
+// createLatestOnlyGuard のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createLatestOnlyGuard } from "./latestRequest.ts";

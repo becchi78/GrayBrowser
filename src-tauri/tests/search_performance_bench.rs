@@ -434,7 +434,7 @@ struct Dataset {
     /// two tags over-assigned per `POPULAR_TAG_*_PROBABILITY`, used for query
     /// pattern (d)'s tag-AND filter.
     popular_tag_ids: [i64; 2],
-    /// Ids of every row whose `thumbnail_ready` column (migration 0008) was
+    /// Ids of every row whose `thumbnail_ready` column was
     /// set to 1 at insert time -- i.e. `THUMBNAIL_READY_FRACTION` of
     /// `row_count`, deterministically (same seed) chosen. Used by the
     /// `list_videos`-equivalent benchmark below to also create matching
@@ -776,7 +776,7 @@ fn search_performance_bench_10k_50k_100k() {
 //     stat() loop it used to run, so the "before" number in the PR's
 //     before/after table is a faithful reproduction of the pre-fix cost.
 //   - `..._via_db_column_median`: the current (post-fix) behavior -- reads
-//     `VideoRow.thumbnail_ready` (migration 0008) directly, no filesystem
+//     `VideoRow.thumbnail_ready` directly, no filesystem
 //     access at all. This *is* what `VideoDto::from_row` does today.
 // ---------------------------------------------------------------------------
 
