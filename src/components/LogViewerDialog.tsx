@@ -10,6 +10,7 @@ import {
 } from "../lib/logFilter";
 import type { LogEntryDto } from "../types";
 import { ModalShell } from "./ModalShell";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   open: boolean;
@@ -64,7 +65,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
       } catch (e) {
         if (cancelled) return;
         console.error(e);
-        setError(String(e));
+        setError(errorText(e));
       }
       if (!cancelled) {
         timer = setTimeout(tick, POLL_INTERVAL_MS);

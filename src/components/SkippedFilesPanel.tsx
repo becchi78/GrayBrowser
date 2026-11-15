@@ -12,6 +12,7 @@ import {
 } from "../lib/skippedFileMissing";
 import { splitDirAndFileName } from "../lib/paths";
 import type { SkippedFileDto } from "../types";
+import { errorText } from "../lib/errorText";
 
 // The only reason code the backend emits today, but kept as a lookup with a
 // fallback so a future reason doesn't render blank.
@@ -103,7 +104,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
       }
       await reload();
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -119,7 +120,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
       await reload();
     } catch (e) {
       // 編集中の行がないので、パネル上部に出す。
-      setNotice(String(e));
+      setNotice(errorText(e));
     } finally {
       setBusy(false);
     }

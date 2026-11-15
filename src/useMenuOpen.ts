@@ -6,8 +6,5 @@ export function useMenuOpen(
   subscribe: (callback: () => void) => () => void,
   setOpen: Dispatch<SetStateAction<boolean>>,
 ) {
-  useEffect(() => {
-    const unlisten = subscribe(() => setOpen(true));
-    return () => unlisten();
-  }, [subscribe, setOpen]);
+  useEffect(() => subscribe(() => setOpen(true)), [subscribe, setOpen]);
 }

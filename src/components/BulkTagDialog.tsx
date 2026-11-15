@@ -3,6 +3,7 @@ import { assignTagToVideos, listAllTags } from "../api";
 import { filterTagCandidates } from "../lib/bulkTag";
 import type { TagDto } from "../types";
 import { ModalShell } from "./ModalShell";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   /** 付与対象。null のとき閉じている。 */
@@ -64,7 +65,7 @@ function BulkTagDialogBody({
       onClose();
     } catch (err) {
       console.error(err);
-      setError(String(err));
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }

@@ -13,6 +13,7 @@ import {
 import { moveDown, moveUp } from "./lib/reorderablePinnedTags";
 import { buildScanSummaryMessage } from "./lib/scanSummaryMessage";
 import { rescanState } from "./lib/scanTargets";
+import { errorText } from "./lib/errorText";
 
 interface DeleteTarget {
   path: string;
@@ -75,7 +76,7 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
       .catch((e) => {
         console.error(e);
         if (!cancelled) {
-          setOrderCheckError(String(e));
+          setOrderCheckError(errorText(e));
         }
       });
     listWatchCheckDisabledFolders()
@@ -152,7 +153,7 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
       setFolders(saved);
       onChanged();
     } catch (e) {
-      setOrderCheckError(String(e));
+      setOrderCheckError(errorText(e));
     } finally {
       setReordering(false);
     }
@@ -165,7 +166,7 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
       const disabled = await setWatchFolderCheckEnabled(path, enabled);
       setCheckDisabled(disabled);
     } catch (e) {
-      setOrderCheckError(String(e));
+      setOrderCheckError(errorText(e));
     } finally {
       setTogglingPath(null);
     }
@@ -215,7 +216,7 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
       // Surfaced in the UI, not just console.error -- e.g. the backend's
       // duplicate/containment rejection (validate_rename_target) or the
       // folder no longer being registered.
-      setEditError(String(e));
+      setEditError(errorText(e));
     } finally {
       setSavingEdit(false);
     }

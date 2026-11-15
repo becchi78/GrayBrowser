@@ -12,7 +12,7 @@ import {
   onWbImportProgress,
   onWbImportStage,
 } from "../events";
-import { abbreviatePath } from "../lib/abbreviatePath";
+import { PATH_DISPLAY_MAX_CHARS, abbreviatePath } from "../lib/abbreviatePath";
 import { countUnmatchedByKind, unmatchedCountText } from "../lib/unmatchedThumbnails";
 import { buildWbImportResultDisplay } from "../lib/wbImportResultDisplay";
 import type { WbImportResultDisplay } from "../lib/wbImportResultDisplay";
@@ -31,6 +31,7 @@ import type {
 } from "../types";
 import { ModalShell } from "./ModalShell";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   onClose: () => void;
@@ -38,9 +39,6 @@ interface Props {
   /** 手動の紐付けで動画のサムネイルが置き換わったとき(一覧側の表示を更新させる)。 */
   onThumbnailsReplaced: (videoId: string) => void;
 }
-
-// 表示用に省略するパスの最大文字数。全体は title で見られる。
-const PATH_DISPLAY_MAX_CHARS = 60;
 
 function PathLabel({ path }: { path: string }) {
   return (
@@ -61,7 +59,7 @@ function ImportLogLink() {
       await openWbImportLog();
     } catch (e) {
       console.error(e);
-      setOpenError(String(e));
+      setOpenError(errorText(e));
     }
   }
 
@@ -329,7 +327,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
       await startWbImport(wbPath, thumbnailFolderPath, true);
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
       setImporting(false);
     }
   }

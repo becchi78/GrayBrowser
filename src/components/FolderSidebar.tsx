@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { checkFolderReachability, listWatchFolders } from "../api";
+import { checkFolderReachability } from "../api";
 import { useIsFolderUnreachable } from "../reachabilityContext";
+import { useWatchFolderList } from "../useWatchFolderList";
 
 interface Props {
   /** `null` = "すべて" (no folder filter). */
@@ -19,19 +19,7 @@ interface Props {
 // clicking a folder scopes the grid to it via `list_videos`'s `folder_path`
 // argument (wired end-to-end through ThumbnailGrid -> api.listVideos).
 export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
-  const [folders, setFolders] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    listWatchFolders()
-      .then((rows) => {
-        if (!cancelled) setFolders(rows);
-      })
-      .catch(console.error);
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
+  const folders = useWatchFolderList(refreshKey) ?? [];
 
   return (
     <div className="folder-sidebar" data-testid="folder-sidebar">

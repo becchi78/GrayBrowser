@@ -220,7 +220,7 @@ test("開き直したときに一覧の取得が失敗したら、前回のエ�
   );
   await act(async () => {});
 
-  expect(orderCheckError()).toHaveTextContent("Error: boom");
+  expect(orderCheckError()).toHaveTextContent("boom");
   expect(orderCheckError()).not.toHaveTextContent("rejected order");
   expect(paths()).toEqual(["A", "B", "C"]);
 });

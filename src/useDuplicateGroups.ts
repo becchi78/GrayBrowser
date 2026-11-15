@@ -8,6 +8,7 @@ import {
 import { onDedupUpdated } from "./events";
 import { withoutKey } from "./lib/withoutKey";
 import type { DuplicateGroup, DuplicateGroupMember } from "./types";
+import { errorText } from "./lib/errorText";
 
 interface PendingAction {
   kind: "unregister" | "file";
@@ -52,7 +53,7 @@ export function useDuplicateGroups(
       // dedup:updated, which also clears `checking`.
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
       setChecking(false);
     }
   }
@@ -76,9 +77,9 @@ export function useDuplicateGroups(
     } catch (e) {
       console.error(e);
       if (kind === "unregister") {
-        setError(String(e));
+        setError(errorText(e));
       } else {
-        setFileDeleteErrors((prev) => ({ ...prev, [member.video_id]: String(e) }));
+        setFileDeleteErrors((prev) => ({ ...prev, [member.video_id]: errorText(e) }));
       }
     } finally {
       setBusy(false);

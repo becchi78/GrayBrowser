@@ -5,6 +5,7 @@ import { buildTagDeleteMessage } from "../lib/tagDeleteMessage";
 import type { TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell } from "./ModalShell";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   open: boolean;
@@ -49,7 +50,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         setError(null);
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) setError(errorText(e));
       });
     return () => {
       cancelled = true;
@@ -68,7 +69,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
       onChanged();
       onClose();
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -85,7 +86,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
       onTagDeleted(target.id);
       onChanged();
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setDeleting(false);
       setDeleteTarget(null);

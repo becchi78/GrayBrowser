@@ -8,6 +8,9 @@
 // 最終的な保険は呼び出し側のCSS（text-overflow: ellipsis）が担う。
 const PATH_ELLIPSIS = "…";
 
+// 一覧・ダイアログでパスを表示するときの最大文字数。全体は title で見られる。
+export const PATH_DISPLAY_MAX_CHARS = 60;
+
 export function abbreviatePath(path: string, maxChars: number): string {
   const chars = Array.from(path);
   if (chars.length <= maxChars) {
