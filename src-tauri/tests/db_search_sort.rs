@@ -320,6 +320,16 @@ fn sort_by_each_field_and_direction() {
         list(
             &db.read_pool,
             "",
+            SortField::Rating,
+            SortDirection::Asc,
+            &[]
+        ),
+        vec!["a", "b"]
+    );
+    assert_eq!(
+        list(
+            &db.read_pool,
+            "",
             SortField::UpdatedDate,
             SortDirection::Desc,
             &[]
