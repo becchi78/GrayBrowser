@@ -64,6 +64,14 @@ fn map_video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
 /// repeat manual scan of the same folder), this is a no-op -- this function
 /// does no file-move follow-up, so an existing row is left as-is.
 pub fn insert_video(conn: &Connection, video: &NewVideo) -> rusqlite::Result<()> {
+    insert_video_row(conn, video)?;
+    Ok(())
+}
+
+/// Same insert as [`insert_video`], returning the affected row count (0 when
+/// `file_path` was already registered) for callers that must tell the two
+/// cases apart.
+pub(super) fn insert_video_row(conn: &Connection, video: &NewVideo) -> rusqlite::Result<usize> {
     conn.execute(
         "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, mtime)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -77,8 +85,7 @@ pub fn insert_video(conn: &Connection, video: &NewVideo) -> rusqlite::Result<()>
             video.status,
             video.mtime
         ],
-    )?;
-    Ok(())
+    )
 }
 
 /// Writes back a video's duration once ffprobe has determined it (called
