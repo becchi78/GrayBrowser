@@ -1,5 +1,4 @@
 // countScanTargets / rescanState のユニットテスト。
-// src/lib/reachability.test.ts と同じパターン(package.jsonのtest:unit参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countScanTargets, rescanState } from "./scanTargets.ts";

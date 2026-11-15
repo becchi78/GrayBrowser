@@ -1,5 +1,5 @@
 //! Integration tests for the DB layer's
-//! `thumbnail_attempts`/`metadata_attempts` counters (migration 0007) and the
+//! `thumbnail_attempts`/`metadata_attempts` counters and the
 //! queries built on top of them (increment/reset, the attempts-carrying
 //! listing variants, and the exhausted-attempts listings feeding the retry
 //! UI). Real tempdir-backed SQLite file, matching `db_dedup_integrity.rs`'s

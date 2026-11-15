@@ -40,7 +40,7 @@ fn progress_dto(queue: &ThumbnailQueueHandle) -> ThumbnailProgressDto {
 /// defeat its own purpose. A plain command needs no capability beyond the
 /// `core:default` already granted.
 ///
-/// The frontend-facing signature (`video_id` only) is unchanged since #6 --
+/// The frontend-facing signature takes only `video_id` --
 /// `db: State<Db>` is a Tauri-managed dependency, not a caller-supplied
 /// argument, so resolving `file_path` -> `watch_folders` -> the video's
 /// resolved subdirectory here doesn't affect the IPC contract at all.

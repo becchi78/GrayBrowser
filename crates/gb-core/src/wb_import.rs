@@ -149,7 +149,7 @@ fn wb_fold_width(input: &str) -> String {
 /// should be merged into a single GrayBrowser tag during import: width-folds
 /// full-width characters/space to half-width (as `tags::normalize_tag_name`
 /// does), trims leading/trailing whitespace, and additionally case-folds via
-/// `to_lowercase()`. Confirmed with the data owner: real `.wb` data has
+/// `to_lowercase()`. Real `.wb` data has
 /// casing variants of the same tag (e.g. "Action" / "action") that should be
 /// treated as one tag on import.
 ///

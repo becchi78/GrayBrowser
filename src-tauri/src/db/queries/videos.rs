@@ -21,7 +21,7 @@ pub struct VideoRow {
     /// as "changed" (never as "unchanged").
     pub mtime: Option<i64>,
     /// Whether `thumbnails/[id].webp` was present on disk as of the last
-    /// time something actually wrote it (migration 0008).
+    /// time something actually wrote it.
     /// Deliberately kept in `VIDEO_COLUMNS`/the hot path unlike the other
     /// ffprobe-derived columns below (`probed_at` etc., which are fetched
     /// lazily by `get_video_properties`) -- `list_videos` needs this value
@@ -32,7 +32,7 @@ pub struct VideoRow {
     /// (`list_videos_missing_thumbnails`) still treats the filesystem itself
     /// as authoritative and self-heals this flag when it's stale.
     pub thumbnail_ready: bool,
-    /// Count of failed thumbnail generations (migration 0007). Read here so
+    /// Count of failed thumbnail generations. Read here so
     /// the list can tell "still being generated" from "automatic retries
     /// used up" without a second query per row.
     pub thumbnail_attempts: i64,
@@ -191,8 +191,8 @@ pub fn get_video_properties(
 /// rows (`rating = 0`) are naturally excluded whenever this filter is
 /// active, with no special-casing needed here. An empty `search_terms`+
 /// `tag_ids`+`ratings` and `folder_path: None`
-/// (the common "browse everything" case) degrades to the original unfiltered
-/// `list_videos` query this function replaces.
+/// (the common "browse everything" case) degrades to a plain unfiltered
+/// listing.
 pub fn list_videos_filtered(
     pool: &r2d2::Pool<SqliteConnectionManager>,
     search_terms: &[String],

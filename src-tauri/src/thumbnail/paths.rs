@@ -4,7 +4,7 @@
 //! of being re-derived at each call site (`scan/`, `watch/`, and several
 //! `commands/` modules).
 //!
-//! Since #6, thumbnails are grouped into a subdirectory per registered
+//! Thumbnails are grouped into a subdirectory per registered
 //! watch folder (`gb_core::paths::resolve_thumbnail_subdir`) rather than
 //! sitting flat directly under `thumbnails/` -- this module is the only
 //! place that combines that OS-independent subdirectory-name logic with an

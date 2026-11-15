@@ -20,10 +20,8 @@ test("typing in the search box filters the list to matching videos only", async 
   // checks -- covers the 200ms debounce plus IPC/query round trip without
   // depending on their exact timing.
   //
-  // UI/UX re-design note: counts `.video-row` (one row per video) rather
-  // than the old `.thumbnail-cell`. Kept the `searchAndCountCells` name for
-  // the same reason as uiFlows.mjs's `searchAndWaitForCellCount` -- purely
-  // local to this file, but consistent with that decision.
+  // Counts `.video-row` (one row per video). The `Cells` name matches
+  // uiFlows.mjs's `searchAndWaitForCellCount`.
   async function searchAndCountCells(term) {
     const searchBox = await browser.$('[data-testid="header-search-input"]');
     await searchBox.click();
@@ -75,23 +73,16 @@ test("typing in the search box filters the list to matching videos only", async 
       1,
       "expected the list to filter down to the matching video",
     );
-    // UI/UX re-design note: the old check here read `.thumbnail-name`'s
-    // text to confirm the *surviving* row was actually the alpha fixture,
-    // not just that the count was 1. That element no longer exists --
-    // VideoRow renders no visible file-name text at all; the only
-    // remaining DOM trace of the file name is the `alt` attribute on the
-    // row's thumbnail `<img>`
-    // (VideoRow.tsx), but this suite's fixture files are deliberately fake,
-    // non-decodable bytes (fixtures.mjs's own comment) -- ffmpeg/ffprobe can
-    // never successfully generate a thumbnail against them, so that `<img>`
-    // never actually renders (VideoRow.tsx: only a `.thumbnail-placeholder`
-    // div shows while `thumbnails` is null, which is permanently the case
-    // here) and can't be used as a selector. Instead, cross-checking that
-    // narrowing to the *other* fixture's own distinguishing term ("beta")
-    // also independently narrows to exactly one gives the same "search
-    // actually discriminates between the two fixtures, not just an
-    // incidental count of 1" guarantee that the old text check gave, without
-    // depending on DOM content this component no longer renders.
+    // A count of 1 alone doesn't show the *surviving* row is the alpha
+    // fixture. VideoRow renders no visible file-name text, and the only DOM
+    // trace of the file name (the `alt` on the thumbnail `<img>`) is
+    // unusable here: this suite's fixture files are deliberately fake,
+    // non-decodable bytes (fixtures.mjs's own comment), so no thumbnail is
+    // ever generated and only a `.thumbnail-placeholder` div shows. Instead,
+    // cross-check that narrowing to the *other* fixture's own distinguishing
+    // term ("beta") also independently narrows to exactly one, which shows
+    // the search discriminates between the two fixtures rather than
+    // producing an incidental count of 1.
     assert.equal(
       await searchAndCountCells(`${token} beta`),
       1,

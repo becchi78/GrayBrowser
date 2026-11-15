@@ -1,4 +1,4 @@
-//! One-time startup migration from the pre-#6 flat thumbnail layout
+//! One-time startup migration from the legacy flat thumbnail layout
 //! (`thumbnails/<video_id>_<slot>.webp`) to per-registered-folder
 //! subdirectories (`thumbnails/<folder-hash>/<video_id>_<slot>.webp`, or
 //! `thumbnails/_unassigned/...` for a video whose file no longer falls

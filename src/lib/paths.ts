@@ -5,16 +5,11 @@
 // `name` (the file name itself) always keeps its full intrinsic width.
 //
 // Deliberately takes only `filePath`, not a separate `fileName` to split
-// against. An earlier version of this function took both and used
-// `filePath.endsWith(fileName)` to find the split point, falling back to
-// `{ dir: filePath, name: "" }` when they didn't match -- but that fallback
-// silently reproduces the exact bug this function exists to fix (the file
-// name disappearing from view). Windows path/file-name comparisons are
-// case-insensitive, so a `file_path`/`file_name` pair that differs only in
-// case (or in `/` vs `\` separators) would hit that fallback in real data,
-// not just in theory. Splitting on the last separator character instead
-// needs no cross-check against a second string, so this class of mismatch
-// can't arise at all.
+// against: Windows path/file-name comparisons are case-insensitive, so a
+// `file_path`/`file_name` pair differing only in case (or in `/` vs `\`
+// separators) would fail any cross-check between the two strings and could
+// make the file name disappear from view. Splitting on the last separator
+// character needs no second string, so this class of mismatch can't arise.
 export function splitDirAndFileName(filePath: string): { dir: string; name: string } {
   const lastSep = Math.max(filePath.lastIndexOf("\\"), filePath.lastIndexOf("/"));
   if (lastSep === -1 || lastSep === filePath.length - 1) {

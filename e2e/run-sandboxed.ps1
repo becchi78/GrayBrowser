@@ -150,7 +150,7 @@ try {
         # unrelated to which command invoked cargo. A plain `cargo build`
         # (no `custom-protocol`) compiles the binary to always dial the Vite
         # dev server, which this script never starts, so the window shows
-        # WebView2's ERR_CONNECTION_REFUSED instead of the app (Issue #17).
+        # WebView2's ERR_CONNECTION_REFUSED instead of the app.
         # Passing the feature explicitly makes it load the `dist/` output
         # from `npm run build` above, the same as a real `cargo tauri build`.
         cargo build -p graybrowser --features tauri/custom-protocol

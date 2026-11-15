@@ -1,5 +1,4 @@
-// parseIntervalMinutes のユニットテスト。src/lib/ratingBar.test.ts と同じパターン
-// (package.json の test:unit 参照)。
+// parseIntervalMinutes のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_MINUTES, MAX_MINUTES, MIN_MINUTES, parseIntervalMinutes } from "./nasInterval.ts";

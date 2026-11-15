@@ -1,6 +1,5 @@
 // isUnderFolder / isPathUnreachable のユニットテスト。バックエンドの
 // gb_core::paths のテストと同じ観点（大文字小文字・区切り境界・UNC/ドライブ文字）。
-// src/lib/paths.test.ts と同じパターン（package.jsonのtest:unit参照）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isFolderUnreachable, isPathUnreachable, isUnderFolder } from "./reachability.ts";

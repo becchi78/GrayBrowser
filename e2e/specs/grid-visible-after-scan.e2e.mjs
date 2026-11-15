@@ -1,53 +1,31 @@
 // Regression test for the "grid not displaying" bug.
 //
-// History of this investigation (see App.css's own comments on `.app` /
-// `.video-list` (formerly `.thumbnail-grid` -- renamed in a later redesign,
-// see this file's own note below) / the seven sibling-section rules for the
-// final reasoning): the root cause is that the grid/list is a
-// `flex: 1` child of `.app`, giving it a flex-basis of 0 -- whenever the
-// sibling sections stacked around it collectively need more height than the
-// window has, CSS flexbox's shrink algorithm assigns this flex-basis-0 item
-// exactly 0 of the negative free space, regardless of what the siblings
-// themselves do (measured and confirmed: giving the siblings `min-height: 0`
-// + `max-height` + `overflow: auto`, so each is fully self-contained and
-// none of them visually overlap another section, does NOT by itself give
-// the grid/list back any height -- its scaled shrink factor is 0 no matter
-// how compressible the siblings are). The adopted fix combines:
+// Root cause (see also App.css's comments on `.app` / `.video-list`): the
+// list is a `flex: 1` child of `.app`, giving it a flex-basis of 0 --
+// whenever the sibling sections stacked around it collectively need more
+// height than the window has, CSS flexbox's shrink algorithm assigns this
+// flex-basis-0 item exactly 0 of the negative free space, regardless of what
+// the siblings themselves do (making the siblings compressible with
+// `min-height: 0` + `max-height` + `overflow: auto` does NOT by itself give
+// the list any height back -- its scaled shrink factor is 0 no matter how
+// compressible the siblings are). The layout combines:
 //   1. A bigger default/minimum window size (tauri.conf.json: 1280x900
 //      default, 900x580 minimum) so the sibling sections' natural
-//      (unclamped) height plus the grid/list's own floor fit without
-//      needing to shrink at all in the common case.
-//   2. The grid/list given an explicit `min-height` floor (one row --
-//      ROW_HEIGHT in ThumbnailGrid.tsx, confirmed by measurement to equal
-//      the real rendered row height exactly) as the actual guarantee,
-//      independent of window size.
+//      (unclamped) height plus the list's own floor fit without needing to
+//      shrink at all in the common case.
+//   2. The list given an explicit `min-height` floor (one row --
+//      ROW_HEIGHT in ThumbnailGrid.tsx, equal to the real rendered row
+//      height) as the actual guarantee, independent of window size.
 //   3. `.app`'s `overflow-y: auto` as a last-resort release valve for
-//      whatever still doesn't fit (e.g. a lot of real content) -- scrolling
-//      the whole page rather than silently clipping or squeezing a sibling
-//      into an unreadable sliver.
+//      whatever still doesn't fit -- scrolling the whole page rather than
+//      silently clipping or squeezing a sibling into an unreadable sliver.
 //   4. The sibling sections' own `min-height: 0` + `max-height` +
-//      `overflow: auto`, kept for its own independent value: it stops
-//      different sections from visually overlapping each other when space
-//      is tight, regardless of what happens to the grid/list.
+//      `overflow: auto`, kept because it stops different sections from
+//      visually overlapping each other when space is tight, regardless of
+//      what happens to the list.
 //
-// UI/UX re-design note: the header/status-bar/dialog structure this file
-// drives changed substantially since the investigation above --
-// `h1=GrayBrowser`, the always-visible "スキャン開始" button, and the
-// SkippedFilesPanel/DuplicateGroupsPanel's own toggle buttons are all gone
-// (see e2e/uiFlows.mjs's own comments for what replaced each). The layout
-// mechanics under test (flex-basis-0 shrink, the min-height floor) are
-// unchanged -- only the selectors/flow used to reach a populated grid were
-// updated. See layout-shrink-regression.e2e.mjs for two additional
-// regression tests (horizontal shrink, 84px non-grid budget) this file's
-// sibling adds.
-//
-// UI/UX re-design note: a later redesign replaced the multi-column
-// thumbnail grid with a one-video-per-row list (`ThumbnailGrid.tsx` still
-// hosts it, but the DOM/CSS classes changed: `.thumbnail-grid` ->
-// `.video-list`, `.thumbnail-cell` -> `.video-row`, ROW_HEIGHT 180 -> 258).
-// This file's selectors/constant below were updated to match; the
-// flex-basis-0 shrink mechanics and the tests' own structure/assertions are
-// otherwise unchanged from the history above.
+// See layout-shrink-regression.e2e.mjs for two additional regression tests
+// (horizontal shrink, 84px non-grid budget).
 //
 // This differs from incremental-search.e2e.mjs's existing `.video-row`
 // wait in that it isolates the assertion to layout metrics (container
@@ -58,16 +36,15 @@
 // All three tests below seed `watch_folders` directly into app.db *before*
 // launching the WebDriver session, rather than seeding then calling
 // `browser.refresh()` mid-session (the pattern incremental-search.e2e.mjs/
-// tag-management.e2e.mjs use). This investigation found `browser.refresh()`
-// (and even `location.reload()` executed in-page) to be unreliable against
-// this local tauri-driver + WebView2 combination: the frontend's Tauri IPC
-// calls issued right after a reload intermittently never resolve, leaving
-// every `useEffect`-driven fetch (list_watch_folders, list_videos, ...)
-// stuck at its initial empty state even though app.db on disk already has
-// the seeded data (verified via a direct read-back). Seeding before the
-// session even exists sidesteps that reload-time IPC flakiness entirely,
-// since the app's normal cold-boot path already reads settings fresh from
-// disk -- no reload involved.
+// tag-management.e2e.mjs use). `browser.refresh()` (and even
+// `location.reload()` executed in-page) is unreliable against this local
+// tauri-driver + WebView2 combination: the frontend's Tauri IPC calls
+// issued right after a reload intermittently never resolve, leaving every
+// `useEffect`-driven fetch (list_watch_folders, list_videos, ...) stuck at
+// its initial empty state even though app.db on disk already has the
+// seeded data. Seeding before the session even exists sidesteps that
+// reload-time IPC flakiness entirely, since the app's normal cold-boot path
+// already reads settings fresh from disk -- no reload involved.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
@@ -116,11 +93,9 @@ const TAURI_CONF_PATH = path.resolve(
 async function readLayout(browser) {
   return browser.execute(() => {
     const app = document.querySelector(".app");
-    // `.video-list` (formerly `.thumbnail-grid`, renamed in a later
-    // redesign) -- kept the `grid`/`cellCount` field names below unchanged
-    // (only the selectors they read change) since every assertion in this
-    // file already refers to them and a pure rename would be an unrelated
-    // diff.
+    // The `grid`/`cellCount` field names below are historical terms for
+    // `.video-list` and its `.video-row` children; every assertion in this
+    // file refers to them.
     const grid = document.querySelector(".video-list");
     return {
       windowInnerWidth: window.innerWidth,
@@ -228,21 +203,15 @@ test("minimum window size (900x580) keeps the grid at its floor without triggeri
 test("thumbnail grid stays at its floor even with the status panel open and full of real content", async () => {
   await ensureAppDbExists();
 
-  // UI/UX re-design note: previously, SkippedFilesPanel/
-  // DuplicateGroupsPanel/GenerationFailuresPanel were independently
-  // toggleable flex children of `.app`, so this test used to open all three
-  // at once to stress the sibling sections' combined height. Now, StatusBar's
-  // three badges share a single popover slot (`.status-panel`,
-  // `position: absolute`, anchored to the status bar, 26px tall) --
-  // only one can be open at a time, and (unlike the old flex-child panels)
-  // an open popover can never compete with `.video-list` for flex
-  // shrink-share in the first place, since it isn't a flex child of `.app`
-  // at all. This test now instead verifies: (a) a real scan really does
-  // populate both the skipped-files and duplicate-groups badges with
-  // nonzero counts, and (b) opening the richer of the two panels (duplicate
-  // groups: renders member thumbnails, file names, paths) still leaves
-  // `.video-list` at its floor height, exactly like the sparser
-  // "nothing open" case above.
+  // StatusBar's three badges share a single popover slot (`.status-panel`,
+  // `position: absolute`, anchored to the status bar, 26px tall) -- only one
+  // can be open at a time, and an open popover can never compete with
+  // `.video-list` for flex shrink-share, since it isn't a flex child of
+  // `.app`. This test verifies: (a) a real scan really does populate both
+  // the skipped-files and duplicate-groups badges with nonzero counts, and
+  // (b) opening the richer of the two panels (duplicate groups: renders
+  // member thumbnails, file names, paths) still leaves `.video-list` at its
+  // floor height, exactly like the sparser "nothing open" case above.
   const token = `e2e${Date.now()}siblingsopen`;
   // Two byte-identical fixtures register as a quick_hash duplicate pair --
   // `start_scan` fires `dedup::refresh_duplicate_groups` in the background

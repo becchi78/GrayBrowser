@@ -1,6 +1,5 @@
 // e2e/sandboxGuard.mjs の判定ロジック（evaluateSandboxGuard）のユニット
-// テスト。実fsアクセスを伴わない純関数のみを対象とする
-// （src/lib/boundedCache.test.ts と同様、Node組み込みのtest runnerを使う）。
+// テスト。実fsアクセスを伴わない純関数のみを対象とする。
 //
 // 加えて、実fsアクセスを行うassertSandbox()（実際に事故を防ぐ処理本体）に
 // ついても、os.tmpdir()配下の一時ディレクトリを使った統合テストを行う。

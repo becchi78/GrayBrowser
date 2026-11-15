@@ -1,14 +1,9 @@
-// UI/UX re-design layout regression tests.
+// Layout regression tests.
 //
-// Both tests below are layout-measurement assertions (not fixed-timeout
+// The tests below are layout-measurement assertions (not fixed-timeout
 // waits), matching grid-visible-after-scan.e2e.mjs's own style -- see that
 // file's header comment for why (a timing-only assertion looks like a
 // generic IPC/backend flake instead of pointing straight at the CSS layer).
-//
-// Mutation-tested manually (not run automatically here, since the mutation
-// itself needs a rebuild in between): each test's own comment records what
-// was mutated, how the rebuilt app was run, and that the test went red as
-// expected before being reverted.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -30,36 +25,23 @@ const DEFAULT_WINDOW = { width: 1280, height: 900 };
 // grid-visible-after-scan.e2e.mjs exercises vertically, just horizontally
 // here.
 //
-// UI/UX re-design note: this test originally needed the detail panel
-// opened too, because MainArea used to have *three* columns --
-// FolderSidebar (200px, flex-shrink:0) + `.thumbnail-grid` (flex:1) +
-// PropertiesPanel/detail panel (340px, flex-shrink:0, conditionally
-// mounted) -- and with the detail panel closed, the grid was the *only*
-// flexible item in the row, so it just grew to fill whatever was left of
-// the window (a positive-free-space case, `min-width` irrelevant either
-// way). A later redesign removed the detail panel entirely (folded into
-// each `.video-row` -- App.css's own `.main-area` comment), so MainArea is
-// now just two columns: the left pane (200px default, user-resizable --
+// MainArea is two columns: the left pane (200px default, user-resizable --
 // this test never touches the drag handle, so it stays at its 200px
-// default here) + `.video-list` (flex:1, `min-width`, see below). That's
-// still enough columns to reproduce the trap on its own -- shrinking the
-// window far enough now makes *this* two-column row's total desired width
-// (sidebar + `.video-list` min-width + `.app`'s own padding) exceed what's
-// available, the same negative-free-space case where a flex-basis-0 item's
-// scaled shrink factor is 0 regardless of its own min-width unless the
-// browser clamps to it as an explicit floor. No detail panel (or any other
-// extra mounted UI) is needed anymore to force that condition.
+// default here) + `.video-list` (flex:1, `min-width`, see below). Shrinking
+// the window far enough makes this row's total desired width (sidebar +
+// `.video-list` min-width + `.app`'s own padding) exceed what's available,
+// the negative-free-space case where a flex-basis-0 item's scaled shrink
+// factor is 0 regardless of its own min-width unless the browser clamps to
+// it as an explicit floor.
 //
 // SHRUNK_WIDTH itself: `.app`'s `padding: 1em` (16px, `:root`'s
 // `font-size: 16px`) on each side is 32px total, so the two columns' own
 // combined natural width is 200 (sidebar, at its unresized default) + 582
 // (`.video-list` min-width -- see App.css's own comment on that rule for
-// where 582 comes from) + 32 (`.app` padding) = 814px. 350px is now
-// comfortably (464px of margin) under this threshold, so it's kept
-// unchanged here rather than widened further -- the test's purpose
-// (confirming `.video-list` never collapses to 0 width) doesn't need the
-// window pushed all the way down to just-under-the-threshold, only
-// meaningfully below it, which 350px still is by a wide margin.
+// where 582 comes from) + 32 (`.app` padding) = 814px. 350px is
+// comfortably (464px of margin) under this threshold -- the test's purpose
+// (confirming `.video-list` never collapses to 0 width) only needs the
+// window meaningfully below it, not just-under-the-threshold.
 const SHRUNK_WIDTH = 350;
 
 test("shrinking the window well below the 900px minWidth still leaves .video-list at a nonzero width", async () => {
@@ -110,30 +92,6 @@ test("shrinking the window well below the 900px minWidth still leaves .video-lis
       layout.gridClientWidth > 0,
       `expected .video-list clientWidth to stay nonzero (App.css's min-width: 582px floor) even at ${SHRUNK_WIDTH}px window width, got ${JSON.stringify(layout)}`,
     );
-    // MUTATION TEST: with `.thumbnail-grid`'s (the previous name of this
-    // rule, now `.video-list`) `min-width: 300px` rule in App.css commented
-    // out and the app rebuilt, this assertion went red (gridClientWidth ===
-    // 0) against the then-three-column layout at a wider SHRUNK_WIDTH
-    // (500px) -- confirming the floor is what this test actually exercises,
-    // not just "the grid element happens to render something". Reverted
-    // before committing. Not re-run against the current two-column layout/
-    // SHRUNK_WIDTH=350px/`.video-list` selector (a mutation test needs its
-    // own rebuild-run-revert cycle) -- the arithmetic above was instead
-    // checked by hand: at 350px window width, `.main-area`'s available
-    // width (350 - 32 `.app` padding = 318px) is less than the sidebar's
-    // fixed 200px alone, let alone 200 + `.video-list`'s min-width, so the
-    // same flex-basis-0/negative-free-space mechanics this file's header
-    // comment describes still apply. This mutation test's continued
-    // sensitivity to the floor specifically (vs. some unrelated change
-    // happening to keep clientWidth nonzero) may need re-confirming with a
-    // fresh rebuild-run-revert cycle if `.video-list`'s min-width changes
-    // again. `.video-list`'s own min-width has since moved (300px -> 588px
-    // -> 598px -> 582px, per App.css's own comment on that rule) -- the
-    // mutation test above predates all of those changes and was not re-run
-    // against any of them for the same time-constraint reason; the by-hand
-    // arithmetic in this comment (350px window, 318px available) remains
-    // valid either way, since 318px is below the old 300px floor and every
-    // wider/narrower floor that followed it.
   } catch (e) {
     await saveFailureScreenshot(browser, "layout-shrink-horizontal");
     throw e;
@@ -179,11 +137,6 @@ test("the always-visible non-grid chrome (header row + status bar) totals at mos
       `expected the always-visible non-grid chrome (header-row-primary + status-bar) ` +
         `to total at most 84px, got ${total}px: ${JSON.stringify(layout)}`,
     );
-    // MUTATION TEST: with a temporary `padding-top: 50px` added to
-    // `.header-row-primary` in App.css and the app rebuilt, this assertion
-    // went red (total > 84) -- confirming the test actually catches a
-    // chrome-height regression, not just recomputing a value that always
-    // happens to pass. Reverted before committing.
   } catch (e) {
     await saveFailureScreenshot(browser, "layout-84px-budget");
     throw e;
@@ -378,24 +331,6 @@ test("the widened generation-failures panel keeps the full file name visible (ne
       result.fileRectRight <= result.clipRectRight + 1,
       `expected .file-path-file's right edge (${result.fileRectRight}) to fit within its clipping ancestor ${result.clipTag}'s right edge (${result.clipRectRight}) -- i.e. the file name must not be cut off, got ${JSON.stringify(result)}`,
     );
-    // MUTATION TEST: two mutations were tried against a real sandboxed
-    // rebuild.
-    // `.file-path-file`'s `flex-shrink: 0` -> `1` (App.css) did NOT go red
-    // -- `.file-path-file` has no `overflow`/`min-width: 0` of its own, so
-    // per the flexbox spec its *automatic minimum size* stays content-based
-    // regardless of flex-shrink, and it never actually shrank. Likewise
-    // removing `.file-path-dir`'s own `min-width: 0` alone did not go red
-    // either, since `.file-path-dir` already has `overflow: hidden` (for
-    // its ellipsis), which independently zeroes its automatic minimum size
-    // -- making that particular `min-width: 0` redundant in this design.
-    // What *did* go red: changing `.file-path-dir`'s `flex: 1 1 auto` to
-    // `flex: 0 0 auto` (flex-shrink forced to 0, so it can no longer give
-    // way at all) -- with a long enough directory, `.file-path-file` was
-    // pushed to a right edge (~1762px) far past `.generation-failures-list`
-    // (the clipping ancestor)'s right edge (809px), and this assertion
-    // caught it. All other tests in this file stayed green during this
-    // mutation (only this one, confirming it isn't a broader false
-    // positive). All three CSS states were reverted before committing.
 
     // (3) ホバーで全体表示 (title属性).
     assert.equal(

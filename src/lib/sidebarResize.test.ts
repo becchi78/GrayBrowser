@@ -1,6 +1,4 @@
-// effectiveMaxWidth のユニットテスト。src/lib/paths.test.ts と同じパターン
-// （Node組み込みtest runnerを`node --experimental-strip-types --test`で
-// 実行、package.jsonのtest:unit参照）。
+// effectiveMaxWidth のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { effectiveMaxWidth, MIN_WIDTH, MAX_WIDTH } from "./sidebarResize.ts";

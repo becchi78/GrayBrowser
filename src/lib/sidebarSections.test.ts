@@ -1,5 +1,4 @@
-// toggleSection のユニットテスト。src/lib/ratingBar.test.ts と
-// 同じパターン(package.jsonのtest:unit参照)。
+// toggleSection のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {

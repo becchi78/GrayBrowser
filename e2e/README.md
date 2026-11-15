@@ -58,7 +58,7 @@ tauri/custom-protocol`）を作成し、アプリを起動する。`custom-proto
 featureを明示的に付与しない素の`cargo build`だと、Tauriが常にVite開発
 サーバー（`http://localhost:1420`）への接続を試みるようビルドされてしまい、
 このスクリプトはViteサーバーを起動しないためERR_CONNECTION_REFUSEDに
-なる（Issue #17）。ウィンドウを閉じるまでスクリプトは待機する。
+なる。ウィンドウを閉じるまでスクリプトは待機する。
 tauri-driverは起動しない。
 
 ### 古いバイナリでの確認を防ぐ事前チェック

@@ -2,17 +2,14 @@
 // Centralizing these keeps the several spec files that all need "wait for
 // the app shell" / "seed a folder then run a scan" / "search and wait for
 // an exact cell count" in sync with the current DOM structure, rather than
-// duplicating the same selectors across files -- duplication is exactly how
-// the previous `h1=GrayBrowser` / `button=スキャン開始` selectors went stale
-// in every spec file at once.
+// duplicating the same selectors across files.
 
 import { DatabaseSync } from "node:sqlite";
 import { appDbPath, createSession } from "./session.mjs";
 
-// `<h1>` was removed from the header -- the header's first row
-// (`data-testid="header-row-primary"`) is always mounted (unconditionally,
-// unlike the detail panel/dialogs) and is the closest equivalent
-// "the app shell is up" signal left in the DOM.
+// The header's first row (`data-testid="header-row-primary"`) is always
+// mounted (unconditionally, unlike the detail panel/dialogs), so it works as
+// the "the app shell is up" signal.
 export async function waitForAppReady(browser, timeout = 30_000) {
   await browser.$('[data-testid="header-row-primary"]').waitForExist({ timeout });
 }
@@ -76,12 +73,9 @@ export async function scanViaFolderDialog(browser, { scanTimeout = 30_000 } = {}
 // exactly `expectedCount`, rather than just waiting a fixed duration, to
 // cover the search box's debounce plus the IPC/query round trip.
 //
-// Kept the `searchAndWaitForCellCount` name (still counts `.video-row`
-// elements one-per-video, exactly what "cell" meant before the list-view
-// redesign) rather than renaming to a "row" equivalent, since every caller
-// across the spec files already imports it by this name -- renaming here
-// would just ripple an unrelated import-only diff into every one of them
-// for no behavioral change.
+// Counts `.video-row` elements (one per video). The "cell" in the name is a
+// historical term for one video entry; it is kept because every spec file
+// imports it by this name.
 export async function searchAndWaitForCellCount(browser, term, expectedCount) {
   const searchBox = await browser.$('[data-testid="header-search-input"]');
   await searchBox.waitForExist({ timeout: 30_000 });

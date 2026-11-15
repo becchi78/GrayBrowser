@@ -1,7 +1,4 @@
 // moveUp/moveDown のユニットテスト。
-// src/lib/sidebarResize.test.ts と同じパターン(Node組み込みtest runnerを
-// `node --experimental-strip-types --test`で実行、package.jsonのtest:unit
-// 参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { moveDown, moveUp } from "./reorderablePinnedTags.ts";

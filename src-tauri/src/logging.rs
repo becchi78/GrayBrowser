@@ -6,10 +6,9 @@
 //! `app_r00001.log`, ...) rather than a more conventional logrotate-style
 //! `app.log`/`app.log.1`-style suffix numbering -- the crate always inserts
 //! a generation infix before the extension and has no logrotate-style
-//! suffix-numbering mode. Confirmed with the user: the native scheme is
-//! functionally equivalent (same 10MB/5-generation behavior) and is used
-//! as-is rather than building a custom rotation writer to match a specific
-//! example filename literally.
+//! suffix-numbering mode. The native scheme is functionally equivalent (same
+//! 10MB/5-generation behavior), so it is used as-is rather than building a
+//! custom rotation writer to match a specific filename literally.
 
 use std::path::Path;
 

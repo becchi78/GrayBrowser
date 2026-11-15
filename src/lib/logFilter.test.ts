@@ -1,5 +1,4 @@
-// logFilter のユニットテスト。src/lib/nasInterval.test.ts と同じパターン
-// (package.json の test:unit 参照)。
+// logFilter のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {

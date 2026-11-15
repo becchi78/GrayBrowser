@@ -31,7 +31,7 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
     },
     gb_core::migrations::Migration {
         version: 6,
-        description: "add path_collisions table to persist duplicate candidates from both 経路X (register_new_path's UNIQUE path collision) and 経路Y (reconcile_known_path's coincidental rehash match)",
+        description: "add path_collisions table to persist duplicate candidates from both a path-follow UNIQUE path collision (register_new_path) and a coincidental rehash match (reconcile_known_path)",
         sql: include_str!("../../migrations/0006_add_path_collisions.sql"),
     },
     gb_core::migrations::Migration {
