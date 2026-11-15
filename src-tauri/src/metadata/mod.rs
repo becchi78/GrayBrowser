@@ -143,7 +143,6 @@ mod tests {
     use gb_core::ports::ffmpeg::{FfmpegAvailability, FfmpegError};
     use gb_core::testing::fake_ffmpeg::{FakeCall, FakeFfmpegAdapter};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
 
     use crate::test_support::CountingNotifier;
     use crate::test_support::{all_reachable, registry_over};
@@ -166,14 +165,10 @@ mod tests {
             ..Default::default()
         });
 
-        enqueue_missing_metadata_probes(db.clone(), ffmpeg, Arc::clone(&notifier), all_reachable());
+        // Run synchronously: `enqueue_missing_metadata_probes` only spawns this
+        // on a detached thread.
+        run_metadata_queue(db.clone(), ffmpeg, Arc::clone(&notifier), all_reachable());
 
-        // The queue is fire-and-forget on a detached thread, so poll for the
-        // notification instead of joining.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while notifier.0.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
         assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
     }
 

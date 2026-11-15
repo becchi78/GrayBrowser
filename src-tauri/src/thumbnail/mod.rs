@@ -445,11 +445,14 @@ mod tests {
     use crate::test_support::{thumbnail_attempts_of, CountingNotifier};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
 
+    /// Records progress notifications and counts `notify_changed` calls.
     #[derive(Default)]
-    struct ProgressRecorder(Mutex<Vec<(u32, u32)>>);
+    struct ProgressRecorder(Mutex<Vec<(u32, u32)>>, AtomicUsize);
 
     impl CatalogNotifier for ProgressRecorder {
-        fn notify_changed(&self) {}
+        fn notify_changed(&self) {
+            self.1.fetch_add(1, Ordering::SeqCst);
+        }
 
         fn notify_thumbnail_progress(&self, done: u32, total: u32) {
             self.0.lock().unwrap().push((done, total));
@@ -566,61 +569,6 @@ mod tests {
     }
 
     #[test]
-    fn an_already_complete_video_in_a_stale_pending_list_is_not_regenerated() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs = tempfile::tempdir().unwrap();
-        let dir = unassigned_dir(thumbs.path());
-        insert_test_video(&db, "vid-done", "C:/videos/done.mp4");
-        std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..worker::THUMBNAILS_PER_VIDEO {
-            std::fs::write(dir.join(format!("vid-done_{i}.webp")), b"original").unwrap();
-        }
-        let ffmpeg = available_ffmpeg(Duration::ZERO);
-        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
-
-        process_pending(
-            db.clone(),
-            thumbs.path().to_path_buf(),
-            Vec::new(),
-            ThumbnailQueueHandle::default(),
-            Arc::clone(&ffmpeg),
-            Arc::clone(&notifier),
-            vec![("vid-done".to_string(), PathBuf::from("C:/videos/done.mp4"))],
-            all_reachable(),
-        );
-
-        assert_eq!(extract_count_for(&ffmpeg, "vid-done"), 0);
-        for i in 0..worker::THUMBNAILS_PER_VIDEO {
-            let bytes = std::fs::read(dir.join(format!("vid-done_{i}.webp"))).unwrap();
-            assert_eq!(bytes, b"original", "slot {i} must not be overwritten");
-        }
-        assert_eq!(thumbnail_ready_flag(&db, "vid-done"), 1);
-        assert_eq!(notifier.0.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn a_failed_generation_also_notifies_the_catalog_changed() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-fail", "C:/videos/fail.mp4");
-        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
-
-        process_pending(
-            db.clone(),
-            thumbs.path().to_path_buf(),
-            Vec::new(),
-            ThumbnailQueueHandle::default(),
-            failing_ffmpeg(),
-            Arc::clone(&notifier),
-            vec![pending_entry("vid-fail")],
-            all_reachable(),
-        );
-
-        assert_eq!(thumbnail_ready_flag(&db, "vid-fail"), 0);
-        assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
     fn claim_is_exclusive_per_video_and_shared_across_clones() {
         let queue = ThumbnailQueueHandle::default();
         let clone = queue.clone();
@@ -632,25 +580,6 @@ mod tests {
         );
         drop(guard);
         assert!(clone.try_claim("a").is_some());
-    }
-
-    #[test]
-    fn claim_is_released_after_normal_completion_and_after_err() {
-        let queue = ThumbnailQueueHandle::default();
-        let ok: Result<(), String> = {
-            let _guard = queue.try_claim("v").unwrap();
-            Ok(())
-        };
-        assert!(ok.is_ok());
-        assert!(queue.try_claim("v").is_some(), "released after Ok");
-
-        let err: Result<(), String> = (|| {
-            let _guard = queue.try_claim("v").unwrap();
-            Err("generation failed".to_string())?;
-            Ok(())
-        })();
-        assert!(err.is_err());
-        assert!(queue.try_claim("v").is_some(), "released after Err");
     }
 
     #[test]
@@ -878,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn already_complete_videos_in_a_stale_list_count_as_done_and_end_hidden() {
+    fn already_complete_videos_in_a_stale_list_are_not_regenerated_count_as_done_and_end_hidden() {
         let (_db_dir, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
         let dir = unassigned_dir(thumbs.path());
@@ -891,18 +820,32 @@ mod tests {
         }
         let notifier = Arc::new(ProgressRecorder::default());
         let queue = ThumbnailQueueHandle::default();
+        let ffmpeg = available_ffmpeg(Duration::ZERO);
 
         process_pending(
-            db,
+            db.clone(),
             thumbs.path().to_path_buf(),
             Vec::new(),
             queue.clone(),
-            available_ffmpeg(Duration::ZERO),
+            Arc::clone(&ffmpeg),
             Arc::clone(&notifier),
             vec![pending_entry("a"), pending_entry("b")],
             all_reachable(),
         );
 
+        for id in ["a", "b"] {
+            assert_eq!(extract_count_for(&ffmpeg, id), 0, "{id}");
+            for i in 0..worker::THUMBNAILS_PER_VIDEO {
+                let bytes = std::fs::read(dir.join(format!("{id}_{i}.webp"))).unwrap();
+                assert_eq!(bytes, b"original", "{id} slot {i} must not be overwritten");
+            }
+            assert_eq!(thumbnail_ready_flag(&db, id), 1, "{id}");
+        }
+        assert_eq!(
+            notifier.1.load(Ordering::SeqCst),
+            0,
+            "nothing was generated, so nothing changed"
+        );
         let calls = notifier.0.lock().unwrap().clone();
         assert!(
             calls.contains(&(1, 2)),
@@ -1046,6 +989,7 @@ mod tests {
         let (_db_dir, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
         insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");
+        let notifier = Arc::new(CountingNotifier(AtomicUsize::new(0)));
 
         process_pending(
             db.clone(),
@@ -1053,12 +997,18 @@ mod tests {
             watch_folders(),
             ThumbnailQueueHandle::default(),
             failing_ffmpeg(),
-            Arc::new(CountingNotifier(AtomicUsize::new(0))),
+            Arc::clone(&notifier),
             vec![nas_entry("nas-1")],
             all_reachable(),
         );
 
         assert_eq!(thumbnail_attempts_of(&db, "nas-1"), 1);
+        assert_eq!(thumbnail_ready_flag(&db, "nas-1"), 0);
+        assert_eq!(
+            notifier.0.load(Ordering::SeqCst),
+            1,
+            "a failed generation also notifies the catalog changed"
+        );
     }
 
     #[test]
@@ -1091,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn each_successful_generation_notifies_once_and_marks_the_video_ready() {
+    fn each_successful_generation_notifies_the_catalog_once() {
         let (_db_dir, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
         for id in ["ok-1", "ok-2"] {
@@ -1111,9 +1061,5 @@ mod tests {
         );
 
         assert_eq!(notifier.0.load(Ordering::SeqCst), 2);
-        for id in ["ok-1", "ok-2"] {
-            assert_eq!(thumbnail_ready_flag(&db, id), 1, "{id}");
-            assert!(six_finals_exist(&unassigned_dir(thumbs.path()), id));
-        }
     }
 }

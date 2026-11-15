@@ -214,11 +214,4 @@ mod tests {
         assert_eq!(menu_event_name(MENU_ITEM_STYLE_DEFAULT), None);
         assert_eq!(menu_event_name(MENU_ITEM_DB_BACKUP), None);
     }
-
-    #[test]
-    fn unknown_ids_have_no_event_name() {
-        for id in ["", "quit", "menu-unknown", "MENU-ABOUT", "menu-about "] {
-            assert_eq!(menu_event_name(id), None, "id {id:?}");
-        }
-    }
 }

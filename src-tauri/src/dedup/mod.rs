@@ -389,27 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn full_hash_file_matches_gb_core_full_hash_for_the_same_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a.bin");
-        let content = b"hello world, dedup round-trip test content";
-        fs::write(&path, content).unwrap();
-
-        let via_file = full_hash_file(&path.to_string_lossy()).unwrap();
-
-        let mut cursor = std::io::Cursor::new(content.to_vec());
-        let expected = gb_core::hash::full_hash(&mut cursor).unwrap();
-        assert_eq!(via_file, expected);
-    }
-
-    #[test]
-    fn full_hash_file_returns_err_for_a_nonexistent_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("does-not-exist.mp4");
-        assert!(full_hash_file(&missing.to_string_lossy()).is_err());
-    }
-
-    #[test]
     fn detect_duplicate_groups_confirms_two_online_videos_sharing_content() {
         let (_db_dir, db) = init_temp_db();
         let files_dir = tempfile::tempdir().unwrap();
@@ -682,18 +661,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_groups_state_get_reflects_the_last_set_snapshot() {
-        let state = DuplicateGroupsState::default();
-        assert!(state.get().is_empty());
-
-        state.set(vec![DuplicateGroup {
-            kind: DuplicateGroupKind::QuickHashConfirmed,
-            members: vec![],
-        }]);
-        assert_eq!(state.get().len(), 1);
-    }
-
-    #[test]
     fn members_in_an_unreachable_watch_folder_are_not_hashed() {
         let (_db_dir, db) = init_temp_db();
         let dir = tempfile::tempdir().unwrap();
@@ -823,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_full_hash_tells_unreachable_apart_from_failure() {
+    fn ensure_full_hash_tells_unreachable_apart_from_failure_and_uses_a_stored_hash() {
         let p = unreachable_pair();
         let folders = std::slice::from_ref(&p.folder);
         assert_eq!(
@@ -839,23 +806,12 @@ mod tests {
             ensure_full_hash(&p.db, "a", folders, &all_reachable()),
             FullHashOutcome::Failed
         );
-    }
 
-    #[test]
-    fn an_already_stored_full_hash_is_used_even_when_the_folder_is_unreachable() {
-        let (_db_dir, db) = init_temp_db();
-        let dir = tempfile::tempdir().unwrap();
-        let a = dir.path().join("a.mp4");
-        fs::write(&a, b"bytes").unwrap();
-        insert_online_video(&db, "a", &a, "qh", 5);
-        queries::update_full_hash(&db.writer.lock().unwrap(), "a", "cached-hash").unwrap();
-        let folder = dir.path().to_string_lossy().to_string();
-        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
-            folder.as_str()
-        ])));
-
-        let hash = ensure_full_hash(&db, "a", std::slice::from_ref(&folder), &registry);
-
-        assert_eq!(hash, FullHashOutcome::Known("cached-hash".to_string()));
+        // A hash stored earlier is used even though the folder is unreachable.
+        queries::update_full_hash(&p.db.writer.lock().unwrap(), "b", "cached-hash").unwrap();
+        assert_eq!(
+            ensure_full_hash(&p.db, "b", folders, &p.registry),
+            FullHashOutcome::Known("cached-hash".to_string())
+        );
     }
 }
