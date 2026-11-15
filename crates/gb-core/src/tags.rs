@@ -28,7 +28,7 @@ impl std::error::Error for TagNameError {}
 /// should still be treated as the same tag. Characters outside these two
 /// ranges (hiragana, katakana, kanji, half-width text) pass through
 /// unchanged.
-fn fold_width(input: &str) -> String {
+pub(crate) fn fold_width(input: &str) -> String {
     input
         .chars()
         .map(|c| match c {
@@ -64,6 +64,15 @@ pub fn dedup_keep_first(ids: &[i64]) -> Vec<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fold_width_maps_full_width_ascii_range_and_space() {
+        assert_eq!(
+            fold_width("\u{FF21}\u{FF43}\u{FF54}\u{FF49}\u{FF4F}\u{FF4E}\u{3000}\u{FF01}"),
+            "Action !"
+        );
+        assert_eq!(fold_width("アクション"), "アクション");
+    }
 
     #[test]
     fn trims_ascii_whitespace() {
