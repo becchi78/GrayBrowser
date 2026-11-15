@@ -356,8 +356,10 @@ pub trait ReachabilityNotifier: Send + Sync {
 
 /// For callers that have no frontend to tell (integration tests, a manager
 /// built without an app).
+#[cfg(any(test, feature = "testing"))]
 pub struct NoopReachabilityNotifier;
 
+#[cfg(any(test, feature = "testing"))]
 impl ReachabilityNotifier for NoopReachabilityNotifier {
     fn notify_changed(&self, _unreachable: &[String]) {}
 }

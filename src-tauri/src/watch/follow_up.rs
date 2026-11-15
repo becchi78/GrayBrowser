@@ -40,7 +40,8 @@ pub struct FollowUp {
 
 impl FollowUp {
     /// A `FollowUp` whose `trigger` does nothing and owns no thread; used where
-    /// no follow-up is wanted (tests, `RealtimeWatchManager::default`).
+    /// no follow-up is wanted (tests).
+    #[cfg(any(test, feature = "testing"))]
     pub fn noop() -> Self {
         Self { inner: None }
     }

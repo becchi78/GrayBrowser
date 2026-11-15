@@ -72,6 +72,7 @@ pub struct RealtimeWatchManager {
     reconfigure_lock: Mutex<()>,
 }
 
+#[cfg(test)]
 impl Default for RealtimeWatchManager {
     fn default() -> Self {
         Self::new(
