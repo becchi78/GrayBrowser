@@ -157,9 +157,8 @@ pub fn delete_video_with_file(
         .map_err(|e| e.to_string())
         .and_then(|conn| crate::db::queries::get_watch_folders(&conn).map_err(|e| e.to_string()))
         .map_err(|e| format!("登録フォルダを取得できませんでした: {e}"))?;
-    let under_registered_folder = watch_folders
-        .iter()
-        .any(|folder| gb_core::paths::is_path_under_folder(&row.file_path, folder));
+    let under_registered_folder =
+        gb_core::paths::is_under_any_folder(&row.file_path, &watch_folders);
 
     // A detection failure is treated as Unknown, which the policy refuses.
     let drive = drive_detector
@@ -677,6 +676,71 @@ mod tests {
                 let out = other.join("a.mp4");
                 std::fs::write(&out, CONTENT).unwrap();
                 env.insert_row("a", &out, "online", CONTENT.len() as i64);
+                (group(&["a", "b"]), local())
+            },
+            "a",
+            "登録フォルダの外",
+        );
+    }
+
+    /// The catalog may hold `/`-separated paths; NTFS treats them as the same
+    /// file, so the registered-folder check must too. Only that check is
+    /// asserted: the later file-state check stats the verbatim (`\\?\`) form, which does
+    /// not accept `/`, so the delete as a whole is still refused further on.
+    #[test]
+    #[cfg(windows)]
+    fn a_forward_slash_file_path_passes_the_registered_folder_check() {
+        let env = Env::new();
+        two_online(&env);
+        let slashed = env
+            .folder
+            .join("a.mp4")
+            .to_string_lossy()
+            .replace('\\', "/");
+        {
+            let conn = env.db.writer.lock().unwrap();
+            conn.execute(
+                "UPDATE videos SET file_path = ?1 WHERE id = 'a'",
+                [&slashed],
+            )
+            .unwrap();
+        }
+        let drive = AnyDrive(local());
+        let trasher = trash_ok();
+        let notifier = FakeCatalogNotifier::default();
+
+        let err = run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a").unwrap_err();
+
+        assert!(!err.contains("登録フォルダの外"), "{err}");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn allows_a_file_when_the_registered_folder_has_a_trailing_separator() {
+        let env = Env::new();
+        two_online(&env);
+        {
+            let conn = env.db.writer.lock().unwrap();
+            let with_sep = format!("{}\\", env.folder.to_string_lossy());
+            crate::db::queries::set_watch_folders(&conn, &[with_sep]).unwrap();
+        }
+        let drive = AnyDrive(local());
+        let trasher = trash_ok();
+        let notifier = FakeCatalogNotifier::default();
+
+        run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a").unwrap();
+
+        assert_eq!(trasher.calls.lock().unwrap().len(), 1);
+        assert!(!env.row_exists("a"));
+    }
+
+    /// The folder itself is never deletable.
+    #[test]
+    fn refuses_the_registered_folder_itself() {
+        refusal_case(
+            |env| {
+                env.add_video("b", "online");
+                env.insert_row("a", &env.folder, "online", 0);
                 (group(&["a", "b"]), local())
             },
             "a",

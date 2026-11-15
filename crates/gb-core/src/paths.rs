@@ -227,7 +227,13 @@ pub const THUMBNAIL_UNASSIGNED_SUBDIR: &str = "_unassigned";
 /// itself), using the same boundary-safe, case-insensitive comparison as
 /// `folder_paths_conflict`/`folder_like_prefix` -- `C:\Videos2` is not under
 /// `C:\Videos` even though it shares a string prefix.
-pub fn is_path_under_folder(path: &str, folder: &str) -> bool {
+///
+/// Only for resolving where a thumbnail is stored. Do not use it to decide
+/// whether a file may be deleted: use `is_under_folder` there. This one
+/// counts the folder itself as inside and does not fold `/` into `\`, so a
+/// `/`-separated path under a registered folder is missed, which is wrong
+/// for a safety check but must stay as is for thumbnails already on disk.
+fn is_path_under_folder(path: &str, folder: &str) -> bool {
     let folder_norm = normalize_folder_path(folder).to_lowercase();
     let path_norm = normalize_folder_path(path).to_lowercase();
     // The equality check handles `path == folder` (the "folder itself"
@@ -577,40 +583,6 @@ mod tests {
         );
     }
 
-    // --- is_path_under_folder ---------------------------------------------
-
-    #[test]
-    fn is_path_under_folder_matches_a_direct_child_file() {
-        assert!(is_path_under_folder(r"C:\Videos\a.mp4", r"C:\Videos"));
-    }
-
-    #[test]
-    fn is_path_under_folder_matches_a_nested_subpath() {
-        assert!(is_path_under_folder(r"C:\Videos\Sub\a.mp4", r"C:\Videos"));
-    }
-
-    #[test]
-    fn is_path_under_folder_matches_the_folder_itself() {
-        assert!(is_path_under_folder(r"C:\Videos", r"C:\Videos"));
-    }
-
-    #[test]
-    fn is_path_under_folder_is_case_insensitive() {
-        assert!(is_path_under_folder(r"c:\videos\a.mp4", r"C:\Videos"));
-    }
-
-    #[test]
-    fn is_path_under_folder_does_not_flag_a_sibling_with_a_shared_string_prefix() {
-        // The classic boundary-safety fixture: "C:\Videos2" is not inside
-        // "C:\Videos" even though it shares a string prefix.
-        assert!(!is_path_under_folder(r"C:\Videos2\a.mp4", r"C:\Videos"));
-    }
-
-    #[test]
-    fn is_path_under_folder_does_not_flag_an_unrelated_path() {
-        assert!(!is_path_under_folder(r"D:\Other\a.mp4", r"C:\Videos"));
-    }
-
     // --- resolve_thumbnail_subdir -------------------------------------------
 
     #[test]
@@ -640,6 +612,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_thumbnail_subdir_resolves_the_folder_itself_to_its_own_subdir() {
+        let folders = vec![r"C:\Videos".to_string()];
+        assert_eq!(
+            resolve_thumbnail_subdir(&folders, r"C:\Videos"),
+            thumbnail_folder_subdir(r"C:\Videos")
+        );
+    }
+
+    #[test]
+    fn resolve_thumbnail_subdir_does_not_fold_forward_slashes() {
+        // Pins current behaviour: the subdirectory name hashes the folder
+        // string, and thumbnails already written under it must stay
+        // reachable, so a `/`-separated path is not re-homed here.
+        let folders = vec![r"C:\Videos".to_string()];
+        assert_eq!(
+            resolve_thumbnail_subdir(&folders, "C:/Videos/a.mp4"),
+            THUMBNAIL_UNASSIGNED_SUBDIR
+        );
+    }
+
+    #[test]
     fn resolve_thumbnail_subdir_picks_the_most_specific_match_among_nested_entries() {
         // Ordinarily `folder_paths_conflict` prevents both a parent and a
         // child folder from being registered at the same time, but this
@@ -652,42 +645,91 @@ mod tests {
         );
     }
 
+    /// `(path, folder, is_under_folder, is_path_under_folder, why)`.
+    /// The two predicates differ on purpose: deletion must not treat the
+    /// folder itself as inside and must fold `/`, while thumbnail placement
+    /// keeps its historical behaviour.
     #[test]
-    fn is_under_folder_matches_inside_and_ignores_case() {
-        assert!(is_under_folder(r"W:\video\a.mp4", r"W:\video"));
-        assert!(is_under_folder(r"w:\VIDEO\Sub\a.mp4", r"W:\video"));
-        assert!(is_under_folder(r"W:\video\a.mp4", r"W:\video\"));
-    }
-
-    #[test]
-    fn is_under_folder_requires_a_separator_boundary() {
-        assert!(!is_under_folder(r"W:\video2\a.mp4", r"W:\video"));
-        assert!(!is_under_folder(r"W:\videos\a.mp4", r"W:\video\"));
-        // The folder itself is not "under" itself.
-        assert!(!is_under_folder(r"W:\video", r"W:\video"));
-    }
-
-    #[test]
-    fn is_under_folder_handles_drive_roots_and_unc() {
-        assert!(is_under_folder(r"W:\a.mp4", r"W:\"));
-        assert!(is_under_folder(r"W:\x\a.mp4", "W:"));
-        assert!(!is_under_folder(r"V:\a.mp4", r"W:\"));
-        assert!(is_under_folder(r"\\nas\share\v\a.mp4", r"\\NAS\share"));
-        assert!(!is_under_folder(r"\\nas\share2\a.mp4", r"\\nas\share"));
-    }
-
-    #[test]
-    fn is_under_folder_treats_forward_slashes_as_separators() {
-        assert!(is_under_folder("C:/videos/a.mp4", r"C:\videos"));
-        assert!(is_under_folder(r"C:\videos\a.mp4", "C:/videos/"));
-        assert!(!is_under_folder("C:/videos2/a.mp4", "C:/videos"));
-    }
-
-    #[test]
-    fn is_under_folder_rejects_an_empty_folder() {
-        assert!(!is_under_folder(r"\a.mp4", ""));
-        assert!(!is_under_folder(r"C:\a.mp4", "  "));
-        assert!(!is_under_folder(r"C:\a.mp4", r"\"));
+    fn under_folder_predicates_agree_except_where_documented() {
+        const DIFF: &str = "削除判定は新に寄せる。サムネイルは旧を維持";
+        let cases: &[(&str, &str, bool, bool, &str)] = &[
+            (r"C:\Videos\a.mp4", r"C:\Videos", true, true, "direct child"),
+            (r"C:\Videos\Sub\a.mp4", r"C:\Videos", true, true, "nested"),
+            (
+                r"c:\videos\a.mp4",
+                r"C:\Videos",
+                true,
+                true,
+                "case-insensitive",
+            ),
+            (
+                r"W:\video\a.mp4",
+                r"W:\video\",
+                true,
+                true,
+                "folder with trailing separator",
+            ),
+            (
+                r"C:\Videos2\a.mp4",
+                r"C:\Videos",
+                false,
+                false,
+                "shared string prefix",
+            ),
+            (
+                r"W:\videos\a.mp4",
+                r"W:\video\",
+                false,
+                false,
+                "shared prefix, trailing separator",
+            ),
+            (r"D:\Other\a.mp4", r"C:\Videos", false, false, "unrelated"),
+            (r"D:\v", r"D:\v", false, true, DIFF),
+            ("D:/v/a.mp4", r"D:\v", true, false, DIFF),
+            (r"D:\v\a.mp4", "D:/v/", true, false, DIFF),
+            (
+                "D:/v2/a.mp4",
+                "D:/v",
+                false,
+                false,
+                "forward-slash shared prefix",
+            ),
+            (r"W:\a.mp4", r"W:\", true, true, "drive root"),
+            (r"W:\x\a.mp4", "W:", true, true, "drive without separator"),
+            (r"V:\a.mp4", r"W:\", false, false, "other drive"),
+            (
+                r"D:\",
+                r"D:\",
+                true,
+                true,
+                "drive root itself (quirk of both)",
+            ),
+            ("D:", r"D:\", false, true, DIFF),
+            (r"\\nas\share\v\a.mp4", r"\\NAS\share", true, true, "UNC"),
+            (
+                r"\\nas\share2\a.mp4",
+                r"\\nas\share",
+                false,
+                false,
+                "UNC boundary",
+            ),
+            (r"\\nas\share\a.mp4", "", false, true, DIFF),
+            (r"C:\a.mp4", "  ", false, false, "blank folder"),
+            (r"C:\a.mp4", r"\", false, false, "separator-only folder"),
+            (r"\a.mp4", r"\", false, true, DIFF),
+        ];
+        for (path, folder, new, old, why) in cases {
+            assert_eq!(
+                is_under_folder(path, folder),
+                *new,
+                "new: {path} / {folder}: {why}"
+            );
+            assert_eq!(
+                is_path_under_folder(path, folder),
+                *old,
+                "old: {path} / {folder}: {why}"
+            );
+        }
     }
 
     #[test]
