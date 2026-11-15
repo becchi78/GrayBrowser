@@ -98,10 +98,7 @@ fn link_impl<F: FfmpegAdapter, C: CatalogNotifier>(
         return Err("オフラインの動画にだけ紐付けできます。".to_string());
     }
 
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(db_err)?;
-        queries::get_watch_folders(&conn).map_err(db_err)?
-    };
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(db_err)?;
     let target = queries::OfflineVideoCandidate {
         id: video.id.clone(),
         file_name: video.file_name.clone(),
@@ -159,9 +156,8 @@ pub fn link_unmatched_thumbnail(
     file_name: String,
     video_id: String,
 ) -> Result<(), String> {
-    let thumbnails_root = crate::paths::app_data_dir()
-        .map(|dir| crate::thumbnail::paths::thumbnails_root(&dir))
-        .map_err(|e| e.to_string())?;
+    let thumbnails_root =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
     link_impl(
         &db,
         &adapters::ffmpeg::RealFfmpegAdapter,
@@ -185,6 +181,8 @@ pub fn dismiss_unmatched_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thumbnail::paths::slot_path;
+    use crate::thumbnail::worker::THUMBNAILS_PER_VIDEO;
     use gb_core::ports::ffmpeg::{FfmpegError, VideoMetadata};
     use gb_core::testing::fake_ffmpeg::{FakeCall, FakeFfmpegAdapter};
     use std::path::PathBuf;
@@ -325,7 +323,13 @@ mod tests {
     }
 
     fn expected_slots(id: &str) -> Vec<String> {
-        (0..6).map(|i| format!("{id}_{i}.webp")).collect()
+        (0..THUMBNAILS_PER_VIDEO)
+            .map(|i| {
+                slot_path(Path::new(""), id, i)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
     }
 
     #[test]
@@ -469,16 +473,16 @@ mod tests {
         env.add_video("vid", "offline", 1);
         let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..6 {
-            std::fs::write(dir.join(format!("vid_{i}.webp")), b"old").unwrap();
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
         }
 
         env.link(&converting_ffmpeg(), FILE, "vid").unwrap();
 
         assert_eq!(slot_names(&env.files(), "vid"), expected_slots("vid"));
-        for i in 0..6 {
+        for i in 0..THUMBNAILS_PER_VIDEO {
             assert_eq!(
-                std::fs::read(dir.join(format!("vid_{i}.webp"))).unwrap(),
+                std::fs::read(slot_path(&dir, "vid", i)).unwrap(),
                 b"fake webp bytes"
             );
         }
@@ -492,8 +496,8 @@ mod tests {
         env.add_video("vid", "offline", 1);
         let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..6 {
-            std::fs::write(dir.join(format!("vid_{i}.webp")), b"old").unwrap();
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
         }
 
         env.link(&failing_ffmpeg(), FILE, "vid").unwrap_err();

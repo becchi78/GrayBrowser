@@ -98,9 +98,8 @@ pub async fn start_wb_import(
         }
     };
 
-    let thumbnails_dir = crate::paths::app_data_dir()
-        .map(|dir| dir.join("thumbnails"))
-        .map_err(|e| e.to_string())?;
+    let thumbnails_dir =
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
     // Best-effort, mirroring start_scan's identical create_dir_all before
     // enqueue_missing_thumbnails -- thumbnail generation below simply
     // produces 0 successes if this directory somehow still doesn't exist.
@@ -125,9 +124,7 @@ pub async fn start_wb_import(
     let notifier = Arc::new(TauriWbImportNotifier::new(app.clone()));
     let watch_reconfigurer = Arc::new(TauriWatchReconfigurer::new(
         app.clone(),
-        crate::thumbnail::paths::thumbnails_root(
-            &crate::paths::app_data_dir().map_err(|e| e.to_string())?,
-        ),
+        crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?,
     ));
     let catalog_notifier = Arc::new(TauriCatalogNotifier::new(app));
 

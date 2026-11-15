@@ -17,6 +17,7 @@ use std::thread;
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use gb_core::thumbnail_progress::{FinishOutcome, ProgressSnapshot, ThumbnailProgress};
 
+use crate::db::queries::{read_watch_folders, WatchFoldersReadError};
 use crate::db::Db;
 use crate::events::CatalogNotifier;
 use crate::reachability::ReachabilityRegistry;
@@ -209,26 +210,20 @@ fn run_thumbnail_queue<F, N>(
     N: CatalogNotifier + 'static,
 {
     {
-        let available = matches!(
-            ffmpeg.check_available(),
-            Ok(a) if a.ffmpeg_version.is_some() && a.ffprobe_version.is_some()
-        );
-        if !available {
+        if !crate::queue_support::ffmpeg_and_ffprobe_available(ffmpeg.as_ref()) {
             log::warn!(
                 "ffmpeg/ffprobe not found on PATH -- skipping thumbnail generation for this run"
             );
             return;
         }
 
-        let watch_folders = match db.read_pool.get() {
-            Ok(conn) => match crate::db::queries::get_watch_folders(&conn) {
-                Ok(folders) => folders,
-                Err(e) => {
-                    log::error!("failed to read watch_folders before enqueueing thumbnails: {e}");
-                    return;
-                }
-            },
-            Err(e) => {
+        let watch_folders = match read_watch_folders(&db.read_pool) {
+            Ok(folders) => folders,
+            Err(WatchFoldersReadError::Query(e)) => {
+                log::error!("failed to read watch_folders before enqueueing thumbnails: {e}");
+                return;
+            }
+            Err(WatchFoldersReadError::Connection(e)) => {
                 log::error!(
                     "failed to acquire a DB connection to read watch_folders before enqueueing \
                      thumbnails: {e}"
@@ -297,17 +292,11 @@ fn process_pending<F, N>(
             reachability,
         };
 
-        let handles: Vec<_> = (0..worker_count)
-            .map(|_| {
-                let pending = Arc::clone(&pending);
-                let ctx = ctx.clone();
-                thread::spawn(move || worker_loop(&ctx, &pending))
-            })
-            .collect();
-
-        for handle in handles {
-            let _ = handle.join();
-        }
+        crate::queue_support::run_workers_to_completion(worker_count, || {
+            let pending = Arc::clone(&pending);
+            let ctx = ctx.clone();
+            move || worker_loop(&ctx, &pending)
+        });
     }
 }
 

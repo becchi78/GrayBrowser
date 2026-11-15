@@ -27,6 +27,34 @@ pub fn get_watch_folders(conn: &Connection) -> anyhow::Result<Vec<String>> {
     }
 }
 
+/// Why `read_watch_folders` failed. Kept as two variants because callers
+/// that log (rather than propagate) the failure word the two causes
+/// differently.
+#[derive(Debug)]
+pub enum WatchFoldersReadError {
+    Connection(r2d2::Error),
+    Query(anyhow::Error),
+}
+
+impl std::fmt::Display for WatchFoldersReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connection(e) => e.fmt(f),
+            Self::Query(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for WatchFoldersReadError {}
+
+/// Takes a read connection from `pool` and reads the watch folders.
+pub fn read_watch_folders(
+    pool: &r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+) -> Result<Vec<String>, WatchFoldersReadError> {
+    let conn = pool.get().map_err(WatchFoldersReadError::Connection)?;
+    get_watch_folders(&conn).map_err(WatchFoldersReadError::Query)
+}
+
 pub fn set_watch_folders(conn: &Connection, folders: &[String]) -> anyhow::Result<()> {
     let json = serde_json::to_string(folders)?;
     set_setting(conn, WATCH_FOLDERS_KEY, &json)?;

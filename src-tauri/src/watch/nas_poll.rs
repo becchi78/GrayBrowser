@@ -288,11 +288,7 @@ fn handle_walked_file(
             mtime,
             ctx.reachability,
         ) {
-            Ok(
-                scan::ProcessOutcome::Registered
-                | scan::ProcessOutcome::Reconciled
-                | scan::ProcessOutcome::PathFollowed { .. },
-            ) => {
+            Ok(outcome) if outcome.changed_catalog() => {
                 ctx.notifier.notify_changed();
                 ctx.follow_up.trigger();
             }
@@ -342,28 +338,7 @@ fn mark_missing_offline(
         reconcile::decide_missing_video_ids(&known_online, &diff),
         existence,
     );
-    if let Some(check) = &decision.individually_checked {
-        if check.confirmed_missing_count > 0 {
-            log::info!(
-                "NAS diff scan for {folder}: {} of {} withheld video(s) confirmed not found \
-                 one by one (guard reason={:?}), marking them offline",
-                check.confirmed_missing_count,
-                check.checked_count,
-                check.reason
-            );
-        }
-    }
-    if let Some(guard) = &decision.suppressed {
-        log::warn!(
-            "NAS diff scan for {folder}: holding {} video(s) online this cycle (known={}, \
-             discovered={}, reason={:?}) -- enumeration looks broken, not treating this as \
-             genuine deletion",
-            guard.candidate_count,
-            guard.known_online_count,
-            guard.discovered_count,
-            guard.reason
-        );
-    }
+    scan::log_missing_video_decision("NAS diff scan", folder, " this cycle", &decision);
     if !decision.missing_ids.is_empty() {
         {
             let conn = ctx.db.writer.lock().unwrap();
@@ -426,17 +401,20 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
     let flag = Arc::clone(&stop_flag);
 
     thread::spawn(move || {
-        if let Err(err) = run_nas_diff_scan(
-            &db,
-            &thumbnails_root,
-            &folder,
-            &flag,
-            notifier.as_ref(),
-            &follow_up,
-            &reachability,
-        ) {
-            log::error!("NAS diff scan failed for {folder}: {err}");
-        }
+        let scan_once = || {
+            if let Err(err) = run_nas_diff_scan(
+                &db,
+                &thumbnails_root,
+                &folder,
+                &flag,
+                notifier.as_ref(),
+                &follow_up,
+                &reachability,
+            ) {
+                log::error!("NAS diff scan failed for {folder}: {err}");
+            }
+        };
+        scan_once();
 
         let mut elapsed = Duration::ZERO;
         while !flag.load(Ordering::SeqCst) {
@@ -447,17 +425,7 @@ pub fn start_nas_polling<N: CatalogNotifier + 'static>(
                 if flag.load(Ordering::SeqCst) {
                     break;
                 }
-                if let Err(err) = run_nas_diff_scan(
-                    &db,
-                    &thumbnails_root,
-                    &folder,
-                    &flag,
-                    notifier.as_ref(),
-                    &follow_up,
-                    &reachability,
-                ) {
-                    log::error!("NAS diff scan failed for {folder}: {err}");
-                }
+                scan_once();
             }
         }
     });

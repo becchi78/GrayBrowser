@@ -53,13 +53,8 @@ pub fn get_thumbnails(db: State<Db>, video_id: String) -> Result<Option<Vec<Stri
         return Ok(None);
     };
 
-    let thumbnails_root = crate::paths::app_data_dir()
-        .map(|dir| thumbnail_paths::thumbnails_root(&dir))
-        .map_err(|e| e.to_string())?;
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
-    };
+    let thumbnails_root = thumbnail_paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
     let video_dir =
         thumbnail_paths::video_thumbnail_dir(&thumbnails_root, &watch_folders, &file_path);
     read_thumbnails(&video_dir, &video_id)
@@ -67,7 +62,7 @@ pub fn get_thumbnails(db: State<Db>, video_id: String) -> Result<Option<Vec<Stri
 
 fn read_thumbnails(thumbnails_dir: &Path, video_id: &str) -> Result<Option<Vec<String>>, String> {
     let paths: Vec<_> = (0..THUMBNAILS_PER_VIDEO)
-        .map(|i| thumbnails_dir.join(format!("{video_id}_{i}.webp")))
+        .map(|i| thumbnail_paths::slot_path(thumbnails_dir, video_id, i))
         .collect();
     if !paths.iter().all(|p| p.exists()) {
         return Ok(None);
@@ -87,7 +82,7 @@ mod tests {
     fn write_all_six(dir: &Path, id: &str) {
         for i in 0..THUMBNAILS_PER_VIDEO {
             std::fs::write(
-                dir.join(format!("{id}_{i}.webp")),
+                thumbnail_paths::slot_path(dir, id, i),
                 format!("fake webp bytes {i}"),
             )
             .unwrap();
@@ -105,7 +100,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for i in 0..(THUMBNAILS_PER_VIDEO - 1) {
             std::fs::write(
-                dir.path().join(format!("vid-1_{i}.webp")),
+                thumbnail_paths::slot_path(dir.path(), "vid-1", i),
                 format!("fake webp bytes {i}"),
             )
             .unwrap();

@@ -31,7 +31,7 @@ pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
 /// Characters that separate path components; Windows accepts both.
 pub(crate) const PATH_SEPARATORS: [char; 2] = ['\\', '/'];
 
-pub(crate) fn is_path_sep(c: char) -> bool {
+pub fn is_path_sep(c: char) -> bool {
     PATH_SEPARATORS.contains(&c)
 }
 

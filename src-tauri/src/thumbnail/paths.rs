@@ -34,6 +34,11 @@ pub fn video_thumbnail_dir(
     thumbnails_root.join(subdir)
 }
 
+/// `thumbnails/` under the app data directory.
+pub fn resolve_thumbnails_root() -> anyhow::Result<PathBuf> {
+    crate::paths::app_data_dir().map(|dir| thumbnails_root(&dir))
+}
+
 pub fn slot_path(video_dir: &Path, video_id: &str, slot: usize) -> PathBuf {
     video_dir.join(format!("{video_id}_{slot}.webp"))
 }

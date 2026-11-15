@@ -26,9 +26,7 @@ fn delete_thumbnail_files(
 }
 
 pub(crate) fn thumbnails_root_from_app_dir() -> Option<PathBuf> {
-    crate::paths::app_data_dir()
-        .ok()
-        .map(|app_dir| crate::thumbnail::paths::thumbnails_root(&app_dir))
+    crate::thumbnail::paths::resolve_thumbnails_root().ok()
 }
 
 /// Removes `video_ids` from the catalog in one transaction (rows, tags, path

@@ -20,6 +20,18 @@ use crate::reachability::ReachabilityRegistry;
 use crate::scan;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
 
+const SKIPPED_GONE: &str = "この未登録ファイルはすでに一覧にありません。";
+
+/// Passes only when the file is verifiably gone; otherwise the error is the
+/// message for the case that was found.
+fn require_missing(presence: Presence, present_msg: &str, unknown_msg: &str) -> Result<(), String> {
+    match presence {
+        Presence::Missing => Ok(()),
+        Presence::Present => Err(present_msg.to_string()),
+        Presence::Unknown => Err(unknown_msg.to_string()),
+    }
+}
+
 /// Whether the file recorded at `file_path` is verifiably gone. A path under
 /// an unreachable watch folder is `Unknown` without any file-system access:
 /// stat-ing a dead share blocks for a long time and could not prove anything.
@@ -51,27 +63,14 @@ fn dismiss_skipped_file_impl(
 ) -> Result<(), String> {
     let row = queries::get_skipped_file(&db.read_pool, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "この未登録ファイルはすでに一覧にありません。".to_string())?;
+        .ok_or_else(|| SKIPPED_GONE.to_string())?;
 
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
-    };
-    match presence_of(&row.file_path, &watch_folders, reachability, fs) {
-        Presence::Missing => {}
-        Presence::Present => {
-            return Err(
-                "元のファイルが存在するため、一覧から削除できません。「名前を変更」してください。"
-                    .to_string(),
-            )
-        }
-        Presence::Unknown => {
-            return Err(
-                "元のファイルがないことを確認できないため、一覧から削除できません。フォルダに接続できる状態で、もう一度お試しください。"
-                    .to_string(),
-            )
-        }
-    }
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
+    require_missing(
+        presence_of(&row.file_path, &watch_folders, reachability, fs),
+        "元のファイルが存在するため、一覧から削除できません。「名前を変更」してください。",
+        "元のファイルがないことを確認できないため、一覧から削除できません。フォルダに接続できる状態で、もう一度お試しください。",
+    )?;
 
     let dismissed = {
         let conn = db.writer.lock().unwrap();
@@ -79,7 +78,7 @@ fn dismiss_skipped_file_impl(
     }
     .map_err(|e| e.to_string())?;
     if !dismissed {
-        return Err("この未登録ファイルはすでに一覧にありません。".to_string());
+        return Err(SKIPPED_GONE.to_string());
     }
     log::info!(
         "dismissed unregistered record for missing file {}",
@@ -119,10 +118,9 @@ fn register_missing_skipped_file_impl(
     id: i64,
     input: &str,
 ) -> Result<MissingRegistration, String> {
-    const GONE: &str = "この未登録ファイルはすでに一覧にありません。";
     let row = queries::get_skipped_file(&db.read_pool, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| GONE.to_string())?;
+        .ok_or_else(|| SKIPPED_GONE.to_string())?;
 
     let new_name = validate_new_file_name(&row.file_name, input).map_err(|e| e.to_string())?;
 
@@ -131,29 +129,16 @@ fn register_missing_skipped_file_impl(
     // separator style is kept so the path matches what scans store.
     let folder_end = row
         .file_path
-        .rfind(['/', '\\'])
+        .rfind(gb_core::paths::is_path_sep)
         .ok_or_else(|| "元のファイルの場所を特定できません。".to_string())?;
     let new_path = format!("{}{}", &row.file_path[..=folder_end], new_name);
 
-    let watch_folders = {
-        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-        queries::get_watch_folders(&conn).map_err(|e| e.to_string())?
-    };
-    match presence_of(&row.file_path, &watch_folders, reachability, fs) {
-        Presence::Missing => {}
-        Presence::Present => {
-            return Err(
-                "元のファイルが存在するため、この方法では登録できません。「名前を変更」してください。"
-                    .to_string(),
-            )
-        }
-        Presence::Unknown => {
-            return Err(
-                "元のファイルがないことを確認できないため、登録できません。フォルダに接続できる状態で、もう一度お試しください。"
-                    .to_string(),
-            )
-        }
-    }
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
+    require_missing(
+        presence_of(&row.file_path, &watch_folders, reachability, fs),
+        "元のファイルが存在するため、この方法では登録できません。「名前を変更」してください。",
+        "元のファイルがないことを確認できないため、登録できません。フォルダに接続できる状態で、もう一度お試しください。",
+    )?;
 
     let video = NewVideo {
         id: uuid::Uuid::new_v4().to_string(),
@@ -178,7 +163,7 @@ fn register_missing_skipped_file_impl(
         queries::RegisterMissingOutcome::PathTaken => {
             return Err("同じ名前の動画がすでに登録されています。".to_string())
         }
-        queries::RegisterMissingOutcome::RecordGone => return Err(GONE.to_string()),
+        queries::RegisterMissingOutcome::RecordGone => return Err(SKIPPED_GONE.to_string()),
     }
     log::info!(
         "registered missing file {} as offline video {new_path}",
@@ -241,7 +226,7 @@ fn rename_skipped_file_impl(
 ) -> Result<RenameOutcome, String> {
     let row = queries::get_skipped_file(&db.read_pool, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "この未登録ファイルはすでに一覧にありません。".to_string())?;
+        .ok_or_else(|| SKIPPED_GONE.to_string())?;
 
     let new_name = validate_new_file_name(&row.file_name, input).map_err(|e| e.to_string())?;
 
@@ -306,9 +291,7 @@ pub fn rename_skipped_file(
     id: i64,
     new_name: String,
 ) -> Result<RenameOutcome, String> {
-    let thumbnails_root = crate::paths::app_data_dir()
-        .map(|dir| thumbnail::paths::thumbnails_root(&dir))
-        .map_err(|e| e.to_string())?;
+    let thumbnails_root = thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
     let notifier = Arc::new(TauriCatalogNotifier::new(app));
     let register_db = db.inner().clone();
     let register_root = thumbnails_root.clone();

@@ -369,11 +369,7 @@ fn process_changed_file(
         }
     };
     match scan::process_detected_file(db, thumbnails_root, path, file_size, mtime, reachability) {
-        Ok(
-            scan::ProcessOutcome::Registered
-            | scan::ProcessOutcome::Reconciled
-            | scan::ProcessOutcome::PathFollowed { .. },
-        ) => {
+        Ok(outcome) if outcome.changed_catalog() => {
             notifier.notify_changed();
             follow_up.trigger();
             RetryOutcome::Done

@@ -11,6 +11,7 @@ use std::thread;
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 
+use crate::db::queries::{read_watch_folders, WatchFoldersReadError};
 use crate::db::Db;
 use crate::events::CatalogNotifier;
 use crate::reachability::ReachabilityRegistry;
@@ -56,11 +57,7 @@ fn run_metadata_queue<F, N>(
     N: CatalogNotifier + 'static,
 {
     {
-        let available = matches!(
-            ffmpeg.check_available(),
-            Ok(a) if a.ffmpeg_version.is_some() && a.ffprobe_version.is_some()
-        );
-        if !available {
+        if !crate::queue_support::ffmpeg_and_ffprobe_available(ffmpeg.as_ref()) {
             log::warn!(
                 "ffmpeg/ffprobe not found on PATH -- skipping metadata probing for this run"
             );
@@ -78,15 +75,13 @@ fn run_metadata_queue<F, N>(
             return;
         }
 
-        let watch_folders = match db.read_pool.get() {
-            Ok(conn) => match crate::db::queries::get_watch_folders(&conn) {
-                Ok(folders) => folders,
-                Err(e) => {
-                    log::error!("failed to read watch_folders before probing metadata: {e}");
-                    return;
-                }
-            },
-            Err(e) => {
+        let watch_folders = match read_watch_folders(&db.read_pool) {
+            Ok(folders) => folders,
+            Err(WatchFoldersReadError::Query(e)) => {
+                log::error!("failed to read watch_folders before probing metadata: {e}");
+                return;
+            }
+            Err(WatchFoldersReadError::Connection(e)) => {
                 log::error!("failed to acquire a DB connection to read watch_folders: {e}");
                 return;
             }
@@ -97,62 +92,56 @@ fn run_metadata_queue<F, N>(
         let pending: Arc<std::sync::Mutex<std::vec::IntoIter<(String, PathBuf)>>> =
             Arc::new(std::sync::Mutex::new(pending.into_iter()));
 
-        let handles: Vec<_> = (0..worker_count)
-            .map(|_| {
-                let pending = Arc::clone(&pending);
-                let db = db.clone();
-                let ffmpeg = Arc::clone(&ffmpeg);
-                let notifier = Arc::clone(&notifier);
-                let reachability = reachability.clone();
-                let watch_folders = Arc::clone(&watch_folders);
-                thread::spawn(move || loop {
-                    let next = pending.lock().unwrap().next();
-                    let Some((id, path)) = next else { break };
-                    // The first question about a folder may block for as long
-                    // as the share takes to time out; that happens here on
-                    // the worker, and later videos of the folder get the
-                    // cached answer.
-                    let path_str = path.to_string_lossy();
-                    if reachability.is_path_unreachable(&path_str, &watch_folders) {
-                        log::info!(
-                            "metadata worker: skipping {id}, its folder is unreachable right now"
-                        );
-                        continue;
-                    }
-                    match worker::probe_metadata_for_video(ffmpeg.as_ref(), &db, &id, &path) {
-                        Ok(()) => notifier.notify_changed(),
-                        Err(e) if reachability.confirm_path_unreachable(&path_str, &watch_folders) => {
-                            // The share went away during the attempt, so the
-                            // failure says nothing about the video: give the
-                            // retry back (the worker already counted it).
-                            log::warn!(
+        crate::queue_support::run_workers_to_completion(worker_count, || {
+            let pending = Arc::clone(&pending);
+            let db = db.clone();
+            let ffmpeg = Arc::clone(&ffmpeg);
+            let notifier = Arc::clone(&notifier);
+            let reachability = reachability.clone();
+            let watch_folders = Arc::clone(&watch_folders);
+            move || loop {
+                let next = pending.lock().unwrap().next();
+                let Some((id, path)) = next else { break };
+                // The first question about a folder may block for as long
+                // as the share takes to time out; that happens here on
+                // the worker, and later videos of the folder get the
+                // cached answer.
+                let path_str = path.to_string_lossy();
+                if reachability.is_path_unreachable(&path_str, &watch_folders) {
+                    log::info!(
+                        "metadata worker: skipping {id}, its folder is unreachable right now"
+                    );
+                    continue;
+                }
+                match worker::probe_metadata_for_video(ffmpeg.as_ref(), &db, &id, &path) {
+                    Ok(()) => notifier.notify_changed(),
+                    Err(e) if reachability.confirm_path_unreachable(&path_str, &watch_folders) => {
+                        // The share went away during the attempt, so the
+                        // failure says nothing about the video: give the
+                        // retry back (the worker already counted it).
+                        log::warn!(
                                 "metadata worker: {id} failed because its folder became unreachable: {e}"
                             );
-                            if let Err(refund_err) = crate::db::queries::refund_metadata_attempt(
-                                &db.writer.lock().unwrap(),
-                                &id,
-                            ) {
-                                log::warn!(
-                                    "failed to refund the metadata attempt for {id}: {refund_err}"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("metadata worker: giving up on video {id}: {e}");
-                            // A failure raises `metadata_attempts`, which can
-                            // move the video into the "generation failures"
-                            // list; without this a bulk re-probe that fails
-                            // everywhere would never refresh that list.
-                            notifier.notify_changed();
+                        if let Err(refund_err) = crate::db::queries::refund_metadata_attempt(
+                            &db.writer.lock().unwrap(),
+                            &id,
+                        ) {
+                            log::warn!(
+                                "failed to refund the metadata attempt for {id}: {refund_err}"
+                            );
                         }
                     }
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            let _ = handle.join();
-        }
+                    Err(e) => {
+                        log::warn!("metadata worker: giving up on video {id}: {e}");
+                        // A failure raises `metadata_attempts`, which can
+                        // move the video into the "generation failures"
+                        // list; without this a bulk re-probe that fails
+                        // everywhere would never refresh that list.
+                        notifier.notify_changed();
+                    }
+                }
+            }
+        });
     }
 }
 
