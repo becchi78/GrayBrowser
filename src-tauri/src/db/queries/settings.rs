@@ -224,3 +224,35 @@ mod watch_check_disabled_tests {
         assert!(get_watch_check_disabled(&conn).unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+mod read_watch_folders_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+
+    #[test]
+    fn reads_the_saved_folders_through_the_pool() {
+        let (_dir, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            set_watch_folders(&conn, &["A".to_string(), "B".to_string()]).unwrap();
+        }
+        assert_eq!(
+            read_watch_folders(&db.read_pool).unwrap(),
+            vec!["A".to_string(), "B".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_broken_value_surfaces_as_a_query_error_with_the_same_text() {
+        let (_dir, db) = init_temp_db();
+        let expected = {
+            let conn = db.writer.lock().unwrap();
+            set_setting(&conn, WATCH_FOLDERS_KEY, "not json").unwrap();
+            get_watch_folders(&conn).unwrap_err().to_string()
+        };
+        let err = read_watch_folders(&db.read_pool).unwrap_err();
+        assert!(matches!(err, WatchFoldersReadError::Query(_)));
+        assert_eq!(err.to_string(), expected);
+    }
+}

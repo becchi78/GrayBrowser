@@ -877,32 +877,6 @@ pub fn scan_folders_with_existence(
     Ok(summary)
 }
 
-/// Missing-video determination for one folder, run once that folder's
-/// `WalkDir` walk has fully completed. This is the manual-scan escape hatch
-/// for videos the NAS-polling ratio guard can't self-resolve on its own --
-/// a user-triggered full rescan reuses the exact same guarded logic, just
-/// against a local walk instead of a network one. Reuses
-/// `gb_core::reconcile::decide_missing_video_ids` (broken-enumeration guard
-/// included, unchanged here) -- a local `WalkDir`
-/// walk carries the same "enumeration might have partially failed" risk a
-/// network listing does (locked directories, permission errors, AV scanner
-/// interference), so it gets the same protection.
-///
-/// When the guard withholds only a few candidates,
-/// `confirm_suppressed_candidates` then asks `existence` about each one and
-/// lets through only those the OS reports as not found -- otherwise a folder
-/// holding a single video could never see it go offline. That check cannot
-/// tell "this file was moved" from "the whole folder is gone": a deleted
-/// parent folder, an unassigned drive letter, an unknown host and an unknown
-/// share all come back from the OS as NotFound. So it must never see the
-/// candidates of a folder that is gone, and it doesn't: a missing or
-/// unreachable root makes `WalkDir` fail on the root itself, with the root's
-/// path attached, so `"<folder>\"` lands in `inaccessible_dirs` and
-/// `is_under_folder` removes every known video of the folder from the
-/// candidates before the guard or the check runs (quietly, no WARN). Ahead
-/// of that, `scan_cmds::partition_by_reachability` already leaves folders
-/// known to be unreachable out of the manual scan. Whatever remains withheld
-/// after the check is WARN-logged and stays online.
 /// Logs what the missing-video decision withheld or double-checked, so the
 /// manual scan and the NAS poll report it in the same shape. `scan_label`
 /// names the caller; `hold_qualifier` is spliced after "online" in the
@@ -937,6 +911,32 @@ pub(crate) fn log_missing_video_decision(
     }
 }
 
+/// Missing-video determination for one folder, run once that folder's
+/// `WalkDir` walk has fully completed. This is the manual-scan escape hatch
+/// for videos the NAS-polling ratio guard can't self-resolve on its own --
+/// a user-triggered full rescan reuses the exact same guarded logic, just
+/// against a local walk instead of a network one. Reuses
+/// `gb_core::reconcile::decide_missing_video_ids` (broken-enumeration guard
+/// included, unchanged here) -- a local `WalkDir`
+/// walk carries the same "enumeration might have partially failed" risk a
+/// network listing does (locked directories, permission errors, AV scanner
+/// interference), so it gets the same protection.
+///
+/// When the guard withholds only a few candidates,
+/// `confirm_suppressed_candidates` then asks `existence` about each one and
+/// lets through only those the OS reports as not found -- otherwise a folder
+/// holding a single video could never see it go offline. That check cannot
+/// tell "this file was moved" from "the whole folder is gone": a deleted
+/// parent folder, an unassigned drive letter, an unknown host and an unknown
+/// share all come back from the OS as NotFound. So it must never see the
+/// candidates of a folder that is gone, and it doesn't: a missing or
+/// unreachable root makes `WalkDir` fail on the root itself, with the root's
+/// path attached, so `"<folder>\"` lands in `inaccessible_dirs` and
+/// `is_under_folder` removes every known video of the folder from the
+/// candidates before the guard or the check runs (quietly, no WARN). Ahead
+/// of that, `scan_cmds::partition_by_reachability` already leaves folders
+/// known to be unreachable out of the manual scan. Whatever remains withheld
+/// after the check is WARN-logged and stays online.
 fn reconcile_missing_videos(
     db: &Db,
     folder: &str,
@@ -2284,5 +2284,32 @@ mod tests {
 
         assert_eq!(summary.went_offline, 0);
         assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
+    }
+}
+
+#[cfg(test)]
+mod process_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn only_outcomes_that_write_to_the_catalog_count_as_changes() {
+        let changed = [
+            ProcessOutcome::Registered,
+            ProcessOutcome::Reconciled,
+            ProcessOutcome::PathFollowed {
+                video_id: "v".into(),
+            },
+        ];
+        let unchanged = [
+            ProcessOutcome::Unchanged,
+            ProcessOutcome::BlockedByCollision {
+                video_id: "a".into(),
+                colliding_video_id: "b".into(),
+            },
+            ProcessOutcome::SkippedInvalidName { detected_char: '?' },
+            ProcessOutcome::SkippedUnreadable,
+        ];
+        assert!(changed.iter().all(ProcessOutcome::changed_catalog));
+        assert!(!unchanged.iter().any(ProcessOutcome::changed_catalog));
     }
 }

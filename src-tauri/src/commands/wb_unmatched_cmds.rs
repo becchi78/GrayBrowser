@@ -324,11 +324,7 @@ mod tests {
 
     fn expected_slots(id: &str) -> Vec<String> {
         (0..THUMBNAILS_PER_VIDEO)
-            .map(|i| {
-                slot_path(Path::new(""), id, i)
-                    .to_string_lossy()
-                    .into_owned()
-            })
+            .map(|i| format!("{id}_{i}.webp"))
             .collect()
     }
 

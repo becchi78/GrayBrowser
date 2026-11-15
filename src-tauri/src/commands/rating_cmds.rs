@@ -25,3 +25,22 @@ pub fn set_rating(
     TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_the_boundaries_of_the_range() {
+        assert_eq!(validate_rating_arg(0), Ok(0));
+        assert_eq!(validate_rating_arg(5), Ok(5));
+    }
+
+    #[test]
+    fn rejects_a_rating_above_the_range_with_the_shown_message() {
+        assert_eq!(
+            validate_rating_arg(6),
+            Err("rating 6 is out of range (must be 0-5)".to_string())
+        );
+    }
+}

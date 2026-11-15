@@ -331,11 +331,7 @@ fn list_skipped_files_impl(
     fs: &dyn PathExistence,
 ) -> Result<Vec<SkippedFileDto>, String> {
     let rows = queries::list_skipped_files(&db.read_pool).map_err(|e| e.to_string())?;
-    let watch_folders = db
-        .read_pool
-        .get()
-        .map_err(|e| e.to_string())
-        .and_then(|conn| queries::get_watch_folders(&conn).map_err(|e| e.to_string()))?;
+    let watch_folders = queries::read_watch_folders(&db.read_pool).map_err(|e| e.to_string())?;
     Ok(rows
         .into_iter()
         .map(|row| {

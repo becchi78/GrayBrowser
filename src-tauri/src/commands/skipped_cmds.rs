@@ -922,3 +922,24 @@ mod tests {
         assert_eq!(notifier.calls(), 1);
     }
 }
+
+#[cfg(test)]
+mod require_missing_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_verifiably_missing_file_passes() {
+        assert_eq!(
+            require_missing(Presence::Missing, "present", "unknown"),
+            Ok(())
+        );
+        assert_eq!(
+            require_missing(Presence::Present, "present", "unknown"),
+            Err("present".to_string())
+        );
+        assert_eq!(
+            require_missing(Presence::Unknown, "present", "unknown"),
+            Err("unknown".to_string())
+        );
+    }
+}
