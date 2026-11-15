@@ -160,7 +160,6 @@ fn records_unmatched_thumbnails_with_kind_and_layout_and_a_reimport_replaces_the
             r.hash = "1e5e0fbf".to_string();
         })]),
         profile_values: Ok(vec!["200x150x6x1".to_string()]),
-        ..Default::default()
     };
     for name in [
         "linked.mp4.#1e5e0fbf.jpg",

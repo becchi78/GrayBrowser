@@ -13,6 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::wb_anonymize::Anonymizer;
 use gb_core::wb_import::count_clamped_scores;
 use gb_core::wb_sampling::select_sample_rows;
@@ -81,11 +82,11 @@ fn resolve_absolute(path: &Path) -> io::Result<PathBuf> {
 }
 
 fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let input_conn = reader::open_readonly(input_path)?;
-    let mut movies = reader::read_movies(&input_conn)?;
+    let input = reader::ReadOnlyWb::open(input_path)?;
+    let mut movies = input.read_movies()?;
     movies.sort_by_key(|r| r.movie_id);
-    let real_cells = reader::read_all_text_cells(&input_conn)?;
-    drop(input_conn); // input is never touched again
+    let real_cells = input.read_all_text_cells()?;
+    drop(input); // input is never touched again
 
     // One shared Anonymizer for both the row-level transform and the
     // cell-level leak check, so a value seen in both places (e.g. a
@@ -101,17 +102,7 @@ fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::error::
         .collect();
 
     let report = leak_check::run(&real_cells, &mut anonymizer);
-    eprintln!(
-        "leak_check: cells_checked={} token_candidate_count={} token_excluded_short={} \
-         token_kept_min_len={:?} token_kept_max_len={:?} negative_violations={} positive_violations={}",
-        report.cells_checked,
-        report.token_stats.candidate_count,
-        report.token_stats.excluded_short,
-        report.token_stats.kept_min_len,
-        report.token_stats.kept_max_len,
-        report.negative_violations,
-        report.positive_violations,
-    );
+    eprintln!("leak_check: {report}");
     if !report.passed() {
         return Err(Box::new(io::Error::other(
             "leak check failed -- refusing to write the fixture (see leak_check counts above)",

@@ -73,7 +73,6 @@ fn run_split_import(
             r.hash = "1e5e0fbf".to_string();
         })]),
         profile_values,
-        ..Default::default()
     };
     std::fs::write(
         h.paths.thumbnail_folder.join("MyVideo.mp4.#1e5e0fbf.jpg"),

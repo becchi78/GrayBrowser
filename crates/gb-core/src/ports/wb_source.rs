@@ -8,10 +8,6 @@ pub trait WbSourceAdapter: Send + Sync {
     /// not part of `WbMovieRow` -- requirements exclude it from migration.
     fn read_movies(&self) -> Result<Vec<WbMovieRow>, WbSourceError>;
 
-    /// Reads every text-column cell across all tables, for the
-    /// anonymization tool's coverage scan. Not used by the importer itself.
-    fn read_all_text_cells(&self) -> Result<Vec<WbTextCell>, WbSourceError>;
-
     /// Every text value stored under `key` in the `profile` table (one per
     /// skin that sets it); empty when the key is absent. Rows whose value is
     /// not text are skipped: `profile` also holds binary values, so a row is
@@ -32,14 +28,6 @@ pub struct WbMovieRow {
     pub file_date: String,
     pub regist_date: String,
     pub last_date: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WbTextCell {
-    pub table_name: String,
-    pub column_name: String,
-    pub row_id: i64,
-    pub value: String,
 }
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
