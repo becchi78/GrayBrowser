@@ -503,7 +503,10 @@ fn nas_poll_interval_defaults_when_unset_and_round_trips_when_set() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
 
-    assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 600);
+    assert_eq!(
+        queries::get_nas_poll_interval_secs(&conn).unwrap(),
+        gb_core::nas_poll_interval::DEFAULT_SECS
+    );
 
     queries::set_nas_poll_interval_secs(&conn, 120).unwrap();
     assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 120);

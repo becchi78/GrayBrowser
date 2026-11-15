@@ -83,6 +83,20 @@ pub fn upsert_skipped_file_found_on_disk(
     Ok(())
 }
 
+/// Maps a row selected as
+/// `id, file_path, file_name, reason, detected_char, detected_at, wb_payload`.
+fn skipped_row_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SkippedFileRow> {
+    Ok(SkippedFileRow {
+        id: r.get(0)?,
+        file_path: r.get(1)?,
+        file_name: r.get(2)?,
+        reason: r.get(3)?,
+        detected_char: r.get(4)?,
+        detected_at: r.get(5)?,
+        wb_payload: r.get(6)?,
+    })
+}
+
 pub fn list_skipped_files(
     pool: &r2d2::Pool<SqliteConnectionManager>,
 ) -> anyhow::Result<Vec<SkippedFileRow>> {
@@ -92,17 +106,7 @@ pub fn list_skipped_files(
          FROM skipped_files WHERE dismissed = 0 ORDER BY detected_at DESC",
     )?;
     let rows = stmt
-        .query_map([], |r| {
-            Ok(SkippedFileRow {
-                id: r.get(0)?,
-                file_path: r.get(1)?,
-                file_name: r.get(2)?,
-                reason: r.get(3)?,
-                detected_char: r.get(4)?,
-                detected_at: r.get(5)?,
-                wb_payload: r.get(6)?,
-            })
-        })?
+        .query_map([], skipped_row_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -118,17 +122,7 @@ pub fn get_skipped_file(
             "SELECT id, file_path, file_name, reason, detected_char, detected_at, wb_payload
              FROM skipped_files WHERE id = ?1",
             params![id],
-            |r| {
-                Ok(SkippedFileRow {
-                    id: r.get(0)?,
-                    file_path: r.get(1)?,
-                    file_name: r.get(2)?,
-                    reason: r.get(3)?,
-                    detected_char: r.get(4)?,
-                    detected_at: r.get(5)?,
-                    wb_payload: r.get(6)?,
-                })
-            },
+            skipped_row_from_row,
         )
         .optional()?;
     Ok(row)

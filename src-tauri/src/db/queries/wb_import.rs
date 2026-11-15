@@ -4,6 +4,7 @@ use gb_core::scan_pipeline::NewVideo;
 use rusqlite::{params, Connection, Transaction};
 
 use super::tags::{get_or_create_tag, TagRow};
+use super::videos::insert_video_row;
 
 // --- `.wb` import ------------------------------------------------------
 
@@ -143,20 +144,7 @@ pub(super) fn import_wb_video_in_tx(
     roma: &str,
     tags: &[String],
 ) -> rusqlite::Result<WbImportOutcome> {
-    let inserted = tx.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, mtime)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(file_path) DO NOTHING",
-        params![
-            video.id,
-            video.file_path,
-            video.file_name,
-            video.file_size as i64,
-            video.quick_hash,
-            video.status,
-            video.mtime
-        ],
-    )?;
+    let inserted = insert_video_row(tx, video)?;
 
     if inserted == 0 {
         return Ok(WbImportOutcome::Skipped);

@@ -22,21 +22,18 @@ pub fn split_tags(tag: &str) -> Vec<String> {
         .collect()
 }
 
-/// Max star rating; also the cap for a star-only tag with more stars than that.
-const MAX_RATING: u8 = 5;
-
 /// If `tag` consists solely of `★` (after width folding and trimming),
 /// returns the star count capped at 5. WhiteBrowser users encoded ratings as
 /// tags like `★★★`; anything mixed with other characters (`★お気に入り`) or
 /// using a different glyph (`☆`) is a real tag and yields `None`.
 pub(crate) fn star_tag_rating(tag: &str) -> Option<u8> {
-    let folded = wb_fold_width(tag);
+    let folded = crate::tags::fold_width(tag);
     let trimmed = folded.trim();
     if trimmed.is_empty() || !trimmed.chars().all(|c| c == '★') {
         return None;
     }
     let count = trimmed.chars().count();
-    Some(count.min(MAX_RATING as usize) as u8)
+    Some(count.min(crate::rating::MAX_RATING as usize) as u8)
 }
 
 /// Splits a `.wb` `tag` column into ordinary tags and the rating encoded by
@@ -128,23 +125,6 @@ pub fn partition_unmatched(filenames: &[String]) -> UnmatchedBreakdown {
     out
 }
 
-/// Folds full-width (Zenkaku) ASCII-range characters (U+FF01-U+FF5E) and the
-/// full-width space (U+3000) to their half-width equivalents. Mirrors
-/// `tags::fold_width` (kept private there); duplicated here rather than
-/// exposed crate-wide, since it's a step in this module's own
-/// `.wb`-import-only key logic (see `wb_tag_merge_key`), which diverges from
-/// `tags::normalize_tag_name` by additionally case-folding.
-fn wb_fold_width(input: &str) -> String {
-    input
-        .chars()
-        .map(|c| match c {
-            '\u{3000}' => ' ',
-            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-            other => other,
-        })
-        .collect()
-}
-
 /// Computes a matching key used ONLY to decide which `.wb` tag strings
 /// should be merged into a single GrayBrowser tag during import: width-folds
 /// full-width characters/space to half-width (as `tags::normalize_tag_name`
@@ -162,7 +142,7 @@ fn wb_fold_width(input: &str) -> String {
 /// tags, which deliberately does *not* case-fold. That function is
 /// unaffected by this one and must not be changed to match it.
 pub fn wb_tag_merge_key(tag: &str) -> String {
-    wb_fold_width(tag).trim().to_lowercase()
+    crate::tags::fold_width(tag).trim().to_lowercase()
 }
 
 /// Result of matching legacy `.wb` thumbnail files (by embedded hash and
@@ -816,8 +796,8 @@ mod tests {
 
     #[test]
     fn wb_tag_merge_key_folds_full_width_characters() {
-        // Full-width "A", "c", "t", "i", "o", "n" (U+FF21/FF43/FF54/FF29(I)/FF2F/FF2E)
-        // should fold and case-fold to match the plain ASCII "Action".
+        // Width folding runs before case folding, so full-width capitals end up
+        // matching the lower-case ASCII key.
         let full_width = "\u{FF21}\u{FF43}\u{FF54}\u{FF49}\u{FF4F}\u{FF4E}";
         assert_eq!(wb_tag_merge_key(full_width), wb_tag_merge_key("Action"));
         assert_eq!(wb_tag_merge_key(full_width), "action");

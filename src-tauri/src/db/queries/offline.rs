@@ -26,15 +26,18 @@ pub fn search_offline_videos(
          WHERE status = 'offline' AND file_name LIKE ?1 ESCAPE '\\' \
          ORDER BY file_name COLLATE NOCASE, file_path LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![pattern, limit], |r| {
-        Ok(OfflineVideoCandidate {
-            id: r.get(0)?,
-            file_name: r.get(1)?,
-            file_path: r.get(2)?,
-            thumbnail_ready: r.get(3)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![pattern, limit], candidate_from_row)?;
     rows.collect()
+}
+
+/// Maps a row selected as `id, file_name, file_path, thumbnail_ready`.
+fn candidate_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OfflineVideoCandidate> {
+    Ok(OfflineVideoCandidate {
+        id: r.get(0)?,
+        file_name: r.get(1)?,
+        file_path: r.get(2)?,
+        thumbnail_ready: r.get(3)?,
+    })
 }
 
 /// Every offline video, in one read, for matching legacy thumbnails by name in
@@ -43,13 +46,6 @@ pub fn list_offline_videos(conn: &Connection) -> rusqlite::Result<Vec<OfflineVid
     let mut stmt = conn.prepare(
         "SELECT id, file_name, file_path, thumbnail_ready FROM videos WHERE status = 'offline'",
     )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(OfflineVideoCandidate {
-            id: r.get(0)?,
-            file_name: r.get(1)?,
-            file_path: r.get(2)?,
-            thumbnail_ready: r.get(3)?,
-        })
-    })?;
+    let rows = stmt.query_map([], candidate_from_row)?;
     rows.collect()
 }

@@ -4,6 +4,9 @@
 pub const MIN_MINUTES: i64 = 1;
 pub const MAX_MINUTES: i64 = 1440;
 pub const DEFAULT_MINUTES: i64 = 10;
+/// Storage-side default in seconds, derived from `DEFAULT_MINUTES` so the
+/// minute (UI) and second (stored) values cannot drift apart.
+pub const DEFAULT_SECS: i64 = DEFAULT_MINUTES * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IntervalError {
@@ -67,5 +70,13 @@ mod tests {
     #[test]
     fn default_is_within_range() {
         assert!((MIN_MINUTES..=MAX_MINUTES).contains(&DEFAULT_MINUTES));
+    }
+
+    // The default is what a user with no saved setting gets, so changing it
+    // alters behavior for everyone; this makes that an explicit decision.
+    #[test]
+    fn default_is_ten_minutes() {
+        assert_eq!(DEFAULT_MINUTES, 10);
+        assert_eq!(DEFAULT_SECS, 600);
     }
 }
