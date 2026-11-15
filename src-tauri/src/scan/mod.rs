@@ -2192,6 +2192,7 @@ mod tests {
         .unwrap();
 
         assert_eq!((summary.reactivated, summary.registered), (1, 0));
+        assert_eq!(summary.collisions, 0);
         assert_eq!(fx.id_at(&new), id);
         assert_eq!(fx.rows().len(), 1);
     }
