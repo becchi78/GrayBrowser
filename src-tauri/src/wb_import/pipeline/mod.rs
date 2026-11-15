@@ -20,13 +20,6 @@ use gb_core::wb_import::{count_clamped_scores, count_source_tags, WbImportStage}
 use gb_core::wb_import_log as wb_log;
 use gb_core::wb_thumbnail_split::ThumbLayout;
 
-// Only the tests use these names here: they reach this module's imports
-// through `use super::*`, while the code that needs them lives in `rows`.
-#[cfg(test)]
-use gb_core::wb_skipped_payload::WbSkippedPayload;
-#[cfg(test)]
-use std::collections::HashSet;
-
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, WatchReconfigurer, WbImportNotifier, WbImportSummary};
 use crate::reachability::ReachabilityRegistry;

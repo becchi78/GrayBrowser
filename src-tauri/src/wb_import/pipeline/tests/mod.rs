@@ -2,7 +2,7 @@
 //! import through `import_all` on a temporary database and fake adapters.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -20,6 +20,7 @@ use gb_core::testing::fake_wb_import_clock::FakeWbImportClock;
 use gb_core::testing::fake_wb_import_log::FakeWbImportLog;
 use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
 use gb_core::wb_import::{extract_thumbnail_hash, file_name_from_path, match_thumbnail_files};
+use gb_core::wb_skipped_payload::WbSkippedPayload;
 use gb_core::wb_thumbnail_split::ThumbLayout;
 
 use crate::db::test_support::init_temp_db;
