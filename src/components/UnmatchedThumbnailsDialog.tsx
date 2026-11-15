@@ -17,6 +17,7 @@ import {
   unmatchedRowKey,
 } from "../lib/unmatchedThumbnails";
 import type { LinkCandidateDto, UnmatchedThumbnailDto, UnmatchedThumbnailKind } from "../types";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   onClose: () => void;
@@ -59,7 +60,7 @@ function LinkPicker({ row, busy, onLink }: PickerProps) {
         .catch((e) => {
           if (cancelled || !guardRef.current.isLatest(requestId)) return;
           console.error(e);
-          setSearchError(String(e));
+          setSearchError(errorText(e));
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
@@ -165,7 +166,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
       .catch((e) => {
         if (cancelled) return;
         console.error(e);
-        setLoadError(String(e));
+        setLoadError(errorText(e));
       });
     return () => {
       cancelled = true;
@@ -189,7 +190,7 @@ export function UnmatchedThumbnailsDialog({ onClose, onThumbnailsReplaced, kind 
       removeRow(key);
     } catch (e) {
       console.error(e);
-      setRowErrors((prev) => ({ ...prev, [key]: String(e) }));
+      setRowErrors((prev) => ({ ...prev, [key]: errorText(e) }));
     } finally {
       inFlightRef.current = false;
       setBusyKey(null);

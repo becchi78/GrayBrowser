@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { assignTag, listAllTags, listTagsForVideo, removeTag } from "../api";
 import type { TagDto } from "../types";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   videoId: string;
@@ -56,7 +57,7 @@ export function TagEditor({ videoId, tagsVersion = 0 }: Props) {
       // Surfaced in the UI, not just console.error -- e.g. the video could
       // have gone offline/been removed between the grid loading and the
       // user tagging it here.
-      setError(String(e));
+      setError(errorText(e));
     }
   }
 
@@ -66,7 +67,7 @@ export function TagEditor({ videoId, tagsVersion = 0 }: Props) {
       await removeTag(videoId, tagId);
       await reloadTags();
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     }
   }
 

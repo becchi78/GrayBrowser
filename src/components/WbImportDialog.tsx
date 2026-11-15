@@ -31,6 +31,7 @@ import type {
 } from "../types";
 import { ModalShell } from "./ModalShell";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
+import { errorText } from "../lib/errorText";
 
 interface Props {
   onClose: () => void;
@@ -58,7 +59,7 @@ function ImportLogLink() {
       await openWbImportLog();
     } catch (e) {
       console.error(e);
-      setOpenError(String(e));
+      setOpenError(errorText(e));
     }
   }
 
@@ -326,7 +327,7 @@ export function WbImportDialog({ onClose, onImportComplete, onThumbnailsReplaced
       await startWbImport(wbPath, thumbnailFolderPath, true);
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
       setImporting(false);
     }
   }

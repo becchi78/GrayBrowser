@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { playVideo } from "./api";
+import { errorText } from "./lib/errorText";
 
 // 一覧の行と重複パネルの行に共通の、ダブルクリックからの再生。blocked のあいだと
 // 開始中は起動せず、開始中の状態と失敗理由を返す（どう表示するかは呼び出し側）。
@@ -18,7 +19,7 @@ export function useStartPlay(filePath: string, blocked: boolean) {
       await playVideo(filePath);
     } catch (e) {
       console.error(e);
-      setPlayError(`再生に失敗しました: ${String(e)}`);
+      setPlayError(`再生に失敗しました: ${errorText(e)}`);
     } finally {
       setIsStartingPlay(false);
     }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { unregisterVideos } from "./api";
+import { errorText } from "./lib/errorText";
 
 // 一覧から選んだ動画を登録から削除する流れ(対象を保留して確認を出し、確定で
 // 実行する)。pending が null のとき確認は閉じている。失敗の理由は error に残し、
@@ -28,7 +29,7 @@ export function useUnregisterVideos() {
       setPending(null);
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }

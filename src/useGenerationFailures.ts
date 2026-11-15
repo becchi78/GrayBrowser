@@ -11,6 +11,7 @@ import {
 import { onCatalogChanged } from "./events";
 import { withoutItem } from "./lib/withoutKey";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "./types";
+import { errorText } from "./lib/errorText";
 
 const EMPTY: GenerationFailuresDto = { thumbnail_failures: [], metadata_failures: [] };
 
@@ -75,7 +76,7 @@ export function useGenerationFailures(
       .then(setFailures)
       .catch((e) => {
         console.error(e);
-        setError(String(e));
+        setError(errorText(e));
       });
   }
 
@@ -103,7 +104,7 @@ export function useGenerationFailures(
       // optimistically here.
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setRetrying((prev) => withoutItem(prev, key));
     }
@@ -134,7 +135,7 @@ export function useGenerationFailures(
       }
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setCounting(false);
     }
@@ -150,7 +151,7 @@ export function useGenerationFailures(
       await BULK_ACTIONS[pending.kind].run();
     } catch (e) {
       console.error(e);
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setRunning(false);
       setPending(null);
