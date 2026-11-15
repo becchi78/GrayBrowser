@@ -6,30 +6,11 @@
 //! Real tempdir-backed SQLite file, matching
 //! `db_tag_integrity.rs`'s established convention.
 
-use graybrowser_lib::db::{self, queries};
-use rusqlite::{params, Connection};
+mod common;
 
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-fn insert_video(conn: &Connection, id: &str, file_path: &str, status: &str, quick_hash: &str) {
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
-         VALUES (?1, ?2, ?3, 1024, ?4, ?5)",
-        params![
-            id,
-            file_path,
-            file_path.rsplit('\\').next().unwrap_or(file_path),
-            quick_hash,
-            status,
-        ],
-    )
-    .unwrap();
-}
+use common::{init_temp_db, video};
+use graybrowser_lib::db::queries;
+use rusqlite::Connection;
 
 /// Every `path_collisions` row must reference `videos.id` values that still
 /// exist, on both sides -- the app-layer orphan-prevention guarantee
@@ -55,7 +36,10 @@ fn update_full_hash_round_trips_through_list_online_video_hash_info() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "v1", "D:\\videos\\a.mp4", "online", "qh1");
+        video("v1", "D:\\videos\\a.mp4")
+            .status("online")
+            .quick_hash("qh1")
+            .insert(&conn);
     }
     {
         let conn = db.writer.lock().unwrap();
@@ -75,17 +59,20 @@ fn list_online_video_hash_info_excludes_offline_and_empty_quick_hash_rows() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "online-real", "D:\\videos\\a.mp4", "online", "qh1");
-        insert_video(&conn, "offline-real", "D:\\videos\\b.mp4", "offline", "qh2");
+        video("online-real", "D:\\videos\\a.mp4")
+            .status("online")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("offline-real", "D:\\videos\\b.mp4")
+            .status("offline")
+            .quick_hash("qh2")
+            .insert(&conn);
         // Offline placeholder rows use an empty quick_hash per
         // gb_core::dedup's own doc comment.
-        insert_video(
-            &conn,
-            "online-empty-hash",
-            "D:\\videos\\c.mp4",
-            "online",
-            "",
-        );
+        video("online-empty-hash", "D:\\videos\\c.mp4")
+            .status("online")
+            .quick_hash("")
+            .insert(&conn);
     }
 
     let rows = queries::list_online_video_hash_info(&db.read_pool).unwrap();
@@ -102,8 +89,14 @@ fn record_path_collision_is_idempotent_for_the_same_pair() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "offline-1", "D:\\old\\a.mp4", "offline", "qh1");
-        insert_video(&conn, "online-1", "D:\\new\\a.mp4", "online", "qh2");
+        video("offline-1", "D:\\old\\a.mp4")
+            .status("offline")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("online-1", "D:\\new\\a.mp4")
+            .status("online")
+            .quick_hash("qh2")
+            .insert(&conn);
     }
     {
         let conn = db.writer.lock().unwrap();
@@ -126,8 +119,14 @@ fn record_path_collision_refreshes_attempted_path_on_repeat_detection() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "offline-1", "D:\\old\\a.mp4", "offline", "qh1");
-        insert_video(&conn, "online-1", "D:\\new\\a.mp4", "online", "qh2");
+        video("offline-1", "D:\\old\\a.mp4")
+            .status("offline")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("online-1", "D:\\new\\a.mp4")
+            .status("online")
+            .quick_hash("qh2")
+            .insert(&conn);
     }
     {
         let conn = db.writer.lock().unwrap();
@@ -146,10 +145,22 @@ fn delete_videos_cascade_removes_path_collisions_referencing_the_deleted_video_f
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "offline-1", "D:\\old\\a.mp4", "offline", "qh1");
-        insert_video(&conn, "online-1", "D:\\new\\a.mp4", "online", "qh2");
-        insert_video(&conn, "offline-2", "D:\\old\\b.mp4", "offline", "qh3");
-        insert_video(&conn, "online-2", "D:\\new\\b.mp4", "online", "qh4");
+        video("offline-1", "D:\\old\\a.mp4")
+            .status("offline")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("online-1", "D:\\new\\a.mp4")
+            .status("online")
+            .quick_hash("qh2")
+            .insert(&conn);
+        video("offline-2", "D:\\old\\b.mp4")
+            .status("offline")
+            .quick_hash("qh3")
+            .insert(&conn);
+        video("online-2", "D:\\new\\b.mp4")
+            .status("online")
+            .quick_hash("qh4")
+            .insert(&conn);
     }
     {
         let conn = db.writer.lock().unwrap();
@@ -186,8 +197,14 @@ fn delete_videos_cascade_removes_path_collisions_where_deleted_video_is_the_vide
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "offline-1", "D:\\old\\a.mp4", "offline", "qh1");
-        insert_video(&conn, "online-1", "D:\\new\\a.mp4", "online", "qh2");
+        video("offline-1", "D:\\old\\a.mp4")
+            .status("offline")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("online-1", "D:\\new\\a.mp4")
+            .status("online")
+            .quick_hash("qh2")
+            .insert(&conn);
     }
     {
         let conn = db.writer.lock().unwrap();
@@ -211,10 +228,22 @@ fn delete_videos_cascade_removes_listed_videos_and_leaves_others_intact() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
-        insert_video(&conn, "b", "D:\\v\\b.mp4", "offline", "qh2");
-        insert_video(&conn, "c", "D:\\v\\c.mp4", "online", "qh3");
-        insert_video(&conn, "d", "D:\\v\\d.mp4", "online", "qh4");
+        video("a", "D:\\v\\a.mp4")
+            .status("online")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("b", "D:\\v\\b.mp4")
+            .status("offline")
+            .quick_hash("qh2")
+            .insert(&conn);
+        video("c", "D:\\v\\c.mp4")
+            .status("online")
+            .quick_hash("qh3")
+            .insert(&conn);
+        video("d", "D:\\v\\d.mp4")
+            .status("online")
+            .quick_hash("qh4")
+            .insert(&conn);
         queries::record_path_collision(&conn, "b", "a", "D:\\v\\a.mp4").unwrap();
         queries::record_path_collision(&conn, "c", "d", "D:\\v\\d.mp4").unwrap();
     }
@@ -262,9 +291,18 @@ fn delete_videos_cascade_keeps_collisions_between_surviving_videos() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
-        insert_video(&conn, "b", "D:\\v\\b.mp4", "offline", "qh2");
-        insert_video(&conn, "c", "D:\\v\\c.mp4", "online", "qh3");
+        video("a", "D:\\v\\a.mp4")
+            .status("online")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("b", "D:\\v\\b.mp4")
+            .status("offline")
+            .quick_hash("qh2")
+            .insert(&conn);
+        video("c", "D:\\v\\c.mp4")
+            .status("online")
+            .quick_hash("qh3")
+            .insert(&conn);
         queries::record_path_collision(&conn, "b", "a", "D:\\v\\a.mp4").unwrap();
     }
     {
@@ -286,8 +324,14 @@ fn delete_videos_cascade_rolls_back_everything_when_a_later_delete_fails() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_video(&conn, "a", "D:\\v\\a.mp4", "online", "qh1");
-        insert_video(&conn, "b", "D:\\v\\b.mp4", "online", "qh2");
+        video("a", "D:\\v\\a.mp4")
+            .status("online")
+            .quick_hash("qh1")
+            .insert(&conn);
+        video("b", "D:\\v\\b.mp4")
+            .status("online")
+            .quick_hash("qh2")
+            .insert(&conn);
         conn.execute_batch(
             "CREATE TRIGGER block_b BEFORE DELETE ON videos WHEN OLD.id = 'b'
              BEGIN SELECT RAISE(ABORT, 'blocked'); END;",

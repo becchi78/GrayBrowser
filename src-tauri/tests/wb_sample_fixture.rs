@@ -4,7 +4,11 @@
 //! `wb_source_local_fixture.rs`, this fixture is committed and contains no
 //! real personal data, so this test runs in CI.
 
+mod common;
+
 use std::path::PathBuf;
+
+use common::is_lowercase_hex8;
 
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::wb_import::count_clamped_scores;
@@ -58,9 +62,7 @@ fn sample_small_wb_parses_via_the_production_adapter() {
         "all non-empty hashes in the sample should be unique"
     );
     assert!(
-        non_empty_hashes.iter().all(|h| h.len() == 8
-            && h.chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+        non_empty_hashes.iter().all(|h| is_lowercase_hex8(h)),
         "every non-empty hash should be 8 lowercase hex chars"
     );
 }

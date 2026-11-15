@@ -1,7 +1,10 @@
 //! Backups against real tempdir-backed SQLite files.
 
+mod common;
+
 use std::path::Path;
 
+use common::video_ids;
 use gb_core::backup::{backup_file_name, BackupKind};
 use graybrowser_lib::db;
 use graybrowser_lib::db::backup::{create_backup, KEEP_MANUAL, KEEP_PREMIGRATE};
@@ -27,41 +30,12 @@ fn seed_video(db: &db::Db, id: &str) {
         .unwrap();
 }
 
-fn video_ids(conn: &rusqlite::Connection) -> Vec<String> {
-    let mut stmt = conn.prepare("SELECT id FROM videos ORDER BY id").unwrap();
-    stmt.query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap()
-}
-
-/// Builds a database at schema version 7 (one pending migration) holding a
+/// Builds a database at schema version 7 (older than current, so opening it
+/// runs migrations) holding a
 /// single video row.
 fn create_v7_database(db_path: &Path) {
     let conn = rusqlite::Connection::open(db_path).unwrap();
-    conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!("../migrations/0002_add_mtime.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!("../migrations/0003_add_kana_roma.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!("../migrations/0004_add_video_metadata.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!("../migrations/0005_add_sort_indexes.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!("../migrations/0006_add_path_collisions.sql"))
-        .unwrap();
-    conn.execute_batch(include_str!(
-        "../migrations/0007_add_generation_retry_columns.sql"
-    ))
-    .unwrap();
-    for version in 1..=7 {
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?1)",
-            [version],
-        )
-        .unwrap();
-    }
+    common::apply_up_to(&conn, 7);
     conn.execute(
         "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
          VALUES ('legacy', 'D:\\v\\a.mp4', 'a.mp4', 1, 'qh', 'online')",

@@ -5,28 +5,11 @@
 //! `delete_videos_cascade` must enforce it themselves. Real tempdir-backed
 //! SQLite file, matching `db_queries.rs`'s established convention.
 
-use graybrowser_lib::db::{self, queries};
+mod common;
+
+use common::{init_temp_db, insert_video};
+use graybrowser_lib::db::queries;
 use rusqlite::{params, Connection};
-
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-fn insert_test_video(conn: &Connection, id: &str, file_path: &str) {
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
-         VALUES (?1, ?2, ?3, 1024, 'hash', 'online')",
-        params![
-            id,
-            file_path,
-            file_path.rsplit('\\').next().unwrap_or(file_path)
-        ],
-    )
-    .unwrap();
-}
 
 /// Every `video_tags` row must reference a `tags.id` that still exists.
 fn orphaned_video_tags_by_tag(conn: &Connection) -> Vec<(String, i64)> {
@@ -63,7 +46,7 @@ fn assign_tag_to_video_creates_tag_and_video_tags_row() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let mut conn = db.writer.lock().unwrap();
     let tag = queries::assign_tag_to_video(&mut conn, "v1", "action").unwrap();
@@ -84,7 +67,7 @@ fn assign_tag_to_video_is_idempotent_for_the_same_video_and_tag() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let mut conn = db.writer.lock().unwrap();
     queries::assign_tag_to_video(&mut conn, "v1", "action").unwrap();
@@ -112,8 +95,8 @@ fn assign_tag_to_video_reuses_an_existing_tag_by_normalized_name() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
-        insert_test_video(&conn, "v2", "D:\\videos\\b.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v2", "D:\\videos\\b.mp4");
     }
     let mut conn = db.writer.lock().unwrap();
     let tag1 = queries::assign_tag_to_video(&mut conn, "v1", "  action  ").unwrap();
@@ -153,7 +136,7 @@ fn assign_tag_to_video_rejects_an_empty_tag_name() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let mut conn = db.writer.lock().unwrap();
     let result = queries::assign_tag_to_video(&mut conn, "v1", "   ");
@@ -173,7 +156,7 @@ fn count(conn: &Connection, sql: &str) -> i64 {
 
 fn seed_videos(conn: &Connection, names: &[&str]) {
     for n in names {
-        insert_test_video(conn, n, &format!("D:\\videos\\{n}.mp4"));
+        insert_video(conn, n, &format!("D:\\videos\\{n}.mp4"));
     }
 }
 
@@ -324,7 +307,7 @@ fn remove_tag_from_video_deletes_only_the_video_tags_row_tags_master_survives() 
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let tag = {
         let mut conn = db.writer.lock().unwrap();
@@ -358,8 +341,8 @@ fn delete_tag_removes_all_its_video_tags_rows_and_leaves_others_untouched() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
-        insert_test_video(&conn, "v2", "D:\\videos\\b.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v2", "D:\\videos\\b.mp4");
     }
     let (tag_action, tag_comedy) = {
         let mut conn = db.writer.lock().unwrap();
@@ -430,8 +413,8 @@ fn delete_videos_cascade_removes_all_its_video_tags_rows_and_leaves_others_untou
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
-        insert_test_video(&conn, "v2", "D:\\videos\\b.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v2", "D:\\videos\\b.mp4");
     }
     {
         let mut conn = db.writer.lock().unwrap();
@@ -499,7 +482,7 @@ fn list_tags_for_video_returns_tags_sorted_by_name() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     {
         let mut conn = db.writer.lock().unwrap();
@@ -516,7 +499,7 @@ fn list_all_tags_returns_every_tag_regardless_of_assignment() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let tag = {
         let mut conn = db.writer.lock().unwrap();
@@ -599,7 +582,7 @@ fn set_rating_round_trips_and_clears_to_zero() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
-        insert_test_video(&conn, "v1", "D:\\videos\\a.mp4");
+        insert_video(&conn, "v1", "D:\\videos\\a.mp4");
     }
     let conn = db.writer.lock().unwrap();
     queries::set_rating(&conn, "v1", 5).unwrap();
