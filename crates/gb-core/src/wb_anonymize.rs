@@ -18,15 +18,15 @@ use crate::wb_import::split_tags;
 
 const ANONYMIZE_SEED: u64 = 0x4752_4159_4241_5259; // arbitrary fixed constant ("GRAYBARY"-ish), never derived from real data
 
-pub const PATH_SEGMENT_PREFIX: &str = "gbseg_";
-pub const TAG_PREFIX: &str = "gbtag_";
-pub const FREETEXT_PREFIX: &str = "gbtxt_";
+pub(crate) const PATH_SEGMENT_PREFIX: &str = "gbseg_";
+pub(crate) const TAG_PREFIX: &str = "gbtag_";
+pub(crate) const FREETEXT_PREFIX: &str = "gbtxt_";
 
 /// Number of hex digits in a Path/Tag/FreeText dummy token's suffix.
 const TOKEN_SUFFIX_HEX_LEN: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TokenRole {
+pub(crate) enum TokenRole {
     /// A single path segment or filename stem (drive letters and the
     /// original file extension are kept as-is; see `anonymize_path`).
     Path,
@@ -45,7 +45,7 @@ pub enum TokenRole {
 /// `FreeText` -- this is the single source of truth both the generator and
 /// the leak-check test's positive-direction validator consult, so they can
 /// never disagree about which rule applies to which column.
-pub fn column_role(table_name: &str, column_name: &str) -> TokenRole {
+pub(crate) fn column_role(table_name: &str, column_name: &str) -> TokenRole {
     if table_name == "movie" {
         match column_name {
             "hash" => TokenRole::Hash,
@@ -62,7 +62,7 @@ pub fn column_role(table_name: &str, column_name: &str) -> TokenRole {
 /// (used only for whole-token roles -- `Path`/`Tag` on composite fields like
 /// `movie_path`/`tag` need `is_valid_dummy_path`/`is_valid_dummy_tag_field`
 /// instead, since those fields are built from multiple tokens).
-pub fn dummy_pattern(role: TokenRole) -> String {
+pub(crate) fn dummy_pattern(role: TokenRole) -> String {
     match role {
         TokenRole::Path => format!(
             r"^{}[0-9a-f]{{{TOKEN_SUFFIX_HEX_LEN}}}$",
@@ -123,7 +123,7 @@ impl Anonymizer {
     /// real data has legitimate empty cells (e.g. the one row with an empty
     /// `hash`) whose emptiness is itself a structural property worth
     /// preserving.
-    pub fn anonymize(&mut self, role: TokenRole, original: &str) -> String {
+    pub(crate) fn anonymize(&mut self, role: TokenRole, original: &str) -> String {
         if original.is_empty() {
             return String::new();
         }
@@ -158,7 +158,7 @@ impl Anonymizer {
     /// personal), every other segment/stem is replaced with a `Path`-role
     /// dummy token. Splitting the last segment's extension off uses the same
     /// `split_extension` helper `is_valid_dummy_path` uses to check it.
-    pub fn anonymize_path(&mut self, path: &str) -> String {
+    pub(crate) fn anonymize_path(&mut self, path: &str) -> String {
         if path.is_empty() {
             return String::new();
         }
@@ -196,7 +196,7 @@ impl Anonymizer {
     /// newline-splitting the parser itself uses) so tag structure can never
     /// diverge between the parser and the anonymizer, anonymizes each tag
     /// individually, and rejoins with `\n`.
-    pub fn anonymize_tags(&mut self, tag_field: &str) -> String {
+    pub(crate) fn anonymize_tags(&mut self, tag_field: &str) -> String {
         split_tags(tag_field)
             .into_iter()
             .map(|t| self.anonymize(TokenRole::Tag, &t))
@@ -268,7 +268,7 @@ fn truncated_digest(s: &str) -> u64 {
 /// Positive-direction validator matching `anonymize_path`'s output shape:
 /// every segment is either a drive letter or a `Path`-role dummy token, and
 /// the last segment's extension (if any) survived unchanged.
-pub fn is_valid_dummy_path(path: &str) -> bool {
+pub(crate) fn is_valid_dummy_path(path: &str) -> bool {
     if path.is_empty() {
         return true;
     }
@@ -289,7 +289,7 @@ pub fn is_valid_dummy_path(path: &str) -> bool {
 
 /// Positive-direction validator matching `anonymize_tags`'s output shape:
 /// empty, or newline-separated `Tag`-role dummy tokens.
-pub fn is_valid_dummy_tag_field(tag_field: &str) -> bool {
+pub(crate) fn is_valid_dummy_tag_field(tag_field: &str) -> bool {
     if tag_field.is_empty() {
         return true;
     }
