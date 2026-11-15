@@ -2,7 +2,6 @@
 //! Pure validation only -- the DB write path lives in
 //! `src-tauri::db::queries::set_rating`.
 
-pub const MIN_RATING: u8 = 0;
 pub const MAX_RATING: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
