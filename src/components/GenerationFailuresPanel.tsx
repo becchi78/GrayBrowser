@@ -1,21 +1,9 @@
 import { ConfirmDialog } from "./ConfirmDialog";
+import type { StatusPanelProps } from "./StatusPanelProps";
 import { GenerationFailureItem } from "./GenerationFailureItem";
 import { BULK_ACTIONS, useGenerationFailures } from "../useGenerationFailures";
 
-interface Props {
-  refreshKey: number;
-  // Visibility is driven by the StatusBar badge, not this component's own
-  // toggle button. The component stays mounted regardless of `open` so
-  // the fetch effect and the onCatalogChanged subscription in
-  // useGenerationFailures keep the badge's count fresh in the background
-  // even while the panel is closed.
-  open: boolean;
-  // Reports the current total failure count up to StatusBar for the badge
-  // label.
-  onCountChange?: (count: number) => void;
-}
-
-export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: Props) {
+export function GenerationFailuresPanel({ refreshKey, open, onCountChange }: StatusPanelProps) {
   const {
     failures,
     totalFailures,
