@@ -362,35 +362,24 @@ mod tests {
     use crate::test_support::{registry_over, strings};
 
     #[test]
-    fn scan_targets_exclude_folders_with_the_update_check_off() {
+    fn scan_targets_leave_out_the_folders_with_the_update_check_off() {
         let (_d, db) = crate::db::test_support::init_temp_db();
         let conn = db.writer.lock().unwrap();
         queries::set_watch_folders(&conn, &strings(&["A", "B", "C"])).unwrap();
+        assert_eq!(
+            load_scan_target_folders(&conn).unwrap(),
+            strings(&["A", "B", "C"]),
+            "nothing unchecked: every folder"
+        );
+
         queries::set_watch_check_disabled(&conn, &strings(&["B"])).unwrap();
         assert_eq!(
             load_scan_target_folders(&conn).unwrap(),
             strings(&["A", "C"])
         );
-    }
 
-    #[test]
-    fn scan_targets_are_empty_when_every_folder_is_unchecked() {
-        let (_d, db) = crate::db::test_support::init_temp_db();
-        let conn = db.writer.lock().unwrap();
-        queries::set_watch_folders(&conn, &strings(&["A", "B"])).unwrap();
-        queries::set_watch_check_disabled(&conn, &strings(&["A", "B"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &strings(&["A", "B", "C"])).unwrap();
         assert!(load_scan_target_folders(&conn).unwrap().is_empty());
-    }
-
-    #[test]
-    fn scan_targets_include_everything_when_nothing_is_unchecked() {
-        let (_d, db) = crate::db::test_support::init_temp_db();
-        let conn = db.writer.lock().unwrap();
-        queries::set_watch_folders(&conn, &strings(&["A", "B"])).unwrap();
-        assert_eq!(
-            load_scan_target_folders(&conn).unwrap(),
-            strings(&["A", "B"])
-        );
     }
 
     fn video_row(thumbnail_ready: bool) -> queries::VideoRow {
@@ -412,39 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn from_row_carries_the_db_thumbnail_ready_flag_through_unchanged() {
-        let dto = VideoDto::from_row(video_row(true));
-        assert!(dto.thumbnail_ready);
-
-        let dto = VideoDto::from_row(video_row(false));
-        assert!(!dto.thumbnail_ready);
-    }
-
-    /// Core guarantee: `VideoDto::from_row` performs no
-    /// filesystem access at all -- `thumbnail_ready` is `row.thumbnail_ready`
-    /// (the DB column), full stop. This test's `VideoRow.id` deliberately
-    /// names a file that is guaranteed not to exist anywhere on disk; a
-    /// filesystem check would force `thumbnail_ready: false` regardless of the
-    /// DB value. This is intentional, not a bug: this hot path does not treat
-    /// the filesystem as the source of truth for this flag (see
-    /// `VideoDto::from_row`'s doc comment) -- that responsibility belongs
-    /// solely to `thumbnail::worker::list_videos_missing_thumbnails`'s resume
-    /// pass.
-    #[test]
-    fn from_row_reports_ready_even_when_no_thumbnail_file_exists_on_disk_at_all() {
-        let mut row = video_row(true);
-        row.id = "definitely-does-not-exist-on-disk-anywhere".to_string();
-
-        let dto = VideoDto::from_row(row);
-
-        assert!(
-            dto.thumbnail_ready,
-            "thumbnail_ready must come from the DB column, never from a filesystem check"
-        );
-    }
-
-    #[test]
-    fn thumbnail_failed_is_true_only_when_not_ready_and_retries_are_used_up() {
+    fn from_row_derives_thumbnail_failed_and_carries_the_ready_flag_through() {
         let max = i64::from(gb_core::retry::MAX_GENERATION_ATTEMPTS);
         let cases = [
             (false, 0, false),
@@ -458,11 +415,14 @@ mod tests {
         for (ready, attempts, expected) in cases {
             let mut row = video_row(ready);
             row.thumbnail_attempts = attempts;
+            let dto = VideoDto::from_row(row);
             assert_eq!(
-                VideoDto::from_row(row).thumbnail_failed,
-                expected,
+                dto.thumbnail_failed, expected,
                 "ready={ready} attempts={attempts}"
             );
+            // The flag comes from the DB column, never from a filesystem
+            // check (`video_row`'s file does not exist on disk).
+            assert_eq!(dto.thumbnail_ready, ready, "attempts={attempts}");
         }
     }
 

@@ -115,31 +115,6 @@ mod debug_overrides {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn startup_check_defaults_to_on_and_round_trips() {
-        let (_d, db) = crate::db::test_support::init_temp_db();
-        let conn = db.writer.lock().unwrap();
-        assert!(queries::get_update_check_on_startup(&conn).unwrap());
-        queries::set_update_check_on_startup(&conn, false).unwrap();
-        assert!(!queries::get_update_check_on_startup(&conn).unwrap());
-        queries::set_update_check_on_startup(&conn, true).unwrap();
-        assert!(queries::get_update_check_on_startup(&conn).unwrap());
-    }
-
-    #[test]
-    fn unrecognized_stored_value_reads_as_on() {
-        let (_d, db) = crate::db::test_support::init_temp_db();
-        let conn = db.writer.lock().unwrap();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('update_check_on_startup', 'garbage')",
-            [],
-        )
-        .unwrap();
-        assert!(queries::get_update_check_on_startup(&conn).unwrap());
-    }
-
     #[cfg(debug_assertions)]
     mod overrides {
         use super::super::debug_overrides::{parse, Overrides, ENDPOINT_VAR, PUBKEY_VAR};

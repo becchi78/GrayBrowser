@@ -11,13 +11,9 @@ use crate::reachability::{ReachabilityRegistry, DEFAULT_OPEN_RECHECK_MIN_AGE};
 /// follows `reachability:changed`.
 ///
 /// Reads memory only -- it never probes -- so it cannot block on a dead share.
-pub(crate) fn current_unreachable_folders(registry: &ReachabilityRegistry) -> Vec<String> {
-    registry.unreachable_folders()
-}
-
 #[tauri::command]
 pub fn get_unreachable_folders(registry: State<ReachabilityRegistry>) -> Vec<String> {
-    current_unreachable_folders(&registry)
+    registry.unreachable_folders()
 }
 
 /// Starts a background probe of `folder`, and returns at once without waiting
@@ -74,10 +70,10 @@ pub fn check_folder_reachability(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::registry_over;
+    use crate::test_support::{registry_over, wait_until, Gate};
     use gb_core::ports::folder_probe::FolderProbe;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::Arc;
 
     const NAS: &str = "W:/video";
     const OTHER: &str = "D:/other";
@@ -109,38 +105,22 @@ mod tests {
         handle.join().unwrap();
 
         assert_eq!(probe.calls(), vec![NAS.to_string()]);
-        assert_eq!(
-            current_unreachable_folders(&registry),
-            vec![NAS.to_string()]
-        );
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
     }
 
     /// Blocks the probe until released, so the test controls when it ends.
-    struct BlockedProbe {
-        released: Mutex<bool>,
-        cond: Condvar,
-        entered: Mutex<bool>,
-        entered_cond: Condvar,
-    }
+    struct BlockedProbe(Gate);
 
     impl FolderProbe for BlockedProbe {
         fn is_reachable(&self, _folder: &str) -> bool {
-            *self.entered.lock().unwrap() = true;
-            self.entered_cond.notify_all();
-            let released = self.released.lock().unwrap();
-            drop(self.cond.wait_while(released, |r| !*r).unwrap());
+            self.0.pass();
             true
         }
     }
 
     #[test]
     fn the_call_returns_before_the_probe_finishes() {
-        let probe = Arc::new(BlockedProbe {
-            released: Mutex::new(false),
-            cond: Condvar::new(),
-            entered: Mutex::new(false),
-            entered_cond: Condvar::new(),
-        });
+        let probe = Arc::new(BlockedProbe(Gate::new(true)));
         let registry = registry_over(probe.clone());
         let watch_folders = vec![NAS.to_string()];
 
@@ -149,32 +129,10 @@ mod tests {
             .expect("a registered folder starts a check");
 
         // The probe really is running while the call is already over.
-        drop(
-            probe
-                .entered_cond
-                .wait_while(probe.entered.lock().unwrap(), |e| !*e)
-                .unwrap(),
-        );
+        assert!(wait_until(|| probe.0.waiting() == 1));
         assert!(!handle.is_finished());
 
-        *probe.released.lock().unwrap() = true;
-        probe.cond.notify_all();
+        probe.0.release();
         handle.join().unwrap();
-    }
-
-    #[test]
-    fn reports_only_folders_found_unreachable_and_never_probes() {
-        let probe = Arc::new(FakeFolderProbe::with_unreachable(&["W:/video"]));
-        let registry = registry_over(probe.clone());
-        assert!(current_unreachable_folders(&registry).is_empty());
-        assert!(probe.calls().is_empty());
-
-        registry.is_reachable("W:/video");
-        registry.is_reachable("C:/videos");
-
-        assert_eq!(
-            current_unreachable_folders(&registry),
-            vec!["W:/video".to_string()]
-        );
     }
 }

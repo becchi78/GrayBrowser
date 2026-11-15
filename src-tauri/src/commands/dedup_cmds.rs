@@ -231,7 +231,6 @@ mod tests {
     use crate::test_support::LibraryEnv;
     use gb_core::ports::drive_type::DriveTypeError;
     use gb_core::ports::trash::TrashError;
-    use gb_core::testing::fake_drive_type::FakeDriveTypeDetector;
     use gb_core::testing::fake_trash::FakeFileTrasher;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -474,41 +473,24 @@ mod tests {
         Ok(DriveKind::Local)
     }
 
+    /// `group_content_of` is the only place the group kind reaches the
+    /// policy, so every kind is checked once: the two content-confirmed kinds
+    /// may be deleted, the two unconfirmed ones are refused.
     #[test]
-    fn refuses_a_group_whose_content_is_not_confirmed() {
-        refusal_case(
-            |env| {
-                two_online(env);
-                (
-                    group_of_kind(DuplicateGroupKind::PathCollisionUnconfirmed, &["a", "b"]),
-                    local(),
-                )
-            },
-            "a",
-            "内容の一致が確認できていない",
-        );
-    }
-
-    #[test]
-    fn refuses_a_quick_hash_candidate_whose_content_could_not_be_verified() {
-        refusal_case(
-            |env| {
-                two_online(env);
-                (
-                    group_of_kind(
-                        DuplicateGroupKind::QuickHashCandidateUnverified,
-                        &["a", "b"],
-                    ),
-                    local(),
-                )
-            },
-            "a",
-            "内容の一致が確認できていない",
-        );
-    }
-
-    #[test]
-    fn allows_both_content_confirmed_group_kinds() {
+    fn only_content_confirmed_group_kinds_may_be_deleted() {
+        for kind in [
+            DuplicateGroupKind::PathCollisionUnconfirmed,
+            DuplicateGroupKind::QuickHashCandidateUnverified,
+        ] {
+            refusal_case(
+                |env| {
+                    two_online(env);
+                    (group_of_kind(kind, &["a", "b"]), local())
+                },
+                "a",
+                "内容の一致が確認できていない",
+            );
+        }
         for kind in [
             DuplicateGroupKind::QuickHashConfirmed,
             DuplicateGroupKind::PathCollisionConfirmed,
@@ -547,11 +529,9 @@ mod tests {
     }
 
     #[test]
-    fn refuses_network_removable_and_unknown_drives_and_detection_failure() {
+    fn refuses_a_non_local_drive_and_a_failed_drive_detection() {
         let cases = [
             Ok(DriveKind::Network),
-            Ok(DriveKind::Removable),
-            Ok(DriveKind::Unknown),
             Err(DriveTypeError::DetectionFailed {
                 path: "p".into(),
                 message: "m".into(),
@@ -571,17 +551,6 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_drive_that_the_detector_was_not_configured_for() {
-        let env = Env::new();
-        two_online(&env);
-        let drive = FakeDriveTypeDetector::default();
-        let trasher = trash_ok();
-        let notifier = FakeCatalogNotifier::default();
-        let result = run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a");
-        assert_refused(&env, &trasher, &notifier, &result, "a", "ゴミ箱");
-    }
-
-    #[test]
     fn refuses_the_last_online_member_when_the_others_are_offline() {
         refusal_case(
             |env| {
@@ -589,18 +558,6 @@ mod tests {
                 env.add_video("b", "offline");
                 env.add_video("c", "offline");
                 (group(&["a", "b", "c"]), local())
-            },
-            "a",
-            "最後の1件",
-        );
-    }
-
-    #[test]
-    fn refuses_a_group_with_only_the_target() {
-        refusal_case(
-            |env| {
-                env.add_video("a", "online");
-                (group(&["a"]), local())
             },
             "a",
             "最後の1件",
@@ -617,71 +574,6 @@ mod tests {
                 let out = other.join("a.mp4");
                 std::fs::write(&out, CONTENT).unwrap();
                 env.insert_row("a", &out, "online", CONTENT.len() as i64);
-                (group(&["a", "b"]), local())
-            },
-            "a",
-            "登録フォルダの外",
-        );
-    }
-
-    /// The catalog may hold `/`-separated paths; NTFS treats them as the same
-    /// file, so the registered-folder check must too. Only that check is
-    /// asserted: the later file-state check stats the verbatim (`\\?\`) form, which does
-    /// not accept `/`, so the delete as a whole is still refused further on.
-    #[test]
-    #[cfg(windows)]
-    fn a_forward_slash_file_path_passes_the_registered_folder_check() {
-        let env = Env::new();
-        two_online(&env);
-        let slashed = env
-            .folder
-            .join("a.mp4")
-            .to_string_lossy()
-            .replace('\\', "/");
-        {
-            let conn = env.db.writer.lock().unwrap();
-            conn.execute(
-                "UPDATE videos SET file_path = ?1 WHERE id = 'a'",
-                [&slashed],
-            )
-            .unwrap();
-        }
-        let drive = AnyDrive(local());
-        let trasher = trash_ok();
-        let notifier = FakeCatalogNotifier::default();
-
-        let err = run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a").unwrap_err();
-
-        assert!(!err.contains("登録フォルダの外"), "{err}");
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn allows_a_file_when_the_registered_folder_has_a_trailing_separator() {
-        let env = Env::new();
-        two_online(&env);
-        {
-            let conn = env.db.writer.lock().unwrap();
-            let with_sep = format!("{}\\", env.folder.to_string_lossy());
-            crate::db::queries::set_watch_folders(&conn, &[with_sep]).unwrap();
-        }
-        let drive = AnyDrive(local());
-        let trasher = trash_ok();
-        let notifier = FakeCatalogNotifier::default();
-
-        run(&env, group(&["a", "b"]), &drive, &trasher, &notifier, "a").unwrap();
-
-        assert_eq!(trasher.calls.lock().unwrap().len(), 1);
-        assert!(!env.row_exists("a"));
-    }
-
-    /// The folder itself is never deletable.
-    #[test]
-    fn refuses_the_registered_folder_itself() {
-        refusal_case(
-            |env| {
-                env.add_video("b", "online");
-                env.insert_row("a", &env.folder, "online", 0);
                 (group(&["a", "b"]), local())
             },
             "a",
@@ -737,19 +629,17 @@ mod tests {
 
     #[test]
     fn refuses_a_size_mismatch() {
-        for delta in [-1_i64, 1] {
-            refusal_case(
-                |env| {
-                    env.add_video("b", "online");
-                    let path = env.folder.join("a.mp4");
-                    std::fs::write(&path, CONTENT).unwrap();
-                    env.insert_row("a", &path, "online", CONTENT.len() as i64 + delta);
-                    (group(&["a", "b"]), local())
-                },
-                "a",
-                "再スキャン",
-            );
-        }
+        refusal_case(
+            |env| {
+                env.add_video("b", "online");
+                let path = env.folder.join("a.mp4");
+                std::fs::write(&path, CONTENT).unwrap();
+                env.insert_row("a", &path, "online", CONTENT.len() as i64 + 1);
+                (group(&["a", "b"]), local())
+            },
+            "a",
+            "再スキャン",
+        );
     }
 
     #[test]

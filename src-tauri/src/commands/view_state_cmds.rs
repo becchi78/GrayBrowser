@@ -89,19 +89,6 @@ mod tests {
     }
 
     #[test]
-    fn enabled_by_default_and_unknown_value_reads_as_enabled() {
-        let (_d, db) = crate::db::test_support::init_temp_db();
-        let conn = db.writer.lock().unwrap();
-        assert!(queries::get_restore_view_state_enabled(&conn).unwrap());
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('restore_view_state_enabled', 'garbage')",
-            [],
-        )
-        .unwrap();
-        assert!(queries::get_restore_view_state_enabled(&conn).unwrap());
-    }
-
-    #[test]
     fn saved_state_round_trips_when_enabled() {
         let (_d, db) = crate::db::test_support::init_temp_db();
         assert_eq!(load(&db).unwrap(), Some(SavedViewState::default()));

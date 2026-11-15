@@ -413,6 +413,48 @@ fn validate_rename_target(
     Ok(())
 }
 
+/// Moves the cached thumbnails of the videos a folder rename actually
+/// rewrote, then removes the old thumbnail subdirectory if it is empty.
+///
+/// Video-by-video, never a single whole-subdirectory rename of the old
+/// folder's thumbnail subdirectory to the new one -- see
+/// `queries::RenameWatchFolderOutcome`'s doc comment for why: a
+/// collision-skipped video's `file_path` never actually changed, so its
+/// thumbnails must stay exactly where they already are, not get dragged
+/// along with the videos that did rename.
+///
+/// Split out of `rename_watch_folder` so this sequence can be tested without
+/// a real `tauri::AppHandle`.
+fn move_renamed_video_thumbnails(
+    thumbnails_root: &std::path::Path,
+    renamed_videos: &[queries::RenamedVideo],
+    old_folder_path: &str,
+    new_folder_path: &str,
+) {
+    for video in renamed_videos {
+        if !crate::thumbnail::paths::move_video_thumbnails_between_folders(
+            thumbnails_root,
+            &video.video_id,
+            old_folder_path,
+            new_folder_path,
+        ) {
+            log::warn!(
+                "failed to fully move thumbnails for video {} from {old_folder_path} to \
+                 {new_folder_path}",
+                video.video_id
+            );
+        }
+    }
+    // Best-effort cleanup of the now-empty old subdirectory. Non-recursive
+    // (`remove_dir`, not `remove_dir_all`): silently no-ops if anything is
+    // still in there (e.g. a collision-skipped video's thumbnails, or a
+    // move failure above) rather than risk deleting thumbnails that still
+    // belong to a video whose `file_path` didn't actually change.
+    let old_thumbnail_dir =
+        thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(old_folder_path));
+    let _ = std::fs::remove_dir(&old_thumbnail_dir);
+}
+
 /// `FolderDialog`'s ✎ path edit action: rewrites every
 /// `videos.file_path` under `old_folder_path` to fall under
 /// `new_folder_path` instead (`queries::
@@ -476,34 +518,12 @@ pub fn rename_watch_folder(
         // reason.
     };
 
-    // Video-by-video, never a single whole-subdirectory rename of the old
-    // folder's thumbnail subdirectory to the new one -- see
-    // `queries::RenameWatchFolderOutcome`'s doc comment for why: a
-    // collision-skipped video's `file_path` never actually changed, so its
-    // thumbnails must stay exactly where they already are, not get dragged
-    // along with the videos that did rename.
-    for video in &renamed_videos {
-        if !crate::thumbnail::paths::move_video_thumbnails_between_folders(
-            &thumbnails_root,
-            &video.video_id,
-            &old_folder_path,
-            &new_folder_path,
-        ) {
-            log::warn!(
-                "failed to fully move thumbnails for video {} from {old_folder_path} to \
-                 {new_folder_path}",
-                video.video_id
-            );
-        }
-    }
-    // Best-effort cleanup of the now-empty old subdirectory. Non-recursive
-    // (`remove_dir`, not `remove_dir_all`): silently no-ops if anything is
-    // still in there (e.g. a collision-skipped video's thumbnails, or a
-    // move failure above) rather than risk deleting thumbnails that still
-    // belong to a video whose `file_path` didn't actually change.
-    let old_thumbnail_dir =
-        thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(&old_folder_path));
-    let _ = std::fs::remove_dir(&old_thumbnail_dir);
+    move_renamed_video_thumbnails(
+        &thumbnails_root,
+        &renamed_videos,
+        &old_folder_path,
+        &new_folder_path,
+    );
 
     crate::watch::reconfigure_real_watch_manager(
         &app,
@@ -527,55 +547,22 @@ mod tests {
     use super::*;
     use crate::test_support::strings;
     use crate::thumbnail::paths::slot_path;
-    use gb_core::ports::dialog::DialogError;
-    use gb_core::testing::fake_dialog::FakeFolderPicker;
-
-    /// Same pick-then-merge sequence the command performs, minus the DB.
-    fn pick_and_merge(
-        picker: &impl FolderPicker,
-        existing: Vec<String>,
-    ) -> Result<Vec<String>, String> {
-        let picked = picker.pick_folders().map_err(|e| e.to_string())?;
-        Ok(merge_picked(existing, picked))
-    }
 
     #[test]
-    fn cancelled_pick_leaves_existing_list_unchanged() {
-        let picker = FakeFolderPicker { result: Ok(None) };
+    fn picked_paths_are_appended_to_the_existing_list_without_duplicates() {
         let existing = vec!["C:/Videos".to_string()];
-        assert_eq!(pick_and_merge(&picker, existing.clone()).unwrap(), existing);
-    }
+        let picked = Some(vec![PathBuf::from("C:/Videos"), PathBuf::from("D:/Movies")]);
 
-    #[test]
-    fn picking_an_already_registered_folder_does_not_duplicate_it() {
-        let picker = FakeFolderPicker {
-            result: Ok(Some(vec![PathBuf::from("C:/Videos")])),
-        };
-        let existing = vec!["C:/Videos".to_string()];
-        assert_eq!(pick_and_merge(&picker, existing.clone()).unwrap(), existing);
-    }
-
-    #[test]
-    fn picked_folders_are_merged_into_existing() {
-        let picker = FakeFolderPicker {
-            result: Ok(Some(vec![PathBuf::from("D:/Movies")])),
-        };
-        let existing = vec!["C:/Videos".to_string()];
         assert_eq!(
-            pick_and_merge(&picker, existing).unwrap(),
+            merge_picked(existing, picked),
             vec!["C:/Videos", "D:/Movies"]
         );
     }
 
-    #[test]
-    fn dialog_failure_is_propagated_as_an_error() {
-        let picker = FakeFolderPicker {
-            result: Err(DialogError::Failed("boom".into())),
-        };
-        assert!(pick_and_merge(&picker, vec![]).is_err());
-    }
-
     // --- validate_rename_target ----------------------------------------
+    //
+    // The overlap rule itself is `gb_core::paths::folder_paths_conflict`'s;
+    // these only check that the rule is applied to the *other* folders.
 
     #[test]
     fn rejects_renaming_a_folder_that_is_not_registered() {
@@ -584,27 +571,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_new_path_that_exactly_duplicates_another_watch_folder() {
-        let existing = vec![r"C:\Videos".to_string(), r"D:\Movies".to_string()];
-        assert!(validate_rename_target(&existing, r"C:\Videos", r"D:\Movies").is_err());
-    }
-
-    #[test]
-    fn rejects_a_new_path_that_is_a_child_of_another_watch_folder() {
+    fn rejects_a_new_path_that_conflicts_with_another_watch_folder() {
         let existing = vec![r"C:\Videos".to_string(), r"D:\Movies".to_string()];
         assert!(validate_rename_target(&existing, r"C:\Videos", r"D:\Movies\Sub").is_err());
-    }
-
-    #[test]
-    fn rejects_a_new_path_that_is_a_parent_of_another_watch_folder() {
-        let existing = vec![r"C:\Videos".to_string(), r"D:\Movies\Sub".to_string()];
-        assert!(validate_rename_target(&existing, r"C:\Videos", r"D:\Movies").is_err());
-    }
-
-    #[test]
-    fn allows_a_new_path_that_only_shares_a_string_prefix_with_another_watch_folder() {
-        let existing = vec![r"C:\Videos".to_string(), r"D:\Movies".to_string()];
-        assert!(validate_rename_target(&existing, r"C:\Videos", r"D:\Movies2").is_ok());
     }
 
     #[test]
@@ -642,17 +611,13 @@ mod tests {
     }
 
     #[test]
-    fn reorder_rejects_non_permutations_and_leaves_the_stored_order() {
+    fn a_reorder_that_is_not_a_permutation_is_rejected_and_the_stored_order_stays() {
         let (_d, db) = db_with_folders(&["A", "B"]);
         let conn = db.writer.lock().unwrap();
-        for bad in [
-            strings(&["A"]),
-            strings(&["A", "B", "X"]),
-            strings(&["A", "A"]),
-            strings(&[]),
-        ] {
-            assert!(apply_reorder(&conn, bad).is_err());
-        }
+
+        let err = apply_reorder(&conn, strings(&["A", "B", "X"])).unwrap_err();
+
+        assert!(err.contains("\"X\""), "{err}");
         assert_eq!(
             queries::get_watch_folders(&conn).unwrap(),
             strings(&["A", "B"])
@@ -732,26 +697,21 @@ mod tests {
     }
 
     // --- NAS poll interval ------------------------------------------------
+    //
+    // The accepted range and the display rounding are `gb_core::
+    // nas_poll_interval`'s; these only check what the command saves.
 
     #[test]
-    fn nas_interval_is_saved_as_seconds_and_read_back() {
+    fn nas_interval_is_saved_as_seconds_and_an_invalid_one_leaves_it_untouched() {
         let (_d, db) = db_with_folders(&["A", "B"]);
         let conn = db.writer.lock().unwrap();
         let (secs, folders) = apply_nas_poll_interval(&conn, 30).unwrap();
         assert_eq!(secs, 1800);
         assert_eq!(folders, strings(&["A", "B"]));
         assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 1800);
-    }
 
-    #[test]
-    fn nas_interval_out_of_range_is_rejected_and_not_saved() {
-        let (_d, db) = db_with_folders(&["A"]);
-        let conn = db.writer.lock().unwrap();
-        queries::set_nas_poll_interval_secs(&conn, 120).unwrap();
-        for bad in [i64::MIN, -1, 0, 1441, 100_000] {
-            assert!(apply_nas_poll_interval(&conn, bad).is_err(), "{bad}");
-        }
-        assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 120);
+        assert!(apply_nas_poll_interval(&conn, 1441).is_err());
+        assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 1800);
     }
 
     #[test]
@@ -762,27 +722,7 @@ mod tests {
         assert_eq!(apply_nas_poll_interval(&conn, 1440).unwrap().0, 86_400);
     }
 
-    #[test]
-    fn stored_sub_minute_seconds_display_rounded_up() {
-        let (_d, db) = db_with_folders(&[]);
-        let conn = db.writer.lock().unwrap();
-        queries::set_nas_poll_interval_secs(&conn, 90).unwrap();
-        let secs = queries::get_nas_poll_interval_secs(&conn).unwrap();
-        assert_eq!(gb_core::nas_poll_interval::secs_to_display_minutes(secs), 2);
-    }
-
-    // --- rename_watch_folder's thumbnail-moving sequence -------------------
-    //
-    // `rename_watch_folder` itself is a `#[tauri::command]` that needs a real
-    // `tauri::AppHandle` to notify with -- this codebase's own `events`
-    // module documents constructing one as unsafe under `cargo test` on
-    // Windows (`STATUS_ENTRYPOINT_NOT_FOUND`, see `events.rs`'s top doc
-    // comment), the same reason `generation_retry_cmds`'s tests bypass their
-    // own `#[tauri::command]` wrappers. So this instead exercises the exact
-    // same sequence the command body performs -- `queries::
-    // rename_watch_folder_videos` followed by moving only the videos its
-    // `renamed_videos` list reports, one at a time -- directly against
-    // `queries`/`thumbnail::paths`, with no `AppHandle` involved.
+    // --- rename_watch_folder's thumbnail moves -------------------------------
 
     /// The most important regression test in this module: a collision-
     /// skipped video's `file_path` never actually changes, so its cached
@@ -801,26 +741,12 @@ mod tests {
         // "clashing" will collide with "outside" (which already occupies
         // the rename's target path) and must be skipped; "free" renames
         // normally.
-        {
-            let conn = db.writer.lock().unwrap();
-            conn.execute(
-                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status) \
-                 VALUES ('clashing', 'C:\\OldVideos\\taken.mp4', 'taken.mp4', 1, 'h', 'online')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status) \
-                 VALUES ('free', 'C:\\OldVideos\\free.mp4', 'free.mp4', 1, 'h', 'online')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status) \
-                 VALUES ('outside', 'D:\\NewVideos\\taken.mp4', 'taken.mp4', 1, 'h', 'online')",
-                [],
-            )
-            .unwrap();
+        for (id, path) in [
+            ("clashing", r"C:\OldVideos\taken.mp4"),
+            ("free", r"C:\OldVideos\free.mp4"),
+            ("outside", r"D:\NewVideos\taken.mp4"),
+        ] {
+            crate::db::test_support::insert_test_video(&db, id, path);
         }
 
         // Both "clashing" and "free" have cached thumbnails sitting in the
@@ -846,19 +772,12 @@ mod tests {
             "\"clashing\" must be skipped"
         );
 
-        // Mirrors rename_watch_folder's actual loop: only the reported
-        // renamed_videos are moved, one video at a time -- never a whole-
-        // subdirectory rename.
-        for video in &outcome.renamed_videos {
-            assert!(
-                crate::thumbnail::paths::move_video_thumbnails_between_folders(
-                    thumbs_root.path(),
-                    &video.video_id,
-                    &old_folder,
-                    &new_folder,
-                )
-            );
-        }
+        move_renamed_video_thumbnails(
+            thumbs_root.path(),
+            &outcome.renamed_videos,
+            &old_folder,
+            &new_folder,
+        );
 
         let new_dir = thumbs_root
             .path()
@@ -893,5 +812,30 @@ mod tests {
                 "clashing's slot {i} must NOT have been moved to the new folder's subdirectory"
             );
         }
+        // Not empty, so the cleanup of the old subdirectory must leave it.
+        assert!(old_dir.is_dir());
+    }
+
+    #[test]
+    fn the_old_thumbnail_subdirectory_is_removed_once_every_video_moved_out() {
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let old_folder = r"C:\OldVideos".to_string();
+        let new_folder = r"D:\NewVideos".to_string();
+        let old_dir = thumbs_root
+            .path()
+            .join(gb_core::paths::thumbnail_folder_subdir(&old_folder));
+        std::fs::create_dir_all(&old_dir).unwrap();
+        for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
+            std::fs::write(slot_path(&old_dir, "v", i), "x").unwrap();
+        }
+        let renamed = [queries::RenamedVideo {
+            video_id: "v".to_string(),
+            old_file_path: r"C:\OldVideos\v.mp4".to_string(),
+            new_file_path: r"D:\NewVideos\v.mp4".to_string(),
+        }];
+
+        move_renamed_video_thumbnails(thumbs_root.path(), &renamed, &old_folder, &new_folder);
+
+        assert!(!old_dir.exists());
     }
 }

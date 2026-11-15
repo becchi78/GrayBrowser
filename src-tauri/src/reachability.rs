@@ -648,6 +648,9 @@ mod tests {
     #[test]
     fn an_unprobed_folder_is_probed_once_and_then_cached() {
         let (registry, probe, _) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
+        // Reading the unreachable set is a memory read: it never probes.
+        assert!(registry.unreachable_folders().is_empty());
+        assert!(probe.calls().is_empty());
 
         assert!(!registry.is_reachable(NAS));
         assert!(!registry.is_reachable(NAS));
@@ -656,6 +659,8 @@ mod tests {
 
         assert_eq!(probe.call_count_for(NAS), 1);
         assert_eq!(probe.call_count_for(LOCAL), 1);
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(probe.calls().len(), 2, "reading the set did not probe");
     }
 
     #[test]
