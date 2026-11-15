@@ -98,7 +98,7 @@ pub fn folder_like_prefix(folder_path: &str) -> String {
 /// `LIKE` pattern. See `folder_like_prefix`'s docs for why both trailing-
 /// separator shapes occur among real inputs (a plain folder like
 /// `C:\Videos` vs. a drive root like `C:\`).
-pub fn normalize_folder_path(folder_path: &str) -> String {
+pub(crate) fn normalize_folder_path(folder_path: &str) -> String {
     format!("{}\\", folder_path.trim_end_matches('\\'))
 }
 

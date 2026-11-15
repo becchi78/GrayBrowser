@@ -9,7 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use xxhash_rust::xxh64::Xxh64;
 
 /// Number of bytes read from the start and from the end of the file.
-pub const QUICK_HASH_CHUNK_SIZE: u64 = 1024 * 1024; // 1MB
+pub(crate) const QUICK_HASH_CHUNK_SIZE: u64 = 1024 * 1024; // 1MB
 
 const QUICK_HASH_SEED: u64 = 0;
 

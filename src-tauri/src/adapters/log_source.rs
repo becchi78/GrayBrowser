@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use gb_core::ports::log_source::{LogChunk, LogReadError, LogSource};
 
 /// The name `flexi_logger` gives the file it is currently appending to.
-pub const CURRENT_LOG_FILE_NAME: &str = "app_rCURRENT.log";
+pub(crate) const CURRENT_LOG_FILE_NAME: &str = "app_rCURRENT.log";
 
 pub struct FileLogSource {
     path: PathBuf,

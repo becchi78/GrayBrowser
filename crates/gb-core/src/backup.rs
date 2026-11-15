@@ -39,7 +39,7 @@ pub fn backup_file_name(kind: BackupKind, unix_secs: i64) -> String {
 /// Inverse of [`backup_file_name`]. Returns `None` for any name not produced
 /// by it, so unrelated files in the backups directory are never treated as
 /// backups (and never deleted).
-pub fn parse_backup_file_name(name: &str) -> Option<(BackupKind, i64)> {
+pub(crate) fn parse_backup_file_name(name: &str) -> Option<(BackupKind, i64)> {
     let rest = name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
     let (kind_str, ts) = rest.split_once('-')?;
     let kind = match kind_str {

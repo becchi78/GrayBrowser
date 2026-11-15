@@ -54,8 +54,10 @@ impl FolderReachability for ReachabilityRegistry {
 /// Treats every folder as reachable: a duplicate is always registered as a new
 /// row and no folder is probed. For callers and tests that have no registry
 /// and are not exercising moves out of vanished folders.
+#[cfg(any(test, feature = "testing"))]
 pub struct AssumeReachable;
 
+#[cfg(any(test, feature = "testing"))]
 impl FolderReachability for AssumeReachable {
     fn is_confirmed_unreachable(&self, _folder: &str) -> bool {
         false
