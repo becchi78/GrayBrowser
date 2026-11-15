@@ -39,17 +39,3 @@ pub mod wb_thumbnail_split;
 
 #[cfg(feature = "testing")]
 pub mod testing;
-
-pub fn crate_name() -> &'static str {
-    "gb-core"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_its_own_name() {
-        assert_eq!(crate_name(), "gb-core");
-    }
-}

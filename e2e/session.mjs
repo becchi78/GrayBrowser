@@ -18,7 +18,7 @@ const SCREENSHOTS_DIR = path.join(REPO_ROOT, "e2e", "screenshots");
 // what CI actually exercises. Override locally with GB_APP_PATH if you built
 // a debug binary instead.
 const DEFAULT_APP_PATH = path.join(REPO_ROOT, "target", "release", "GrayBrowser.exe");
-export const APP_PATH = process.env.GB_APP_PATH ?? DEFAULT_APP_PATH;
+const APP_PATH = process.env.GB_APP_PATH ?? DEFAULT_APP_PATH;
 
 // GB_APP_PATHが実データ（開発機のtarget/{debug,release}/GrayBrowser/app.db）
 // を指していないことを、このモジュールの読み込み時点（アプリ起動やDB書き込み

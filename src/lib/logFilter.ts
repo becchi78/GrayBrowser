@@ -1,6 +1,5 @@
 // ログ表示の絞り込み。解析(行 → エントリ)は Rust 側(gb_core::log_view)が担い、
 // ここは受け取ったエントリの絞り込みと保持件数の管理だけを持つ。
-// 絞り込みの挙動は gb_core::log_view::entry_matches と揃えること。
 
 export const LOG_LEVELS = ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"] as const;
 

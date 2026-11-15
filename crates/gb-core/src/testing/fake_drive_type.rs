@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use crate::ports::drive_type::{DriveKind, DriveTypeDetector, DriveTypeError};
 
@@ -11,12 +10,10 @@ use crate::ports::drive_type::{DriveKind, DriveTypeDetector, DriveTypeError};
 #[derive(Default)]
 pub struct FakeDriveTypeDetector {
     pub results: HashMap<PathBuf, Result<DriveKind, DriveTypeError>>,
-    pub calls: Mutex<Vec<PathBuf>>,
 }
 
 impl DriveTypeDetector for FakeDriveTypeDetector {
     fn detect(&self, folder: &Path) -> Result<DriveKind, DriveTypeError> {
-        self.calls.lock().unwrap().push(folder.to_path_buf());
         self.results.get(folder).cloned().unwrap_or_else(|| {
             Err(DriveTypeError::DetectionFailed {
                 path: folder.display().to_string(),
@@ -37,15 +34,11 @@ mod tests {
     }
 
     #[test]
-    fn returns_the_canned_result_and_records_the_call() {
+    fn returns_the_canned_result() {
         let mut fake = FakeDriveTypeDetector::default();
         fake.results
             .insert(PathBuf::from("D:\\"), Ok(DriveKind::Local));
         assert_eq!(fake.detect(Path::new("D:\\")), Ok(DriveKind::Local));
-        assert_eq!(
-            fake.calls.lock().unwrap().as_slice(),
-            [PathBuf::from("D:\\")]
-        );
     }
 
     #[test]

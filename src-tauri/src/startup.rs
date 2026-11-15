@@ -76,16 +76,8 @@ pub(crate) fn manage_shared_state(app: &tauri::App, db: &db::Db) -> SharedState 
 }
 
 pub(crate) fn log_startup(app_dir: &Path) {
-    println!(
-        "graybrowser starting (linked against {}); app dir: {}",
-        gb_core::crate_name(),
-        app_dir.display()
-    );
-    log::info!(
-        "graybrowser starting (linked against {}); app dir: {}",
-        gb_core::crate_name(),
-        app_dir.display()
-    );
+    println!("graybrowser starting; app dir: {}", app_dir.display());
+    log::info!("graybrowser starting; app dir: {}", app_dir.display());
 }
 
 /// The thumbnail root once `prepare_thumbnails` has migrated it and cleared

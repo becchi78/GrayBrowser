@@ -14,7 +14,7 @@ import { moveDown, moveUp } from "./lib/reorderablePinnedTags";
 import { buildScanSummaryMessage } from "./lib/scanSummaryMessage";
 import { rescanState } from "./lib/scanTargets";
 
-export interface DeleteTarget {
+interface DeleteTarget {
   path: string;
   count: number;
 }

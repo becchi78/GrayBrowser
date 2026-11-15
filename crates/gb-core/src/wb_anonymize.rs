@@ -227,17 +227,6 @@ impl Anonymizer {
         }
     }
 
-    /// Builds the dummy thumbnail filename `[dummy movie_name].#<dummy
-    /// hash>.jpg` for a real `(movie_name, hash)` pair. Referential integrity
-    /// with `anonymize_movie_row`'s output is guaranteed structurally: both
-    /// go through the same `cache`, so the same real `movie_name`/`hash`
-    /// always resolve to the same dummy values regardless of call order.
-    pub fn dummy_thumbnail_filename(&mut self, movie_name: &str, hash: &str) -> String {
-        let dummy_name = self.anonymize_path(movie_name);
-        let dummy_hash = self.anonymize(TokenRole::Hash, hash);
-        format!("{dummy_name}.#{dummy_hash}.jpg")
-    }
-
     fn next_unique_hash(&mut self, original: &str) -> String {
         let mut n: u32 = 0;
         loop {
@@ -469,18 +458,6 @@ mod tests {
         assert_eq!(dummy.score, real.score);
         assert_eq!(dummy.file_date, real.file_date);
         assert_eq!(dummy.hash, "");
-    }
-
-    #[test]
-    fn dummy_thumbnail_filename_is_referentially_consistent_with_movie_row_anonymization() {
-        let mut a = Anonymizer::new();
-        let real = row(|_| {});
-        let dummy_row = a.anonymize_movie_row(&real);
-        let dummy_thumb = a.dummy_thumbnail_filename(&real.movie_name, &real.hash);
-        assert_eq!(
-            dummy_thumb,
-            format!("{}.#{}.jpg", dummy_row.movie_name, dummy_row.hash)
-        );
     }
 
     #[test]

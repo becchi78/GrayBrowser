@@ -6,7 +6,7 @@
 // 文字数はUTF-16コードユニットではなくコードポイントで数える（サロゲートペアを
 // 途中で切って文字化けさせないため）。全角文字は表示幅が広いので、見た目の幅の
 // 最終的な保険は呼び出し側のCSS（text-overflow: ellipsis）が担う。
-export const PATH_ELLIPSIS = "…";
+const PATH_ELLIPSIS = "…";
 
 export function abbreviatePath(path: string, maxChars: number): string {
   const chars = Array.from(path);

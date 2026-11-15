@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEscapeKey } from "./useEscapeKey";
 
-function Harness({ onEscape, enabled }: { onEscape: () => void; enabled?: boolean }) {
+function Harness({ onEscape, enabled }: { onEscape: () => void; enabled: boolean }) {
   useEscapeKey(onEscape, enabled);
   return null;
 }
@@ -24,15 +24,6 @@ test("enabled が true のとき Escape でコールバックを呼び、既定�
 
   expect(onEscape).toHaveBeenCalledTimes(1);
   expect(event.defaultPrevented).toBe(true);
-});
-
-test("enabled を省略すると有効として扱う", () => {
-  const onEscape = vi.fn();
-  render(<Harness onEscape={onEscape} />);
-
-  pressKey("Escape");
-
-  expect(onEscape).toHaveBeenCalledTimes(1);
 });
 
 test("enabled が false のときはコールバックを呼ばず、既定動作も止めない", () => {

@@ -9,7 +9,7 @@ export const MAX_WIDTH = 500;
 // to compute how much of the window's width is actually available to
 // `.main-area` (App.css) before this sidebar even starts competing with
 // `.video-list` for space.
-export const APP_HORIZONTAL_PADDING_PX = 32;
+const APP_HORIZONTAL_PADDING_PX = 32;
 // App.css's `.video-list`'s own `min-width` -- kept as a literal constant
 // here (not imported; this codebase has no CSS-values-in-JS bridge) so this
 // component doesn't drag this sidebar wide enough, at a narrow window, to
