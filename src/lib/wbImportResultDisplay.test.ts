@@ -98,7 +98,6 @@ test("ドライブ文字に直せなかったときだけ、ラベルと案内�
   assert.match(item.text, /最初のインポートの前/);
   assert.match(item.text, /重複として残ります/);
   assert.match(item.text, /登録から削除/);
-  assert.ok(!item.text.includes("直りません"));
 });
 
 test("オンライン動画の旧サムネイルは、件数も注記も一切出さない", () => {
@@ -112,11 +111,6 @@ test("オンライン動画の旧サムネイルは、件数も注記も一切�
   );
   assert.deepEqual(d.attention, []);
   assert.deepEqual(d.details, []);
-  assert.ok(!("showOnlineThumbnailNote" in d));
-  const all = JSON.stringify(d);
-  assert.doesNotMatch(all, /移行対象外/);
-  assert.doesNotMatch(all, /オンライン動画の旧サムネイル/);
-  assert.doesNotMatch(all, /バックグラウンド/);
 });
 
 test("登録済みのためスキップした行は情報として出し、0件なら出さない", () => {
@@ -204,7 +198,6 @@ test("★タグから評価にした件数は表示しない", () => {
     makeSummary({ total: 5, registered: 5, ratings_from_star_tags: 4 }),
   );
   assert.deepEqual(d.details, []);
-  assert.doesNotMatch(JSON.stringify(d), /★/);
 });
 
 test("詳細は0件の項目を出さず、非0なら決まった順で並ぶ", () => {

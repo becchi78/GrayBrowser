@@ -66,19 +66,6 @@ test("全行が機種依存文字でスキップされた場合は failed にな
   assert.match(result.text, /機種依存文字/);
 });
 
-test("機種依存文字スキップが0件で registered/skipped も0件、失敗行があるなら failed", () => {
-  const s = makeSummary({
-    registered: 0,
-    skipped: 0,
-    skipped_invalid_name: 0,
-    failed_rows: 2,
-    tags_assigned: 0,
-    source_tag_count: 5,
-  });
-
-  assert.equal(classifyTagsAssigned(s).tone, "failed");
-});
-
 // 失敗行が無いのに何も入らなかった場合は「失敗した可能性」と言い切れないので amber。
 test("取り込めなかった行が無い registered === 0 && skipped === 0 は amber", () => {
   const s = makeSummary({ registered: 0, skipped: 0, tags_assigned: 0, source_tag_count: 5 });

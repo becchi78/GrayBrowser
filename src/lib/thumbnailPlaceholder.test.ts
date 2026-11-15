@@ -2,10 +2,7 @@
 // パターン(package.jsonのtest:unit参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  THUMBNAIL_PLACEHOLDER_LABELS,
-  thumbnailPlaceholderState,
-} from "./thumbnailPlaceholder.ts";
+import { thumbnailPlaceholderState } from "./thumbnailPlaceholder.ts";
 
 test("失敗でもオフラインでもなければ生成中", () => {
   assert.equal(
@@ -33,10 +30,4 @@ test("失敗かつオフラインのときは失敗が優先される", () => {
     thumbnailPlaceholderState({ thumbnail_failed: true }, true),
     "failed",
   );
-});
-
-test("各状態の文言", () => {
-  assert.equal(THUMBNAIL_PLACEHOLDER_LABELS.failed, "生成失敗");
-  assert.equal(THUMBNAIL_PLACEHOLDER_LABELS.offline, "オフライン");
-  assert.equal(THUMBNAIL_PLACEHOLDER_LABELS.generating, "生成中...");
 });

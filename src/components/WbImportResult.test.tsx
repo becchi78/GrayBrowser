@@ -89,24 +89,17 @@ test("「確認する」は自動対応できなかった項目にだけ出る",
   expect(screen.queryByTestId("import-unmatched-review-btn-failed-rows")).toBeNull();
 });
 
-test("対応する動画がない項目の「確認する」は、その原因の行だけを開く", async () => {
+test.each([
+  { cause: "対応する動画がない", button: "unmatched", rowCount: 2 },
+  { cause: "ハッシュが空の", button: "unmatched-empty-hash", rowCount: 1 },
+])("$cause項目の「確認する」は、その原因の行だけを開く", async ({ button, rowCount }) => {
   const { user } = renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
 
-  await user.click(await screen.findByTestId("import-unmatched-review-btn-unmatched"));
+  await user.click(await screen.findByTestId(`import-unmatched-review-btn-${button}`));
 
   await screen.findByTestId("unmatched-list");
-  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(2);
-});
-
-test("ハッシュが空の項目の「確認する」は、その原因の行だけを開く", async () => {
-  const { user } = renderDialog();
-  completeImport(ALL_ATTENTION_SUMMARY);
-
-  await user.click(await screen.findByTestId("import-unmatched-review-btn-unmatched-empty-hash"));
-
-  await screen.findByTestId("unmatched-list");
-  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(1);
+  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(rowCount);
 });
 
 test("一覧の読み込み中は、自動対応できなかった項目を出さず、他の項目は出す", async () => {

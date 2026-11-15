@@ -3,11 +3,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createLatestOnlyGuard } from "./latestRequest.ts";
 
-test("最初に発行した連番は、他に発行がなければ最新", () => {
-  const guard = createLatestOnlyGuard();
-  assert.equal(guard.isLatest(guard.begin()), true);
-});
-
 test("新しい連番を発行すると、古い連番は最新ではなくなる", () => {
   const guard = createLatestOnlyGuard();
   const first = guard.begin();

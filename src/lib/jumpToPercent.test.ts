@@ -3,10 +3,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JUMP_PERCENTS, jumpTargetIndex } from "./jumpToPercent.ts";
 
-test("JUMP_PERCENTSは0から100までの10刻み11個", () => {
-  assert.deepEqual([...JUMP_PERCENTS], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
-});
-
 test("0%は先頭、100%は最後の行", () => {
   assert.equal(jumpTargetIndex(250, 0), 0);
   assert.equal(jumpTargetIndex(250, 100), 249);

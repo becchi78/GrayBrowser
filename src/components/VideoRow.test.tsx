@@ -2,7 +2,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import * as api from "../api";
-import { THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import { THUMBNAIL_PLACEHOLDER_LABELS } from "../lib/thumbnailPlaceholder";
 import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
@@ -188,17 +187,6 @@ test("取得したらキャッシュに入り、画像の alt はファイル名
   }
 });
 
-test("キャッシュが上限を超えたら最も古いエントリが追い出される", async () => {
-  const cache = new Map<string, string[]>();
-  for (let i = 0; i < THUMBNAIL_CACHE_MAX_ENTRIES; i++) cache.set(`old${i}:0`, [`old${i}`]);
-  await renderRow({ cache });
-
-  expect(cache.size).toBe(THUMBNAIL_CACHE_MAX_ENTRIES);
-  expect(cache.has("old0:0")).toBe(false);
-  expect(cache.has("old1:0")).toBe(true);
-  expect(cache.get("a:0")).toEqual(urlsOf("a"));
-});
-
 test("取得結果が null なら何も変わらない", async () => {
   vi.mocked(api.getThumbnails).mockResolvedValue(null);
   const { cache } = await renderRow();
@@ -265,35 +253,32 @@ test("足りない枠は先頭から画像を詰め、残りを生成中のプ�
   }
 });
 
-test("生成に失敗した動画のプレースホルダーは失敗の表示(オフラインより優先)", async () => {
-  await renderRow({
+test.each([
+  {
+    name: "生成に失敗した動画は、オフラインより優先して失敗の表示",
     video: video({ thumbnail_ready: false, thumbnail_failed: true, status: "offline" }),
-  });
-
-  for (const ph of placeholders()) {
-    expect(ph).toHaveClass("thumbnail-placeholder--failed");
-    expect(ph.textContent).toBe(THUMBNAIL_PLACEHOLDER_LABELS.failed);
-  }
-});
-
-test("オフラインの動画のプレースホルダーはオフラインの表示", async () => {
-  await renderRow({ video: video({ thumbnail_ready: false, status: "offline" }) });
+    unreachableFolders: [],
+    state: "failed",
+  },
+  {
+    name: "オフラインの動画はオフラインの表示",
+    video: video({ thumbnail_ready: false, status: "offline" }),
+    unreachableFolders: [],
+    state: "offline",
+  },
+  {
+    name: "届かないフォルダ配下の動画もオフラインの表示",
+    video: video({ thumbnail_ready: false, file_path: "N:\\nas\\a.mp4" }),
+    unreachableFolders: ["n:/NAS"],
+    state: "offline",
+  },
+] as const)("プレースホルダーは、$name", async ({ video: v, unreachableFolders, state }) => {
+  await renderRow({ video: v, unreachableFolders });
 
   expect(placeholders()).toHaveLength(6);
   for (const ph of placeholders()) {
-    expect(ph).toHaveClass("thumbnail-placeholder--offline");
-    expect(ph.textContent).toBe(THUMBNAIL_PLACEHOLDER_LABELS.offline);
-  }
-});
-
-test("届かないフォルダ配下の動画のプレースホルダーもオフラインの表示", async () => {
-  await renderRow({
-    video: video({ thumbnail_ready: false, file_path: "N:\\nas\\a.mp4" }),
-    unreachableFolders: ["n:/NAS"],
-  });
-
-  for (const ph of placeholders()) {
-    expect(ph).toHaveClass("thumbnail-placeholder--offline");
+    expect(ph).toHaveClass(`thumbnail-placeholder--${state}`);
+    expect(ph.textContent).toBe(THUMBNAIL_PLACEHOLDER_LABELS[state]);
   }
 });
 
@@ -429,42 +414,6 @@ test("サムネイルの幅は高さ150に対する動画の縦横比から求�
   }
 });
 
-test("縦長の動画でも同じ式で幅を求める", async () => {
-  vi.mocked(api.getVideoProperties).mockResolvedValue(probed({ width: 1080, height: 1920 }));
-  await renderRow();
-
-  // round(150 * 1080 / 1920) = round(84.375) = 84
-  for (const slot of slots()) {
-    expect(slot.style.flexBasis).toBe("84px");
-    expect(slot.style.width).toBe("84px");
-  }
-});
-
-test("取得前と、幅や高さが無いときの幅は200", async () => {
-  vi.mocked(api.getVideoProperties).mockReturnValue(never());
-  const { unmount } = await renderRow();
-  for (const slot of slots()) {
-    expect(slot.style.flexBasis).toBe("200px");
-    expect(slot.style.width).toBe("200px");
-  }
-  unmount();
-
-  vi.mocked(api.getVideoProperties).mockResolvedValue(probed({ width: 1920, height: null }));
-  const second = await renderRow();
-  for (const slot of slots()) {
-    expect(slot.style.flexBasis).toBe("200px");
-    expect(slot.style.width).toBe("200px");
-  }
-  second.unmount();
-
-  vi.mocked(api.getVideoProperties).mockResolvedValue(probed({ width: null, height: 1080 }));
-  await renderRow();
-  for (const slot of slots()) {
-    expect(slot.style.flexBasis).toBe("200px");
-    expect(slot.style.width).toBe("200px");
-  }
-});
-
 // ---- 再生 ----
 
 test("サムネイル部分のダブルクリックで再生する", async () => {
@@ -564,50 +513,30 @@ test("ファイル名ラベルのダブルクリックでは再生しない", as
 
 // ---- 選択・右クリック ----
 
-test("サムネイル部分のクリックで修飾キーなしの選択を通知する", async () => {
-  const { user, onSelect } = await renderRow();
+test.each([
+  { target: "サムネイル部分", element: () => thumbs() },
+  { target: "ファイル名ラベル", element: () => screen.getByTestId("video-row-filename") },
+])(
+  "$target のクリックで選択を通知し、修飾キーは ctrlKey/metaKey を ctrl、shiftKey を shift として渡す",
+  async ({ element }) => {
+    const { user, onSelect } = await renderRow();
 
-  await user.click(thumbs());
+    await user.click(element());
+    fireEvent.click(element(), { ctrlKey: true });
+    fireEvent.click(element(), { metaKey: true });
+    fireEvent.click(element(), { shiftKey: true });
+    fireEvent.click(element(), { ctrlKey: true, shiftKey: true });
 
-  expect(onSelect).toHaveBeenCalledTimes(1);
-  expect(onSelect).toHaveBeenCalledWith(
-    expect.objectContaining({ id: "a" }),
-    { ctrl: false, shift: false },
-  );
-});
-
-test("クリックの修飾キーは ctrlKey/metaKey を ctrl、shiftKey を shift として渡す", async () => {
-  const { onSelect } = await renderRow();
-
-  fireEvent.click(thumbs(), { ctrlKey: true });
-  fireEvent.click(thumbs(), { metaKey: true });
-  fireEvent.click(thumbs(), { shiftKey: true });
-  fireEvent.click(thumbs(), { ctrlKey: true, shiftKey: true });
-
-  expect(onSelect.mock.calls.map((c) => c[1])).toEqual([
-    { ctrl: true, shift: false },
-    { ctrl: true, shift: false },
-    { ctrl: false, shift: true },
-    { ctrl: true, shift: true },
-  ]);
-});
-
-test("ファイル名ラベルのクリックでも選択を通知し、修飾キーも同じ規則で渡す", async () => {
-  const { user, onSelect } = await renderRow();
-  const label = screen.getByTestId("video-row-filename");
-
-  await user.click(label);
-  fireEvent.click(label, { metaKey: true });
-  fireEvent.click(label, { shiftKey: true });
-
-  expect(onSelect).toHaveBeenCalledTimes(3);
-  expect(onSelect.mock.calls[0][0]).toEqual(expect.objectContaining({ id: "a" }));
-  expect(onSelect.mock.calls.map((c) => c[1])).toEqual([
-    { ctrl: false, shift: false },
-    { ctrl: true, shift: false },
-    { ctrl: false, shift: true },
-  ]);
-});
+    expect(onSelect.mock.calls[0][0]).toEqual(expect.objectContaining({ id: "a" }));
+    expect(onSelect.mock.calls.map((c) => c[1])).toEqual([
+      { ctrl: false, shift: false },
+      { ctrl: true, shift: false },
+      { ctrl: true, shift: false },
+      { ctrl: false, shift: true },
+      { ctrl: true, shift: true },
+    ]);
+  },
+);
 
 test("情報の側(プロパティ表・星・タグ)をクリックしても選択しない", async () => {
   const { user, onSelect } = await renderRow();

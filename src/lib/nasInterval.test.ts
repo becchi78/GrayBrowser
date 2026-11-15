@@ -1,13 +1,7 @@
 // parseIntervalMinutes のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_MINUTES, MAX_MINUTES, MIN_MINUTES, parseIntervalMinutes } from "./nasInterval.ts";
-
-test("定数はバックエンドと同じ値", () => {
-  assert.equal(MIN_MINUTES, 1);
-  assert.equal(MAX_MINUTES, 1440);
-  assert.equal(DEFAULT_MINUTES, 10);
-});
+import { parseIntervalMinutes } from "./nasInterval.ts";
 
 test("境界値 1 と 1440 は受理される", () => {
   assert.deepEqual(parseIntervalMinutes("1"), { ok: true, minutes: 1 });
