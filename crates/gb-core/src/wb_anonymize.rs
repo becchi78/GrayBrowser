@@ -10,7 +10,9 @@
 //! CLI and the leak-check test can never drift out of sync with each other.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
+use regex::Regex;
 use xxhash_rust::xxh64::Xxh64;
 
 use crate::ports::wb_source::WbMovieRow;
@@ -58,26 +60,43 @@ pub(crate) fn column_role(table_name: &str, column_name: &str) -> TokenRole {
     }
 }
 
+/// The literal prefix of a role's dummy tokens; `None` for `Hash`, whose
+/// dummy has no prefix (it must stay a bare 8-hex-char thumbnail key).
+fn token_prefix(role: TokenRole) -> Option<&'static str> {
+    match role {
+        TokenRole::Path => Some(PATH_SEGMENT_PREFIX),
+        TokenRole::Tag => Some(TAG_PREFIX),
+        TokenRole::FreeText => Some(FREETEXT_PREFIX),
+        TokenRole::Hash => None,
+    }
+}
+
 /// Regex a value of `role` must match if it was produced by `Anonymizer`
 /// (used only for whole-token roles -- `Path`/`Tag` on composite fields like
 /// `movie_path`/`tag` need `is_valid_dummy_path`/`is_valid_dummy_tag_field`
-/// instead, since those fields are built from multiple tokens).
-pub(crate) fn dummy_pattern(role: TokenRole) -> String {
-    match role {
-        TokenRole::Path => format!(
-            r"^{}[0-9a-f]{{{TOKEN_SUFFIX_HEX_LEN}}}$",
-            regex::escape(PATH_SEGMENT_PREFIX)
-        ),
-        TokenRole::Tag => format!(
-            r"^{}[0-9a-f]{{{TOKEN_SUFFIX_HEX_LEN}}}$",
-            regex::escape(TAG_PREFIX)
-        ),
-        TokenRole::FreeText => format!(
-            r"^{}[0-9a-f]{{{TOKEN_SUFFIX_HEX_LEN}}}$",
-            regex::escape(FREETEXT_PREFIX)
-        ),
-        TokenRole::Hash => r"^[0-9a-f]{8}$".to_string(),
-    }
+/// instead, since those fields are built from multiple tokens). Compiled
+/// once per role: validation runs once per cell over a large real `.wb`.
+pub(crate) fn dummy_pattern(role: TokenRole) -> &'static Regex {
+    static PATH: OnceLock<Regex> = OnceLock::new();
+    static TAG: OnceLock<Regex> = OnceLock::new();
+    static FREE_TEXT: OnceLock<Regex> = OnceLock::new();
+    static HASH: OnceLock<Regex> = OnceLock::new();
+    let cell = match role {
+        TokenRole::Path => &PATH,
+        TokenRole::Tag => &TAG,
+        TokenRole::FreeText => &FREE_TEXT,
+        TokenRole::Hash => &HASH,
+    };
+    cell.get_or_init(|| {
+        let source = match token_prefix(role) {
+            Some(prefix) => format!(
+                r"^{}[0-9a-f]{{{TOKEN_SUFFIX_HEX_LEN}}}$",
+                regex::escape(prefix)
+            ),
+            None => r"^[0-9a-f]{8}$".to_string(),
+        };
+        Regex::new(&source).unwrap()
+    })
 }
 
 /// Splits a path on both `\` and `/`, dropping empty segments (leading
@@ -131,23 +150,13 @@ impl Anonymizer {
         if let Some(existing) = self.cache.get(&key) {
             return existing.clone();
         }
-        let dummy = match role {
-            TokenRole::Hash => self.next_unique_hash(original),
-            TokenRole::Path => format!(
-                "{PATH_SEGMENT_PREFIX}{:0width$x}",
+        let dummy = match token_prefix(role) {
+            Some(prefix) => format!(
+                "{prefix}{:0width$x}",
                 truncated_digest(original),
                 width = TOKEN_SUFFIX_HEX_LEN
             ),
-            TokenRole::Tag => format!(
-                "{TAG_PREFIX}{:0width$x}",
-                truncated_digest(original),
-                width = TOKEN_SUFFIX_HEX_LEN
-            ),
-            TokenRole::FreeText => format!(
-                "{FREETEXT_PREFIX}{:0width$x}",
-                truncated_digest(original),
-                width = TOKEN_SUFFIX_HEX_LEN
-            ),
+            None => self.next_unique_hash(original),
         };
         self.cache.insert(key, dummy.clone());
         dummy
@@ -261,7 +270,7 @@ pub(crate) fn is_valid_dummy_path(path: &str) -> bool {
     if path.is_empty() {
         return true;
     }
-    let pattern = regex::Regex::new(&dummy_pattern(TokenRole::Path)).unwrap();
+    let pattern = dummy_pattern(TokenRole::Path);
     let segments = path_segments(path);
     let Some((last, rest)) = segments.split_last() else {
         return false;
@@ -282,7 +291,7 @@ pub(crate) fn is_valid_dummy_tag_field(tag_field: &str) -> bool {
     if tag_field.is_empty() {
         return true;
     }
-    let pattern = regex::Regex::new(&dummy_pattern(TokenRole::Tag)).unwrap();
+    let pattern = dummy_pattern(TokenRole::Tag);
     tag_field.split('\n').all(|t| pattern.is_match(t))
 }
 
@@ -317,12 +326,7 @@ pub fn is_valid_dummy_value(table_name: &str, column_name: &str, value: &str) ->
     match (table_name, column_name) {
         ("movie", "movie_path") | ("movie", "movie_name") => is_valid_dummy_path(value),
         ("movie", "tag") => is_valid_dummy_tag_field(value),
-        _ => {
-            let role = column_role(table_name, column_name);
-            regex::Regex::new(&dummy_pattern(role))
-                .unwrap()
-                .is_match(value)
-        }
+        _ => dummy_pattern(column_role(table_name, column_name)).is_match(value),
     }
 }
 
@@ -375,36 +379,67 @@ mod tests {
     fn hash_output_matches_the_real_shape_and_pattern() {
         let mut a = Anonymizer::new();
         let dummy = a.anonymize(TokenRole::Hash, "1e5e0fbf");
-        let pattern = regex::Regex::new(&dummy_pattern(TokenRole::Hash)).unwrap();
+        let pattern = dummy_pattern(TokenRole::Hash);
         assert!(pattern.is_match(&dummy), "{dummy} should match {pattern}");
     }
 
     #[test]
-    fn hash_collisions_are_resolved_deterministically_and_uniquely() {
-        // Force a collision by using inputs that are unlikely to hash the
-        // same way naturally, then check both still land on distinct
-        // outputs across two independent Anonymizer runs (determinism) and
-        // within a single run (uniqueness).
-        let inputs = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd", "eeeeeeee"];
+    fn hash_collision_is_resolved_by_a_deterministic_retry() {
+        // Occupy the hash `original` would naturally get, so the collision
+        // branch (`original#1`, ...) must be taken. A real 32-bit
+        // collision between two inputs is too rare to rely on in a test.
+        let original = "aaaaaaaa";
+        let natural = format!("{:08x}", digest64(original) as u32);
+        let retried = format!("{:08x}", digest64(&format!("{original}#1")) as u32);
+        assert_ne!(natural, retried, "test premise: the retry must differ");
 
-        let mut a1 = Anonymizer::new();
-        let run1: Vec<String> = inputs
-            .iter()
-            .map(|i| a1.anonymize(TokenRole::Hash, i))
-            .collect();
-
-        let mut a2 = Anonymizer::new();
-        let run2: Vec<String> = inputs
-            .iter()
-            .map(|i| a2.anonymize(TokenRole::Hash, i))
-            .collect();
-
+        let anonymize_with_occupied_slot = || {
+            let mut a = Anonymizer::new();
+            a.assigned_hashes.insert(natural.clone());
+            let dummy = a.anonymize(TokenRole::Hash, original);
+            (dummy, a)
+        };
+        let (dummy, a) = anonymize_with_occupied_slot();
+        assert_eq!(dummy, retried);
+        assert!(a.assigned_hashes.contains(&retried));
+        assert!(dummy_pattern(TokenRole::Hash).is_match(&dummy));
         assert_eq!(
-            run1, run2,
-            "same inputs in the same order must produce the same outputs"
+            anonymize_with_occupied_slot().0,
+            dummy,
+            "the retry sequence must be deterministic"
         );
-        let unique: HashSet<&String> = run1.iter().collect();
-        assert_eq!(unique.len(), run1.len(), "all dummy hashes must be unique");
+    }
+
+    #[test]
+    fn hash_collision_skips_every_occupied_retry_slot() {
+        let original = "aaaaaaaa";
+        let slot = |n: u32| {
+            let seed = if n == 0 {
+                original.to_string()
+            } else {
+                format!("{original}#{n}")
+            };
+            format!("{:08x}", digest64(&seed) as u32)
+        };
+        let mut a = Anonymizer::new();
+        a.assigned_hashes.insert(slot(0));
+        a.assigned_hashes.insert(slot(1));
+        assert_eq!(a.anonymize(TokenRole::Hash, original), slot(2));
+    }
+
+    #[test]
+    fn distinct_hash_inputs_get_distinct_dummies_across_independent_runs() {
+        let inputs = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd", "eeeeeeee"];
+        let run = || {
+            let mut a = Anonymizer::new();
+            inputs
+                .iter()
+                .map(|i| a.anonymize(TokenRole::Hash, i))
+                .collect::<Vec<_>>()
+        };
+        let first = run();
+        assert_eq!(first, run());
+        assert_eq!(first.iter().collect::<HashSet<_>>().len(), inputs.len());
     }
 
     #[test]
