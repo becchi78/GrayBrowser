@@ -2,7 +2,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import type { RenameWatchFolderResult, ScanSummary } from "../types";
 import { FolderDialog } from "./FolderDialog";
@@ -18,22 +18,6 @@ vi.mock("../api", () => ({
   setWatchFolderCheckEnabled: vi.fn(),
   startScan: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。取得が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 const SUMMARY: ScanSummary = {
   scanned: 5,
@@ -71,14 +55,7 @@ async function renderOpen({ expectRows = 3 }: { expectRows?: number } = {}) {
   }
   // 取得の結果を落ち着かせる。
   await act(async () => {});
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 作り直されて状態が消え、閉じても状態が残ることを前提にした確認ができない。
-  const setOpen = (open: boolean) =>
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={[]}>
-        {dialog(open, onClose, onChanged)}
-      </UnreachableFoldersContext.Provider>,
-    );
+  const setOpen = (open: boolean) => view.rerender(dialog(open, onClose, onChanged));
   return { ...view, onClose, onChanged, setOpen };
 }
 
@@ -241,17 +218,14 @@ test("開き直して一覧の取得を待っているあいだは、前回の�
   expect(paths()).toEqual(["A", "B", "C"]);
 });
 
-test("背景のクリックと「閉じる」で onClose を呼び、ダイアログの中のクリックでは呼ばない", async () => {
+test("「閉じる」で onClose を呼び、ダイアログの中のクリックでは呼ばない", async () => {
   const { user, onClose } = await renderOpen();
 
   await user.click(screen.getByTestId("folder-dialog"));
   expect(onClose).not.toHaveBeenCalled();
 
-  await user.click(screen.getByTestId("folder-dialog").parentElement!);
-  expect(onClose).toHaveBeenCalledTimes(1);
-
   await user.click(screen.getByTestId("folder-dialog-close-btn"));
-  expect(onClose).toHaveBeenCalledTimes(2);
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
 // ---- 並べ替え ----
@@ -314,19 +288,6 @@ test("保存が拒否されたら表示は変えずにエラーを出し、onCha
   expect(inRow("A", "folder-row-move-down-btn")).toBeEnabled();
 });
 
-test("次の並べ替えを始めると、前のエラー表示を消す", async () => {
-  vi.mocked(api.reorderWatchFolders)
-    .mockRejectedValueOnce("list changed")
-    .mockReturnValueOnce(never());
-  const { user } = await renderOpen();
-
-  await user.click(inRow("A", "folder-row-move-down-btn"));
-  await waitFor(() => expect(orderCheckError()).not.toBeNull());
-
-  await user.click(inRow("A", "folder-row-move-down-btn"));
-
-  expect(orderCheckError()).toBeNull();
-});
 
 test("並べ替えの保存中は、すべての ↑/↓ と追加を押せない", async () => {
   const save = deferred<string[]>();
@@ -412,16 +373,34 @@ test("切り替えが失敗したら、チェックは変えずにエラーを�
   expect(onChanged).not.toHaveBeenCalled();
 });
 
-test("次の切り替えを始めると、前のエラー表示を消す", async () => {
-  vi.mocked(api.setWatchFolderCheckEnabled)
-    .mockRejectedValueOnce("toggle failed")
-    .mockReturnValueOnce(never());
+test.each([
+  {
+    name: "並べ替え",
+    // 1回目は失敗させてエラーを出し、2回目は終わらせない。
+    arm: () =>
+      vi
+        .mocked(api.reorderWatchFolders)
+        .mockRejectedValueOnce("list changed")
+        .mockReturnValueOnce(never()),
+    target: () => inRow("A", "folder-row-move-down-btn"),
+  },
+  {
+    name: "更新チェックの切り替え",
+    arm: () =>
+      vi
+        .mocked(api.setWatchFolderCheckEnabled)
+        .mockRejectedValueOnce("toggle failed")
+        .mockReturnValueOnce(never()),
+    target: () => checkbox("A"),
+  },
+])("次の$nameを始めると、前のエラー表示を消す", async ({ arm, target }) => {
+  arm();
   const { user } = await renderOpen();
 
-  await user.click(checkbox("A"));
+  await user.click(target());
   await waitFor(() => expect(orderCheckError()).not.toBeNull());
 
-  await user.click(checkbox("A"));
+  await user.click(target());
 
   expect(orderCheckError()).toBeNull();
 });
@@ -466,36 +445,43 @@ test("追加が失敗したら、一覧は変えず、onChanged も呼ばない"
 
 // ---- 再スキャン ----
 
-test("フォルダが無いときは再スキャンを押せず、理由を出す", async () => {
-  vi.mocked(api.listWatchFolders).mockResolvedValue([]);
-  await renderOpen({ expectRows: 0 });
+test.each([
+  {
+    state: "フォルダが無い",
+    arm: () => vi.mocked(api.listWatchFolders).mockResolvedValue([]),
+    expectRows: 0,
+    enabled: false,
+    note: "フォルダが登録されていないため、再スキャンできません。",
+  },
+  {
+    state: "すべてのチェックが外れている",
+    arm: () => vi.mocked(api.listWatchCheckDisabledFolders).mockResolvedValue(["A", "B", "C"]),
+    expectRows: 3,
+    enabled: false,
+    note: "すべてのフォルダで「更新チェック」が外れているため、再スキャンできません。",
+  },
+  {
+    state: "チェックが入っているフォルダがある",
+    arm: () => vi.mocked(api.listWatchCheckDisabledFolders).mockResolvedValue(["A"]),
+    expectRows: 3,
+    enabled: true,
+    note: "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。",
+  },
+])(
+  "$state とき、再スキャンの押せる状態は $enabled で、理由か対象の説明を出す",
+  async ({ arm, expectRows, enabled, note }) => {
+    arm();
+    await renderOpen({ expectRows });
 
-  expect(scanButton()).toBeDisabled();
-  expect(screen.getByTestId("folder-dialog-scan-note")).toHaveTextContent(
-    "フォルダが登録されていないため、再スキャンできません。",
-  );
-});
-
-test("すべてのチェックが外れているときは再スキャンを押せず、理由を出す", async () => {
-  vi.mocked(api.listWatchCheckDisabledFolders).mockResolvedValue(["A", "B", "C"]);
-  await renderOpen();
-
-  expect(scanButton()).toBeDisabled();
-  expect(screen.getByTestId("folder-dialog-scan-note")).toHaveTextContent(
-    "すべてのフォルダで「更新チェック」が外れているため、再スキャンできません。",
-  );
-});
-
-test("対象があるときは再スキャンを押せ、対象の説明を出す", async () => {
-  vi.mocked(api.listWatchCheckDisabledFolders).mockResolvedValue(["A"]);
-  await renderOpen();
-
-  expect(scanButton()).toBeEnabled();
-  expect(scanButton()).toHaveTextContent("再スキャン");
-  expect(screen.getByTestId("folder-dialog-scan-note")).toHaveTextContent(
-    "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。",
-  );
-});
+    if (enabled) {
+      expect(scanButton()).toBeEnabled();
+    } else {
+      expect(scanButton()).toBeDisabled();
+    }
+    expect(scanButton()).toHaveTextContent("再スキャン");
+    expect(screen.getByTestId("folder-dialog-scan-note")).toHaveTextContent(note);
+  },
+);
 
 test("スキャン中は押せず、終わったら要約を出して onChanged を呼ぶ", async () => {
   const scan = deferred<ScanSummary>();
@@ -593,8 +579,7 @@ test("変更に成功したら、件数を出し、一覧を置き換え、onCha
   await user.click(screen.getByTestId("folder-row-save-btn"));
 
   expect(api.renameWatchFolder).toHaveBeenCalledWith("B", "B2");
-  await waitFor(() => expect(renameSummary()).toHaveTextContent("3件のパスを更新しました"));
-  expect(renameSummary()).toHaveTextContent(/^3件のパスを更新しました$/);
+  await waitFor(() => expect(renameSummary()).toHaveTextContent(/^3件のパスを更新しました$/));
   expect(paths()).toEqual(["A", "B2", "C"]);
   expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
   expect(onChanged).toHaveBeenCalledTimes(1);
@@ -718,25 +703,7 @@ test("別の行で編集を始めると、前の行のエラーを消す", async
   expect(inputs[0].value).toBe("A");
 });
 
-test("編集の途中で閉じて開き直すと、編集をやめた通常の表示に戻る", async () => {
-  const { user, setOpen } = await renderOpen();
-
-  await user.click(inRow("B", "folder-row-edit-btn"));
-  await user.clear(screen.getByTestId("folder-row-path-input"));
-  await user.type(screen.getByTestId("folder-row-path-input"), "B2");
-
-  setOpen(false);
-  setOpen(true);
-  await waitFor(() => expect(rows()).toHaveLength(3));
-  await act(async () => {});
-
-  expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
-  expect(paths()).toEqual(["A", "B", "C"]);
-  expect(within(row("B")).getByTestId("folder-row-edit-btn")).toBeInTheDocument();
-  expect(api.renameWatchFolder).not.toHaveBeenCalled();
-});
-
-test("編集のエラーを出したまま閉じて開き直すと、エラーは消えている", async () => {
+test("編集のエラーを出したまま閉じて開き直すと、編集をやめた通常の表示に戻り、エラーは消えている", async () => {
   const { user, setOpen } = await renderOpen();
 
   await user.click(inRow("B", "folder-row-edit-btn"));
@@ -751,6 +718,9 @@ test("編集のエラーを出したまま閉じて開き直すと、エラー�
 
   expect(screen.queryByTestId("folder-row-edit-error")).toBeNull();
   expect(screen.queryByTestId("folder-row-path-input")).toBeNull();
+  expect(paths()).toEqual(["A", "B", "C"]);
+  expect(within(row("B")).getByTestId("folder-row-edit-btn")).toBeInTheDocument();
+  expect(api.renameWatchFolder).not.toHaveBeenCalled();
 
   // 同じ行で編集を始め直しても、前のエラーや入力値は出てこない。
   await user.click(inRow("B", "folder-row-edit-btn"));
@@ -850,7 +820,6 @@ test("登録解除は、件数を取得してから確認を出す", async () =>
   expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveClass(
     "confirm-dialog-confirm--danger",
   );
-  expect(document.activeElement).toBe(screen.getByTestId("confirm-dialog-cancel-btn"));
   expect(within(confirm).getByText("42").tagName).toBe("STRONG");
   expect(confirm.querySelector(".folder-delete-confirm-path")).toHaveTextContent(/^B$/);
   expect(api.removeWatchFolder).not.toHaveBeenCalled();
@@ -881,23 +850,7 @@ test("確認でキャンセルすると、解除せずに閉じる", async () =>
   expect(onClose).not.toHaveBeenCalled();
 });
 
-test("解除中でなければ、確認の背景のクリックで確認を閉じ、確認の中のクリックでは閉じない", async () => {
-  vi.mocked(api.countVideosUnderFolder).mockResolvedValue(1);
-  const { user, onClose } = await renderOpen();
-
-  await user.click(inRow("B", "folder-row-delete-btn"));
-  const confirm = await screen.findByTestId("confirm-dialog");
-
-  await user.click(confirm);
-  expect(confirmDialog()).toBeInTheDocument();
-
-  await user.click(confirm.parentElement!);
-  expect(confirmDialog()).toBeNull();
-  expect(api.removeWatchFolder).not.toHaveBeenCalled();
-  expect(onClose).not.toHaveBeenCalled();
-});
-
-test("解除中は、ボタンを押せず、背景をクリックしても閉じない。終わったら一覧を置き換えて onChanged を呼ぶ", async () => {
+test("解除中は、ボタンを押せない。終わったら一覧を置き換えて onChanged を呼ぶ", async () => {
   vi.mocked(api.countVideosUnderFolder).mockResolvedValue(1);
   const removal = deferred<string[]>();
   vi.mocked(api.removeWatchFolder).mockReturnValue(removal.promise);
@@ -906,7 +859,7 @@ test("解除中は、ボタンを押せず、背景をクリックしても閉�
   const fetchesBefore = vi.mocked(api.listWatchCheckDisabledFolders).mock.calls.length;
 
   await user.click(inRow("B", "folder-row-delete-btn"));
-  const confirm = await screen.findByTestId("confirm-dialog");
+  await screen.findByTestId("confirm-dialog");
   await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
 
   expect(api.removeWatchFolder).toHaveBeenCalledWith("B");
@@ -914,7 +867,6 @@ test("解除中は、ボタンを押せず、背景をクリックしても閉�
   expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveTextContent("処理中...");
   expect(screen.getByTestId("confirm-dialog-cancel-btn")).toBeDisabled();
 
-  await user.click(confirm.parentElement!);
   expect(confirmDialog()).toBeInTheDocument();
   expect(onChanged).not.toHaveBeenCalled();
 

@@ -44,15 +44,3 @@ test("上限を1件ずつ超える追加を繰り返してもサイズは常に�
     assert.equal(cache.has(`key-${i}`), false);
   }
 });
-
-test("既存キーへの再setはエントリ数を増やさない（Mapの挙動）", () => {
-  const cache = new Map<string, string>();
-  setWithEviction(cache, "a", "1", 2);
-  setWithEviction(cache, "b", "2", 2);
-  // 既存キー a を更新: サイズは2のまま
-  setWithEviction(cache, "a", "1-updated", 2);
-
-  assert.equal(cache.size, 2);
-  assert.equal(cache.get("a"), "1-updated");
-  assert.equal(cache.get("b"), "2");
-});

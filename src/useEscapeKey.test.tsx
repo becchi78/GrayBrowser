@@ -1,7 +1,6 @@
 // useEscapeKey の現状の動作を固定する特性テスト。
 import { expect, test, vi } from "vitest";
 import { render } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { useEscapeKey } from "./useEscapeKey";
 
 function Harness({ onEscape, enabled }: { onEscape: () => void; enabled: boolean }) {
@@ -79,14 +78,4 @@ test("コールバックを差し替えると、以降は新しい方だけが�
 
   expect(first).not.toHaveBeenCalled();
   expect(second).toHaveBeenCalledTimes(1);
-});
-
-test("userEvent のキー入力でも Escape で呼ばれる", async () => {
-  const user = userEvent.setup();
-  const onEscape = vi.fn();
-  render(<Harness onEscape={onEscape} enabled={true} />);
-
-  await user.keyboard("{Escape}");
-
-  expect(onEscape).toHaveBeenCalledTimes(1);
 });

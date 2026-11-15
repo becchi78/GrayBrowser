@@ -152,13 +152,9 @@ describe("selectionForContextMenu", () => {
     assert.deepEqual(sorted(result), ["b"]);
   });
 
-  it("replaces the selection with the clicked row when it is not selected", () => {
+  it("replaces the selection with the clicked row, and moves the range anchor to it, when it is not selected", () => {
     const result = selectionForContextMenu(sel(["a", "b"], "a"), "d");
     assert.deepEqual(sorted(result), ["d"]);
-  });
-
-  it("moves the range anchor to the newly selected row", () => {
-    const result = selectionForContextMenu(sel(["a", "b"], "a"), "d");
     assert.equal(result.anchorId, "d");
   });
 

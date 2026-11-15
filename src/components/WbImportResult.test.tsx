@@ -6,6 +6,8 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import * as events from "../events";
 import type { UnmatchedThumbnailDto, WbImportSummary } from "../types";
+import { never } from "../testing/async";
+import { makeSummary } from "../testing/fixtures";
 import { renderWithProviders } from "../testing/render";
 import { WbImportDialog } from "./WbImportDialog";
 
@@ -20,30 +22,7 @@ vi.mock("../events", () => ({
   onWbImportFailed: vi.fn(() => () => {}),
 }));
 
-const EMPTY_SUMMARY: WbImportSummary = {
-  total: 0,
-  registered: 0,
-  registered_online: 0,
-  registered_offline: 0,
-  failed_rows: 0,
-  skipped: 0,
-  skipped_invalid_name: 0,
-  clamped_scores: 0,
-  tags_assigned: 0,
-  source_tag_count: 0,
-  ratings_from_star_tags: 0,
-  thumbnails_linked: 0,
-  thumbnails_linked_by_name: 0,
-  thumbnails_failed: 0,
-  thumbnails_unmatched: 0,
-  thumbnails_unmatched_empty_hash: 0,
-  thumbnails_skipped_online: 0,
-  watch_folders_added: [],
-  watch_folders_skipped_roots: [],
-  volume_label_resolved: 0,
-  volume_label_unresolved: 0,
-  volume_label_unresolved_labels: [],
-};
+const EMPTY_SUMMARY = makeSummary();
 
 /** すべての注意項目が出る集計。tags は元データにタグがあるのに付与 0 件(amber)。 */
 const ALL_ATTENTION_SUMMARY: WbImportSummary = {
@@ -67,10 +46,6 @@ const ROWS: UnmatchedThumbnailDto[] = [
   { folder_path: "C:\\thumbs", file_name: "b.jpg", kind: "no_matching_video", default_search_term: null },
   { folder_path: "C:\\thumbs", file_name: "c.jpg", kind: "empty_hash", default_search_term: null },
 ];
-
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 function renderDialog() {
   return renderWithProviders(
@@ -114,24 +89,17 @@ test("「確認する」は自動対応できなかった項目にだけ出る",
   expect(screen.queryByTestId("import-unmatched-review-btn-failed-rows")).toBeNull();
 });
 
-test("対応する動画がない項目の「確認する」は、その原因の行だけを開く", async () => {
+test.each([
+  { cause: "対応する動画がない", button: "unmatched", rowCount: 2 },
+  { cause: "ハッシュが空の", button: "unmatched-empty-hash", rowCount: 1 },
+])("$cause項目の「確認する」は、その原因の行だけを開く", async ({ button, rowCount }) => {
   const { user } = renderDialog();
   completeImport(ALL_ATTENTION_SUMMARY);
 
-  await user.click(await screen.findByTestId("import-unmatched-review-btn-unmatched"));
+  await user.click(await screen.findByTestId(`import-unmatched-review-btn-${button}`));
 
   await screen.findByTestId("unmatched-list");
-  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(2);
-});
-
-test("ハッシュが空の項目の「確認する」は、その原因の行だけを開く", async () => {
-  const { user } = renderDialog();
-  completeImport(ALL_ATTENTION_SUMMARY);
-
-  await user.click(await screen.findByTestId("import-unmatched-review-btn-unmatched-empty-hash"));
-
-  await screen.findByTestId("unmatched-list");
-  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(1);
+  expect(screen.getAllByTestId("unmatched-row")).toHaveLength(rowCount);
 });
 
 test("一覧の読み込み中は、自動対応できなかった項目を出さず、他の項目は出す", async () => {

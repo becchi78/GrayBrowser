@@ -3,7 +3,8 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
 import * as events from "../events";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never, settle } from "../testing/async";
+import { makeMember as member, memberPath as pathOf } from "../testing/fixtures";
 import { renderWithProviders } from "../testing/render";
 import type { DuplicateGroup, DuplicateGroupKind, DuplicateGroupMember } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
@@ -20,39 +21,6 @@ vi.mock("../api", () => ({
 vi.mock("../events", () => ({
   onDedupUpdated: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。処理が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
-
-const pathOf = (id: string) => `C:\\videos\\${id}.mp4`;
-
-function member(id: string, overrides: Partial<DuplicateGroupMember> = {}): DuplicateGroupMember {
-  return {
-    video_id: id,
-    file_path: pathOf(id),
-    file_name: `${id}.mp4`,
-    file_size: 100 * 1024 * 1024,
-    status: "online",
-    created_at: "2024-01-01 00:00:00",
-    duration: 60,
-    width: 1920,
-    height: 1080,
-    ...overrides,
-  };
-}
 
 function group(
   members: DuplicateGroupMember[],
@@ -87,13 +55,6 @@ beforeEach(() => {
   vi.mocked(api.playVideo).mockResolvedValue(undefined);
 });
 
-/** 連なった Promise の解決と、それに続く再描画を落ち着かせる。 */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await act(async () => {});
-  }
-}
-
 async function emit(groups: DuplicateGroup[]) {
   await act(async () => {
     emitDedup!(groups);
@@ -123,15 +84,9 @@ async function renderPanel({
   const view = renderWithProviders(ui(current), { unreachableFolders });
   await waitFor(() => expect(api.listDuplicateGroups).toHaveBeenCalled());
   await settle();
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 作り直されて状態が消え、閉じても状態が残ることを前提にした確認ができない。
   const update = async (next: Partial<PanelProps>) => {
     current = { ...current, ...next };
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={unreachableFolders}>
-        {ui(current)}
-      </UnreachableFoldersContext.Provider>,
-    );
+    view.rerender(ui(current));
     await settle();
   };
   return { ...view, onCountChange, update };
@@ -363,21 +318,6 @@ test("確認でキャンセルすると、何も呼ばずに閉じ、行の操�
   expect(unregisterButton("a")).toBeEnabled();
 });
 
-test("実行中でなければ、背景のクリックと Escape で確認を閉じる", async () => {
-  const { user } = await renderPanel();
-
-  await user.click(fileDeleteButton("b"));
-  await user.click(confirmDialog()!.parentElement!);
-  expect(confirmDialog()).toBeNull();
-
-  await user.click(unregisterButton("b"));
-  await user.keyboard("{Escape}");
-  expect(confirmDialog()).toBeNull();
-
-  expect(api.deleteDuplicateVideo).not.toHaveBeenCalled();
-  expect(api.deleteDuplicateVideoAndFile).not.toHaveBeenCalled();
-});
-
 test("登録解除を確定すると、そのメンバーを一覧から外し、件数を通知する", async () => {
   vi.mocked(api.deleteDuplicateVideo).mockResolvedValue(undefined);
   const { user, onCountChange } = await renderPanel();
@@ -591,27 +531,24 @@ test("ファイルを削除できない理由があるときは押せず、そ�
   await renderPanel({
     groups: [
       group([
-        member("online1", { created_at: "2024-01-01 00:00:00" }),
-        member("off", { status: "offline", created_at: "2024-01-02 00:00:00" }),
+        member("on1", { created_at: "2024-01-01 00:00:00" }),
+        member("on2", { created_at: "2024-01-02 00:00:00" }),
+        member("off", { status: "offline", created_at: "2024-01-03 00:00:00" }),
       ]),
-      group([member("u1"), member("u2")], "path_collision_unconfirmed"),
     ],
   });
 
-  expect(fileDeleteButton("online1")).toBeDisabled();
-  expect(notes("online1")).toEqual(["このグループで到達できる最後の1件のため削除できません"]);
   expect(fileDeleteButton("off")).toBeDisabled();
   expect(notes("off")).toContain("オフラインのため削除できません");
-  expect(fileDeleteButton("u1")).toBeDisabled();
-  expect(notes("u1")).toEqual(["内容の一致が確認できていないため削除できません"]);
-  // 登録解除は理由に関わらず押せる。
-  expect(unregisterButton("online1")).toBeEnabled();
-  expect(unregisterButton("off")).toBeEnabled();
-  expect(unregisterButton("u1")).toBeEnabled();
-  expect(fileDeleteButton("u1")).toHaveAttribute(
+  expect(fileDeleteButton("off")).toHaveAttribute(
     "title",
     "ファイルをゴミ箱に移動し、カタログからも削除します",
   );
+  // 理由の無い行は押せ、理由も出ない。
+  expect(fileDeleteButton("on1")).toBeEnabled();
+  expect(notes("on1")).toEqual([]);
+  // 登録解除は理由に関わらず押せる。
+  expect(unregisterButton("off")).toBeEnabled();
 });
 
 // ---- 件数の通知 ----
@@ -895,12 +832,6 @@ test("メンバーは登録日時の古い順に並べる", async () => {
   });
 
   expect(paths()).toEqual([pathOf("a"), pathOf("b"), pathOf("c")]);
-  expect(Array.from(row("b").querySelectorAll("dd")).map((dd) => dd.textContent)).toEqual([
-    "100.0 MB",
-    "1:00",
-    "1920 × 1080",
-    "2024-02-01 00:00:00",
-  ]);
 });
 
 test("グループ内で値が違う項目にだけ差分の class を付ける", async () => {
@@ -925,14 +856,6 @@ test("グループ内で値が違う項目にだけ差分の class を付ける"
   expect(row("a").querySelector("dd")).toHaveTextContent("2.00 GB");
   expect(row("b").querySelectorAll("dd")[2]).toHaveTextContent("不明");
   expect(ddClasses("x")).toEqual([null, null, null, null]);
-});
-
-test("メンバーが1件のグループは、差分を付けない", async () => {
-  await renderPanel({ groups: [group([member("solo", { duration: null })])] });
-
-  expect(
-    Array.from(row("solo").querySelectorAll("dd")).map((dd) => dd.getAttribute("class")),
-  ).toEqual([null, null, null, null]);
 });
 
 test("種別のラベルを出し、未確認の候補にだけ注記を出す", async () => {

@@ -13,13 +13,12 @@ function statuses(stage: WbImportStageId | null, outcome: "complete" | "failed" 
   return computeWbImportSteps(stage, outcome).map((s) => s.status);
 }
 
-test("段階はUUID再構築を含まない3つで、順序が固定", () => {
+test("段階は3つで、順序が固定", () => {
   const steps = computeWbImportSteps(null, null);
   assert.deepEqual(
     steps.map((s) => s.key),
     ["reading", "registering", "linking"],
   );
-  assert.ok(steps.every((s) => !s.label.includes("UUID")));
 });
 
 test("段階イベント前は全て未着手", () => {

@@ -22,7 +22,7 @@ describe("テスト基盤", () => {
     expect(() => listen("x", () => {})).toThrow("未モックの Tauri 呼び出し");
   });
 
-  it("テストが明示的に上書きした invoke は動き、次のテストには持ち越されない", async () => {
+  it("明示的に上書きした invoke は上書きした回数だけ動き、そのあとは未モックの例外に戻る", async () => {
     vi.mocked(invoke).mockResolvedValueOnce("ok");
     await expect(invoke("x")).resolves.toBe("ok");
     expect(() => invoke("x")).toThrow();

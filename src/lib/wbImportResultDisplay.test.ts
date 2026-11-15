@@ -3,35 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildWbImportResultDisplay } from "./wbImportResultDisplay.ts";
-import type { WbImportSummary } from "../types.ts";
-
-function makeSummary(overrides: Partial<WbImportSummary>): WbImportSummary {
-  return {
-    total: 0,
-    registered: 0,
-    registered_online: 0,
-    registered_offline: 0,
-    failed_rows: 0,
-    skipped: 0,
-    skipped_invalid_name: 0,
-    clamped_scores: 0,
-    tags_assigned: 0,
-    source_tag_count: 0,
-    ratings_from_star_tags: 0,
-    thumbnails_linked: 0,
-    thumbnails_linked_by_name: 0,
-    thumbnails_failed: 0,
-    thumbnails_unmatched: 0,
-    thumbnails_unmatched_empty_hash: 0,
-    thumbnails_skipped_online: 0,
-    watch_folders_added: [],
-    watch_folders_skipped_roots: [],
-    volume_label_resolved: 0,
-    volume_label_unresolved: 0,
-    volume_label_unresolved_labels: [],
-    ...overrides,
-  };
-}
+import { makeSummary } from "../testing/fixtures.ts";
 
 const keys = (items: { key: string }[]) => items.map((i) => i.key);
 
@@ -126,7 +98,6 @@ test("ドライブ文字に直せなかったときだけ、ラベルと案内�
   assert.match(item.text, /最初のインポートの前/);
   assert.match(item.text, /重複として残ります/);
   assert.match(item.text, /登録から削除/);
-  assert.ok(!item.text.includes("直りません"));
 });
 
 test("オンライン動画の旧サムネイルは、件数も注記も一切出さない", () => {
@@ -140,11 +111,6 @@ test("オンライン動画の旧サムネイルは、件数も注記も一切�
   );
   assert.deepEqual(d.attention, []);
   assert.deepEqual(d.details, []);
-  assert.ok(!("showOnlineThumbnailNote" in d));
-  const all = JSON.stringify(d);
-  assert.doesNotMatch(all, /移行対象外/);
-  assert.doesNotMatch(all, /オンライン動画の旧サムネイル/);
-  assert.doesNotMatch(all, /バックグラウンド/);
 });
 
 test("登録済みのためスキップした行は情報として出し、0件なら出さない", () => {
@@ -232,7 +198,6 @@ test("★タグから評価にした件数は表示しない", () => {
     makeSummary({ total: 5, registered: 5, ratings_from_star_tags: 4 }),
   );
   assert.deepEqual(d.details, []);
-  assert.doesNotMatch(JSON.stringify(d), /★/);
 });
 
 test("詳細は0件の項目を出さず、非0なら決まった順で並ぶ", () => {

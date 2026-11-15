@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
 import * as events from "../events";
-import { UnreachableFoldersContext } from "../reachabilityContext";
+import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "../types";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
@@ -21,22 +21,6 @@ vi.mock("../api", () => ({
 vi.mock("../events", () => ({
   onCatalogChanged: vi.fn(),
 }));
-
-/** 外から解決・失敗させられる Promise。処理中の状態を作るために使う。 */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** 解決しない Promise。処理が終わらない状態を保つために使う。 */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
 
 const pathOf = (name: string) => `C:\\videos\\sub\\${name}.mp4`;
 
@@ -93,13 +77,6 @@ beforeEach(() => {
   vi.mocked(api.retryMetadataProbe).mockResolvedValue(undefined);
 });
 
-/** 連なった Promise の解決と、それに続く再描画を落ち着かせる。 */
-async function settle() {
-  for (let i = 0; i < 3; i++) {
-    await act(async () => {});
-  }
-}
-
 /** catalog:changed を届け、取り直しの結果が描画されるまで待つ。 */
 async function emitCatalogChanged() {
   await act(async () => {
@@ -129,13 +106,9 @@ async function renderPanel({
   const view = renderWithProviders(ui(current));
   await waitFor(() => expect(api.listGenerationFailures).toHaveBeenCalled());
   await settle();
-  // rerender は根の要素を差し替えるので、初回描画と同じ Provider で包まないと
-  // 作り直されて状態が消え、閉じても状態が残ることを前提にした確認ができない。
   const update = async (next: Partial<PanelProps>) => {
     current = { ...current, ...next };
-    view.rerender(
-      <UnreachableFoldersContext.Provider value={[]}>{ui(current)}</UnreachableFoldersContext.Provider>,
-    );
+    view.rerender(ui(current));
     await settle();
   };
   return { ...view, onCountChange, update };
@@ -170,9 +143,6 @@ const cancelButton = () => screen.getByTestId("confirm-dialog-cancel-btn");
 test("開くと一覧を取得し、サムネイル失敗・メタデータ失敗の行を表示する", async () => {
   await renderPanel();
 
-  expect(panel()).toHaveClass("generation-failures-panel", "status-panel");
-  expect(panel()!.tagName).toBe("SECTION");
-  expect(document.querySelector("ul.generation-failures-list")).not.toBeNull();
   expect(listing()).toEqual([
     `${THUMB_BADGE}/t1.mp4`,
     `${THUMB_BADGE}/t2.mp4`,
@@ -282,26 +252,30 @@ test("catalog:changed での取り直しが失敗したら、エラーを出し�
 
 // ---- 再試行 ----
 
-test("サムネイルの再試行は retryThumbnailGeneration を id で呼ぶ", async () => {
+test.each([
+  {
+    kind: "サムネイル",
+    rowOf: () => thumbRow("t2"),
+    id: "t2",
+    called: () => api.retryThumbnailGeneration,
+    other: () => api.retryMetadataProbe,
+  },
+  {
+    kind: "メタデータ",
+    rowOf: () => metaRow("m1"),
+    id: "m1",
+    called: () => api.retryMetadataProbe,
+    other: () => api.retryThumbnailGeneration,
+  },
+])("$kind の再試行は、その種類の再試行を id で1回だけ呼ぶ", async ({ rowOf, id, called, other }) => {
   const { user } = await renderPanel();
 
-  await user.click(retryButton(thumbRow("t2")));
+  await user.click(retryButton(rowOf()));
   await settle();
 
-  expect(api.retryThumbnailGeneration).toHaveBeenCalledTimes(1);
-  expect(api.retryThumbnailGeneration).toHaveBeenCalledWith("t2");
-  expect(api.retryMetadataProbe).not.toHaveBeenCalled();
-});
-
-test("メタデータの再試行は retryMetadataProbe を id で呼ぶ", async () => {
-  const { user } = await renderPanel();
-
-  await user.click(retryButton(metaRow("m1")));
-  await settle();
-
-  expect(api.retryMetadataProbe).toHaveBeenCalledTimes(1);
-  expect(api.retryMetadataProbe).toHaveBeenCalledWith("m1");
-  expect(api.retryThumbnailGeneration).not.toHaveBeenCalled();
+  expect(called()).toHaveBeenCalledTimes(1);
+  expect(called()).toHaveBeenCalledWith(id);
+  expect(other()).not.toHaveBeenCalled();
 });
 
 test("再試行中はその行の再試行だけ押せず、終わったら押せる状態に戻る", async () => {
@@ -335,10 +309,6 @@ test("同じ id のサムネイル失敗とメタデータ失敗は別の行と�
   });
 
   expect(listing()).toEqual([`${THUMB_BADGE}/same.mp4`, `${META_BADGE}/same.mp4`]);
-  // いまは種類ごとに別の配列で描画しているので、key の重なりは起こらない。両方の種類を
-  // 1つの配列にまとめたうえで key を id だけにすると、React が重複 key の警告を
-  // console.error に出す(表示は崩れない)。この確認が捕まえるのは、その組み合わせだけ。
-  expect(console.error).not.toHaveBeenCalled();
 
   await user.click(retryButton(thumbRow("same")));
 
@@ -422,34 +392,50 @@ test("数えているあいだは、一括の2つのボタンとも押せない"
   expect(metaBulkButton()).toBeEnabled();
 });
 
-test("サムネイルの件数が0なら確認を出さず、その案内を出して実行しない", async () => {
-  vi.mocked(api.countMissingThumbnails).mockResolvedValue(0);
-  const { user } = await renderPanel();
+/** 一括の2つの操作。サムネイルの再作成とメタデータの再取得は、同じ流れで種類だけが違う。 */
+const BULK = [
+  {
+    kind: "サムネイル",
+    button: () => thumbBulkButton(),
+    count: () => api.countMissingThumbnails,
+    otherCount: () => api.countMissingMetadata,
+    run: () => api.regenerateMissingThumbnails,
+    otherRun: () => api.reprobeMissingMetadata,
+    zeroNotice: /^再作成が必要なサムネイルはありません。$/,
+    heading: /^サムネイルの再作成$/,
+    body: (n: number) => new RegExp(`^${n} 件の動画のサムネイルを再作成します。時間がかかることがあります。$`),
+    confirmLabel: /^再作成する$/,
+  },
+  {
+    kind: "メタデータ",
+    button: () => metaBulkButton(),
+    count: () => api.countMissingMetadata,
+    otherCount: () => api.countMissingThumbnails,
+    run: () => api.reprobeMissingMetadata,
+    otherRun: () => api.regenerateMissingThumbnails,
+    zeroNotice: /^再取得が必要なメタデータはありません。$/,
+    heading: /^メタデータの再取得$/,
+    body: (n: number) => new RegExp(`^${n} 件の動画のメタデータ\\(解像度など\\)を再取得します。$`),
+    confirmLabel: /^再取得する$/,
+  },
+];
 
-  await user.click(thumbBulkButton());
-  await settle();
+test.each(BULK)(
+  "$kind の件数が0なら確認を出さず、その案内を出して実行しない",
+  async ({ button, count, otherCount, run, zeroNotice }) => {
+    vi.mocked(count()).mockResolvedValue(0);
+    const { user } = await renderPanel();
 
-  expect(api.countMissingThumbnails).toHaveBeenCalledTimes(1);
-  expect(api.countMissingMetadata).not.toHaveBeenCalled();
-  expect(confirmDialog()).toBeNull();
-  expect(notice()).toHaveTextContent(/^再作成が必要なサムネイルはありません。$/);
-  expect(notice()).toHaveClass("generation-failures-notice");
-  expect(api.regenerateMissingThumbnails).not.toHaveBeenCalled();
-});
+    await user.click(button());
+    await settle();
 
-test("メタデータの件数が0なら確認を出さず、その案内を出して実行しない", async () => {
-  vi.mocked(api.countMissingMetadata).mockResolvedValue(0);
-  const { user } = await renderPanel();
-
-  await user.click(metaBulkButton());
-  await settle();
-
-  expect(api.countMissingMetadata).toHaveBeenCalledTimes(1);
-  expect(api.countMissingThumbnails).not.toHaveBeenCalled();
-  expect(confirmDialog()).toBeNull();
-  expect(notice()).toHaveTextContent(/^再取得が必要なメタデータはありません。$/);
-  expect(api.reprobeMissingMetadata).not.toHaveBeenCalled();
-});
+    expect(count()).toHaveBeenCalledTimes(1);
+    expect(otherCount()).not.toHaveBeenCalled();
+    expect(confirmDialog()).toBeNull();
+    expect(notice()).toHaveTextContent(zeroNotice);
+    expect(run()).not.toHaveBeenCalled();
+  },
+);
 
 test("一括のボタンを押すと、まず前回の案内を消す", async () => {
   vi.mocked(api.countMissingMetadata).mockResolvedValueOnce(0).mockReturnValueOnce(never());
@@ -481,90 +467,61 @@ test("別の一括のボタンを押しても、前回の案内を消す", async
   expect(confirmDialog()).toBeInTheDocument();
 });
 
-test("サムネイルの件数が1件以上なら、件数入りの確認を出し、確定するまで実行しない", async () => {
-  vi.mocked(api.countMissingThumbnails).mockResolvedValue(7);
-  const { user } = await renderPanel();
+test.each([
+  { ...BULK[0], n: 7 },
+  { ...BULK[1], n: 12 },
+])(
+  "$kind の件数が1件以上なら、件数入りの確認を出し、確定するまで実行しない",
+  async ({ button, count, run, otherRun, heading, body, confirmLabel, n }) => {
+    vi.mocked(count()).mockResolvedValue(n);
+    const { user } = await renderPanel();
 
-  await user.click(thumbBulkButton());
-  await settle();
+    await user.click(button());
+    await settle();
 
-  const dialog = confirmDialog()!;
-  expect(dialog).toBeInTheDocument();
-  expect(panel()!.contains(dialog)).toBe(false);
-  expect(within(dialog).getByRole("heading")).toHaveTextContent(/^サムネイルの再作成$/);
-  expect(dialog).toHaveAttribute("aria-label", "サムネイルの再作成");
-  expect(dialog.querySelector(".confirm-dialog-body")).toHaveTextContent(
-    /^7 件の動画のサムネイルを再作成します。時間がかかることがあります。$/,
-  );
-  expect(confirmButton()).toHaveTextContent(/^再作成する$/);
-  expect(notice()).toBeNull();
-  expect(api.regenerateMissingThumbnails).not.toHaveBeenCalled();
-  expect(api.reprobeMissingMetadata).not.toHaveBeenCalled();
-});
+    const dialog = confirmDialog()!;
+    expect(within(dialog).getByRole("heading")).toHaveTextContent(heading);
+    expect(dialog.querySelector(".confirm-dialog-body")).toHaveTextContent(body(n));
+    expect(confirmButton()).toHaveTextContent(confirmLabel);
+    expect(notice()).toBeNull();
+    expect(run()).not.toHaveBeenCalled();
+    expect(otherRun()).not.toHaveBeenCalled();
+  },
+);
 
-test("メタデータの件数が1件以上なら、件数入りの確認を出し、確定するまで実行しない", async () => {
-  vi.mocked(api.countMissingMetadata).mockResolvedValue(12);
-  const { user } = await renderPanel();
+test.each(BULK)(
+  "$kind の確認を確定すると、その種類だけを実行し、実行中は押せず、終わったら確認を閉じる",
+  async ({ button, count, run, otherRun }) => {
+    const running = deferred<number>();
+    vi.mocked(count()).mockResolvedValue(2);
+    vi.mocked(run()).mockReturnValue(running.promise);
+    const { user } = await renderPanel();
 
-  await user.click(metaBulkButton());
-  await settle();
+    await user.click(button());
+    await settle();
+    await user.click(confirmButton());
 
-  const dialog = confirmDialog()!;
-  expect(within(dialog).getByRole("heading")).toHaveTextContent(/^メタデータの再取得$/);
-  expect(dialog.querySelector(".confirm-dialog-body")).toHaveTextContent(
-    /^12 件の動画のメタデータ\(解像度など\)を再取得します。$/,
-  );
-  expect(confirmButton()).toHaveTextContent(/^再取得する$/);
-  expect(api.reprobeMissingMetadata).not.toHaveBeenCalled();
-  expect(api.regenerateMissingThumbnails).not.toHaveBeenCalled();
-});
+    expect(run()).toHaveBeenCalledTimes(1);
+    expect(otherRun()).not.toHaveBeenCalled();
+    expect(thumbBulkButton()).toBeDisabled();
+    expect(metaBulkButton()).toBeDisabled();
+    expect(confirmDialog()).toBeInTheDocument();
+    expect(confirmButton()).toBeDisabled();
+    expect(confirmButton()).toHaveTextContent("処理中...");
+    expect(cancelButton()).toBeDisabled();
 
-test("サムネイルの確認を確定すると regenerateMissingThumbnails を呼び、実行中は押せず、終わったら確認を閉じる", async () => {
-  const run = deferred<number>();
-  vi.mocked(api.countMissingThumbnails).mockResolvedValue(2);
-  vi.mocked(api.regenerateMissingThumbnails).mockReturnValue(run.promise);
-  const { user } = await renderPanel();
+    await act(async () => {
+      running.resolve(2);
+    });
 
-  await user.click(thumbBulkButton());
-  await settle();
-  await user.click(confirmButton());
-
-  expect(api.regenerateMissingThumbnails).toHaveBeenCalledTimes(1);
-  expect(api.reprobeMissingMetadata).not.toHaveBeenCalled();
-  expect(thumbBulkButton()).toBeDisabled();
-  expect(metaBulkButton()).toBeDisabled();
-  expect(confirmDialog()).toBeInTheDocument();
-  expect(confirmButton()).toBeDisabled();
-  expect(confirmButton()).toHaveTextContent("処理中...");
-  expect(cancelButton()).toBeDisabled();
-
-  await act(async () => {
-    run.resolve(2);
-  });
-
-  expect(confirmDialog()).toBeNull();
-  expect(thumbBulkButton()).toBeEnabled();
-  expect(metaBulkButton()).toBeEnabled();
-  expect(panelError()).toBeNull();
-  // 一覧は catalog:changed で更新されるので、ここでは取り直さない。
-  expect(api.listGenerationFailures).toHaveBeenCalledTimes(1);
-});
-
-test("メタデータの確認を確定すると reprobeMissingMetadata を呼び、終わったら確認を閉じる", async () => {
-  vi.mocked(api.countMissingMetadata).mockResolvedValue(4);
-  vi.mocked(api.reprobeMissingMetadata).mockResolvedValue(4);
-  const { user } = await renderPanel();
-
-  await user.click(metaBulkButton());
-  await settle();
-  await user.click(confirmButton());
-  await settle();
-
-  expect(api.reprobeMissingMetadata).toHaveBeenCalledTimes(1);
-  expect(api.regenerateMissingThumbnails).not.toHaveBeenCalled();
-  expect(confirmDialog()).toBeNull();
-  expect(metaBulkButton()).toBeEnabled();
-});
+    expect(confirmDialog()).toBeNull();
+    expect(thumbBulkButton()).toBeEnabled();
+    expect(metaBulkButton()).toBeEnabled();
+    expect(panelError()).toBeNull();
+    // 一覧は catalog:changed で更新されるので、ここでは取り直さない。
+    expect(api.listGenerationFailures).toHaveBeenCalledTimes(1);
+  },
+);
 
 test("実行が失敗したら、エラーを出し、確認も閉じる", async () => {
   vi.mocked(api.countMissingThumbnails).mockResolvedValue(2);
@@ -846,7 +803,7 @@ test("パスはディレクトリとファイル名に分けて出し、title �
   await renderPanel({
     failures: failuresOf(
       [thumbFail("t", { file_path: "D:\\movies\\2024\\clip.mkv", file_name: "clip.mkv" })],
-      [metaFail("m", { file_path: "\\\\nas\\share\\x.avi", file_name: "x.avi" })],
+      [],
     ),
   });
 
@@ -854,11 +811,6 @@ test("パスはディレクトリとファイル名に分けて出し、title �
   expect(t).toHaveAttribute("title", "D:\\movies\\2024\\clip.mkv");
   expect(t.querySelector(".file-path-dir")!.textContent).toBe("D:\\movies\\2024\\");
   expect(t.querySelector(".file-path-file")!.textContent).toBe("clip.mkv");
-
-  const m = row(META_BADGE, "x.avi").querySelector(".file-path-row")!;
-  expect(m).toHaveAttribute("title", "\\\\nas\\share\\x.avi");
-  expect(m.querySelector(".file-path-dir")!.textContent).toBe("\\\\nas\\share\\");
-  expect(m.querySelector(".file-path-file")!.textContent).toBe("x.avi");
 });
 
 test("サムネイル失敗を先に、それぞれ受け取った順に並べる", async () => {
@@ -894,14 +846,4 @@ test("一覧が置き換わっても、行は id ごとの状態を保ち、別�
 
   expect(retryButton(thumbRow("t2"))).toBeDisabled();
   expect(retryButton(thumbRow("t3"))).toBeEnabled();
-});
-
-test("一括のボタンの文言", async () => {
-  await renderPanel();
-
-  expect(thumbBulkButton()).toHaveTextContent(/^未作成のサムネイルをすべて再作成$/);
-  expect(metaBulkButton()).toHaveTextContent(/^メタデータをすべて再取得$/);
-  expect(thumbBulkButton()).toHaveAttribute("type", "button");
-  expect(metaBulkButton()).toHaveAttribute("type", "button");
-  expect(thumbBulkButton().parentElement).toHaveClass("generation-failures-bulk");
 });

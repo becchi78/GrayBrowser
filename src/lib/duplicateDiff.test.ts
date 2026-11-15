@@ -2,22 +2,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeDuplicateDiff } from "./duplicateDiff.ts";
+import { makeMember } from "../testing/fixtures.ts";
 import type { DuplicateGroupMember } from "../types.ts";
 
-function member(overrides: Partial<DuplicateGroupMember> = {}): DuplicateGroupMember {
-  return {
-    video_id: "id",
-    file_path: "/v/a.mp4",
-    file_name: "a.mp4",
-    file_size: 1000,
-    status: "online",
-    created_at: "2026-01-01 00:00:00",
-    duration: 60,
-    width: 1920,
-    height: 1080,
-    ...overrides,
-  };
-}
+const member = (overrides: Partial<DuplicateGroupMember> = {}) => makeMember("id", overrides);
 
 const NONE = { file_size: false, duration: false, resolution: false };
 
