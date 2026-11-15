@@ -3,43 +3,11 @@
 //! (not `queries::insert_video`) so each test can freely control
 //! `status`/`quick_hash`/`file_size`/`mtime`/`created_at` directly.
 
+mod common;
+
+use common::{init_temp_db, sort_orders, tag_names, video};
 use graybrowser_lib::db::{self, queries};
 use rusqlite::{params, Connection};
-
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_test_video(
-    conn: &Connection,
-    id: &str,
-    file_path: &str,
-    quick_hash: &str,
-    file_size: i64,
-    status: &str,
-    mtime: Option<i64>,
-    created_at: &str,
-) {
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, mtime, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            id,
-            file_path,
-            file_path.rsplit('\\').next().unwrap_or(file_path),
-            file_size,
-            quick_hash,
-            status,
-            mtime,
-            created_at
-        ],
-    )
-    .unwrap();
-}
 
 #[test]
 fn find_video_by_path_returns_none_for_an_unknown_path() {
@@ -54,16 +22,13 @@ fn find_video_by_path_returns_none_for_an_unknown_path() {
 fn find_video_by_path_returns_the_matching_row() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "v1",
-        "D:\\videos\\a.mp4",
-        "abc123",
-        1000,
-        "online",
-        Some(555),
-        "2026-01-01 00:00:00",
-    );
+    video("v1", "D:\\videos\\a.mp4")
+        .quick_hash("abc123")
+        .file_size(1000)
+        .status("online")
+        .mtime(Some(555))
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     let row = queries::find_video_by_path(&conn, "D:\\videos\\a.mp4")
         .unwrap()
@@ -79,38 +44,29 @@ fn find_offline_candidates_matches_by_hash_and_size_only_among_offline_rows() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
     // Matching hash+size but online -- must not be returned.
-    insert_test_video(
-        &conn,
-        "online-match",
-        "D:\\a.mp4",
-        "hash1",
-        1000,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("online-match", "D:\\a.mp4")
+        .quick_hash("hash1")
+        .file_size(1000)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
     // Offline but different hash -- must not be returned.
-    insert_test_video(
-        &conn,
-        "offline-nomatch",
-        "D:\\b.mp4",
-        "hash2",
-        1000,
-        "offline",
-        None,
-        "2026-01-01 00:00:01",
-    );
+    video("offline-nomatch", "D:\\b.mp4")
+        .quick_hash("hash2")
+        .file_size(1000)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:01")
+        .insert(&conn);
     // Offline, matching hash+size -- should be returned.
-    insert_test_video(
-        &conn,
-        "offline-match",
-        "D:\\c.mp4",
-        "hash1",
-        1000,
-        "offline",
-        None,
-        "2026-01-01 00:00:02",
-    );
+    video("offline-match", "D:\\c.mp4")
+        .quick_hash("hash1")
+        .file_size(1000)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:02")
+        .insert(&conn);
 
     let candidates =
         queries::find_offline_candidates_by_quick_hash_and_size(&conn, "hash1", 1000).unwrap();
@@ -122,26 +78,20 @@ fn find_offline_candidates_matches_by_hash_and_size_only_among_offline_rows() {
 fn find_offline_candidates_orders_by_created_at_ascending() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "later",
-        "D:\\later.mp4",
-        "hash1",
-        1000,
-        "offline",
-        None,
-        "2026-01-02 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "earlier",
-        "D:\\earlier.mp4",
-        "hash1",
-        1000,
-        "offline",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("later", "D:\\later.mp4")
+        .quick_hash("hash1")
+        .file_size(1000)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-02 00:00:00")
+        .insert(&conn);
+    video("earlier", "D:\\earlier.mp4")
+        .quick_hash("hash1")
+        .file_size(1000)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     let candidates =
         queries::find_offline_candidates_by_quick_hash_and_size(&conn, "hash1", 1000).unwrap();
@@ -153,16 +103,13 @@ fn find_offline_candidates_orders_by_created_at_ascending() {
 fn is_path_used_by_online_video_detects_a_different_online_owner() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "owner",
-        "D:\\shared.mp4",
-        "h",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("owner", "D:\\shared.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     let collision =
         queries::is_path_used_by_online_video(&conn, "D:\\shared.mp4", "someone-else").unwrap();
@@ -173,26 +120,20 @@ fn is_path_used_by_online_video_detects_a_different_online_owner() {
 fn is_path_used_by_online_video_ignores_the_excluded_id_and_offline_owners() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "self",
-        "D:\\a.mp4",
-        "h",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "offline-owner",
-        "D:\\b.mp4",
-        "h",
-        1,
-        "offline",
-        None,
-        "2026-01-01 00:00:01",
-    );
+    video("self", "D:\\a.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
+    video("offline-owner", "D:\\b.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:01")
+        .insert(&conn);
 
     assert!(
         queries::is_path_used_by_online_video(&conn, "D:\\a.mp4", "self")
@@ -212,16 +153,13 @@ fn is_path_used_by_online_video_ignores_the_excluded_id_and_offline_owners() {
 fn update_video_status_flips_status() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "v1",
-        "D:\\a.mp4",
-        "h",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("v1", "D:\\a.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     queries::update_video_status(&conn, "v1", "offline").unwrap();
 
@@ -237,16 +175,13 @@ fn update_video_status_flips_status() {
 fn update_video_path_and_status_rewrites_path_and_preserves_id() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "v1",
-        "D:\\old\\a.mp4",
-        "h",
-        1,
-        "offline",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("v1", "D:\\old\\a.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     queries::update_video_path_and_status(&conn, "v1", "E:\\new\\a.mp4", "a.mp4", "online")
         .unwrap();
@@ -267,26 +202,20 @@ fn update_video_path_and_status_rewrites_path_and_preserves_id() {
 fn update_video_path_and_status_returns_err_not_panic_on_unique_violation() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "offline-row",
-        "D:\\old\\a.mp4",
-        "h",
-        1,
-        "offline",
-        None,
-        "2026-01-01 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "online-row",
-        "D:\\taken.mp4",
-        "h2",
-        2,
-        "online",
-        None,
-        "2026-01-01 00:00:01",
-    );
+    video("offline-row", "D:\\old\\a.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
+    video("online-row", "D:\\taken.mp4")
+        .quick_hash("h2")
+        .file_size(2)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:01")
+        .insert(&conn);
 
     // Caller is expected to pre-check via is_path_used_by_online_video before
     // calling this -- this test proves the fallback safety net also holds:
@@ -316,36 +245,27 @@ fn update_video_path_and_status_returns_err_not_panic_on_unique_violation() {
 fn list_online_videos_under_filters_by_prefix_case_insensitively() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "inside",
-        "D:\\Videos\\sub\\a.mp4",
-        "h",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "outside",
-        "E:\\other\\b.mp4",
-        "h",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:01",
-    );
-    insert_test_video(
-        &conn,
-        "inside-but-offline",
-        "D:\\videos\\sub\\c.mp4",
-        "h",
-        1,
-        "offline",
-        None,
-        "2026-01-01 00:00:02",
-    );
+    video("inside", "D:\\Videos\\sub\\a.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
+    video("outside", "E:\\other\\b.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:01")
+        .insert(&conn);
+    video("inside-but-offline", "D:\\videos\\sub\\c.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:02")
+        .insert(&conn);
     drop(conn);
 
     let rows = queries::list_online_videos_under(&db.read_pool, "d:\\videos\\").unwrap();
@@ -364,16 +284,13 @@ fn list_online_videos_under_stops_at_the_folder_boundary() {
         ("prefix-name", "D:\\videos-old\\d.mp4"),
         ("slashes", "D:/video/e.mp4"),
     ] {
-        insert_test_video(
-            &conn,
-            id,
-            path,
-            id,
-            1,
-            "online",
-            None,
-            "2026-01-01 00:00:00",
-        );
+        video(id, path)
+            .quick_hash(id)
+            .file_size(1)
+            .status("online")
+            .mtime(None)
+            .created_at("2026-01-01 00:00:00")
+            .insert(&conn);
     }
     drop(conn);
 
@@ -389,36 +306,27 @@ fn list_online_videos_under_stops_at_the_folder_boundary() {
 fn mark_videos_offline_flips_only_online_rows_and_counts_them() {
     let (_dir, db) = init_temp_db();
     let mut conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "a",
-        "D:\\a.mp4",
-        "ha",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "b",
-        "D:\\b.mp4",
-        "hb",
-        1,
-        "offline",
-        None,
-        "2026-01-01 00:00:00",
-    );
-    insert_test_video(
-        &conn,
-        "c",
-        "D:\\c.mp4",
-        "hc",
-        1,
-        "online",
-        None,
-        "2026-01-01 00:00:00",
-    );
+    video("a", "D:\\a.mp4")
+        .quick_hash("ha")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
+    video("b", "D:\\b.mp4")
+        .quick_hash("hb")
+        .file_size(1)
+        .status("offline")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
+    video("c", "D:\\c.mp4")
+        .quick_hash("hc")
+        .file_size(1)
+        .status("online")
+        .mtime(None)
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     let changed = queries::mark_videos_offline(
         &mut conn,
@@ -477,16 +385,13 @@ fn mark_videos_offline_handles_more_ids_than_a_statement_can_bind() {
 fn update_video_scan_metadata_updates_size_mtime_and_hash() {
     let (_dir, db) = init_temp_db();
     let conn = db.writer.lock().unwrap();
-    insert_test_video(
-        &conn,
-        "v1",
-        "D:\\a.mp4",
-        "old-hash",
-        100,
-        "online",
-        Some(1),
-        "2026-01-01 00:00:00",
-    );
+    video("v1", "D:\\a.mp4")
+        .quick_hash("old-hash")
+        .file_size(100)
+        .status("online")
+        .mtime(Some(1))
+        .created_at("2026-01-01 00:00:00")
+        .insert(&conn);
 
     queries::update_video_scan_metadata(&conn, "v1", 200, 999, "new-hash").unwrap();
 
@@ -512,12 +417,41 @@ fn nas_poll_interval_defaults_when_unset_and_round_trips_when_set() {
     assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 120);
 }
 
-#[test]
-fn info_pane_collapsed_defaults_to_false_when_unset() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
+/// A fresh database whose `settings` table holds `raw` under `key` (nothing
+/// at all for `None`), for checking how a getter reads a stored value.
+fn db_with_setting(key: &str, raw: Option<&str>) -> (tempfile::TempDir, db::Db) {
+    let (dir, db) = init_temp_db();
+    if let Some(raw) = raw {
+        db.writer
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                params![key, raw],
+            )
+            .unwrap();
+    }
+    (dir, db)
+}
 
-    assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
+#[test]
+fn info_pane_collapsed_reads_the_stored_value_and_treats_anything_unrecognized_as_false() {
+    // (raw stored value, expected). Unset and "yes" must both read as
+    // expanded, so a corrupt value never hides the info column.
+    for (raw, expected) in [
+        (None, false),
+        (Some("1"), true),
+        (Some("0"), false),
+        (Some("yes"), false),
+    ] {
+        let (_dir, db) = db_with_setting("info_pane_collapsed", raw);
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(
+            queries::get_info_pane_collapsed(&conn).unwrap(),
+            expected,
+            "stored value {raw:?}"
+        );
+    }
 }
 
 #[test]
@@ -533,27 +467,29 @@ fn info_pane_collapsed_round_trips_through_set_and_get() {
 }
 
 #[test]
-fn info_pane_collapsed_treats_unrecognized_value_as_false() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES ('info_pane_collapsed', 'yes')",
-        [],
-    )
-    .unwrap();
-    assert!(!queries::get_info_pane_collapsed(&conn).unwrap());
-}
-
-#[test]
-fn sidebar_sections_collapsed_defaults_to_all_expanded_when_unset() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    assert_eq!(
-        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
-        queries::SidebarSectionsCollapsed::default()
-    );
+fn sidebar_sections_collapsed_reads_the_stored_value_and_falls_back_to_all_expanded() {
+    let only_tags = queries::SidebarSectionsCollapsed {
+        tags: true,
+        ..Default::default()
+    };
+    // (raw stored value, expected). Unset and unparseable values read as all
+    // expanded; a key missing from valid JSON counts as expanded too.
+    for (raw, expected) in [
+        (None, queries::SidebarSectionsCollapsed::default()),
+        (
+            Some("{not json"),
+            queries::SidebarSectionsCollapsed::default(),
+        ),
+        (Some(r#"{"tags":true}"#), only_tags),
+    ] {
+        let (_dir, db) = db_with_setting("sidebar_sections_collapsed", raw);
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(
+            queries::get_sidebar_sections_collapsed(&conn).unwrap(),
+            expected,
+            "stored value {raw:?}"
+        );
+    }
 }
 
 #[test]
@@ -579,44 +515,6 @@ fn sidebar_sections_collapsed_round_trips_through_set_and_get() {
     );
 }
 
-#[test]
-fn sidebar_sections_collapsed_falls_back_to_default_on_corrupt_json() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES ('sidebar_sections_collapsed', '{not json')",
-        [],
-    )
-    .unwrap();
-    assert_eq!(
-        queries::get_sidebar_sections_collapsed(&conn).unwrap(),
-        Default::default()
-    );
-}
-
-#[test]
-fn sidebar_sections_collapsed_treats_missing_keys_as_expanded() {
-    let (_dir, db) = init_temp_db();
-    let conn = db.writer.lock().unwrap();
-
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES ('sidebar_sections_collapsed', '{\"tags\":true}')",
-        [],
-    )
-    .unwrap();
-    let got = queries::get_sidebar_sections_collapsed(&conn).unwrap();
-    assert!(got.tags && !got.folders && !got.rating);
-}
-
-fn tag_names(db: &db::Db) -> Vec<String> {
-    queries::list_all_tags(&db.read_pool)
-        .unwrap()
-        .into_iter()
-        .map(|t| t.name)
-        .collect()
-}
-
 fn seed_tags(conn: &Connection, tags: &[(i64, &str)]) {
     for (id, name) in tags {
         conn.execute(
@@ -625,15 +523,6 @@ fn seed_tags(conn: &Connection, tags: &[(i64, &str)]) {
         )
         .unwrap();
     }
-}
-
-fn sort_orders(conn: &Connection) -> Vec<(i64, Option<i64>)> {
-    conn.prepare("SELECT id, sort_order FROM tags ORDER BY id")
-        .unwrap()
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap()
 }
 
 #[test]
@@ -654,6 +543,13 @@ fn list_all_tags_puts_ordered_tags_first_then_unordered_by_name() {
         .unwrap();
     drop(conn);
     assert_eq!(tag_names(&db), ["c", "d", "a", "b"]);
+
+    // Once every tag is ordered, the listing follows `set_tag_order`'s input
+    // order exactly.
+    let mut conn = db.writer.lock().unwrap();
+    queries::set_tag_order(&mut conn, &[2, 4, 1, 3]).unwrap();
+    drop(conn);
+    assert_eq!(tag_names(&db), ["b", "d", "a", "c"]);
 }
 
 #[test]
@@ -662,29 +558,16 @@ fn newly_created_tag_goes_after_ordered_tags() {
     let mut conn = db.writer.lock().unwrap();
     seed_tags(&conn, &[(1, "m"), (2, "z")]);
     queries::set_tag_order(&mut conn, &[2, 1]).unwrap();
-    insert_test_video(
-        &conn,
-        "v",
-        "D:\\v.mp4",
-        "h",
-        1,
-        "available",
-        None,
-        "2024-01-01 00:00:00",
-    );
+    video("v", "D:\\v.mp4")
+        .quick_hash("h")
+        .file_size(1)
+        .status("available")
+        .mtime(None)
+        .created_at("2024-01-01 00:00:00")
+        .insert(&conn);
     queries::assign_tag_to_video(&mut conn, "v", "a-new").unwrap();
     drop(conn);
     assert_eq!(tag_names(&db), ["z", "m", "a-new"]);
-}
-
-#[test]
-fn set_tag_order_follows_input_order() {
-    let (_dir, db) = init_temp_db();
-    let mut conn = db.writer.lock().unwrap();
-    seed_tags(&conn, &[(1, "a"), (2, "b"), (3, "c")]);
-    queries::set_tag_order(&mut conn, &[2, 3, 1]).unwrap();
-    drop(conn);
-    assert_eq!(tag_names(&db), ["b", "c", "a"]);
 }
 
 #[test]

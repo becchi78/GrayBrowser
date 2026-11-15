@@ -16,39 +16,14 @@
 //! there without needing a Tauri `State`/`AppHandle`, so it is not
 //! duplicated in this integration-test file.
 
-use graybrowser_lib::db::{self, queries};
+mod common;
+
+use common::{
+    assign_tag, init_temp_db, insert_skipped_file, insert_tag, insert_video,
+    insert_video_with_status, skipped_paths, video_ids,
+};
+use graybrowser_lib::db::queries;
 use rusqlite::{params, Connection};
-
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-fn insert_video(conn: &Connection, id: &str, file_path: &str, status: &str) {
-    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, rating, created_at)
-         VALUES (?1, ?2, ?3, 1024, 'hash', ?4, 0, '2026-01-01 00:00:00')",
-        params![id, file_path, file_name, status],
-    )
-    .unwrap();
-}
-
-fn insert_tag(conn: &Connection, name: &str) -> i64 {
-    conn.execute("INSERT INTO tags (name) VALUES (?1)", params![name])
-        .unwrap();
-    conn.last_insert_rowid()
-}
-
-fn assign_tag(conn: &Connection, video_id: &str, tag_id: i64) {
-    conn.execute(
-        "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, ?2)",
-        params![video_id, tag_id],
-    )
-    .unwrap();
-}
 
 struct VideoSnapshot {
     file_path: String,
@@ -90,14 +65,6 @@ fn tag_names_for(conn: &Connection, video_id: &str) -> Vec<String> {
         .unwrap()
 }
 
-fn video_ids(conn: &Connection) -> Vec<String> {
-    let mut stmt = conn.prepare("SELECT id FROM videos ORDER BY id").unwrap();
-    stmt.query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap()
-}
-
 fn path_collision_rows(conn: &Connection) -> Vec<(String, String, String)> {
     let mut stmt = conn
         .prepare("SELECT video_id, colliding_video_id, attempted_path FROM path_collisions ORDER BY video_id")
@@ -121,7 +88,7 @@ fn renaming_a_folder_preserves_id_tags_rating_and_created_at() {
     let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
 
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "v1", r"C:\OldVideos\a.mp4", "online");
+    insert_video(&conn, "v1", r"C:\OldVideos\a.mp4");
     let tag_id = insert_tag(&conn, "action");
     assign_tag(&conn, "v1", tag_id);
     queries::set_rating(&conn, "v1", 4).unwrap();
@@ -152,51 +119,12 @@ fn renaming_a_folder_preserves_id_tags_rating_and_created_at() {
     );
 }
 
-// --- New path does not exist on disk -> stays/becomes offline -------
-
-#[test]
-fn rename_to_a_nonexistent_new_path_leaves_the_row_offline() {
-    let (dir, db) = init_temp_db();
-    let old_folder = r"C:\OldVideos".to_string();
-    // A real, but empty, tempdir subfolder -- the file itself is never
-    // created there.
-    let new_folder = dir.path().join("Missing").to_string_lossy().into_owned();
-
-    let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "v1", r"C:\OldVideos\a.mp4", "online");
-
-    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
-    assert_eq!(outcome.renamed_count, 1);
-
-    let after = snapshot(&conn, "v1");
-    assert_eq!(after.file_path, format!("{new_folder}\\a.mp4"));
-    assert_eq!(after.status, "offline");
-}
-
-// --- New path exists on disk -> becomes/stays online --------------
-
-#[test]
-fn rename_to_an_existing_new_path_marks_the_row_online() {
-    let (dir, db) = init_temp_db();
-    let old_folder = r"C:\OldVideos".to_string();
-    let new_folder_dir = dir.path().join("NewVideos");
-    std::fs::create_dir_all(&new_folder_dir).unwrap();
-    std::fs::write(new_folder_dir.join("a.mp4"), b"fake video bytes").unwrap();
-    let new_folder = new_folder_dir.to_string_lossy().into_owned();
-
-    let mut conn = db.writer.lock().unwrap();
-    // Starts offline (e.g. the drive was disconnected before the user
-    // edited the path) -- the rename's own existence check must flip it
-    // back to online without waiting for a rescan.
-    insert_video(&conn, "v1", r"C:\OldVideos\a.mp4", "offline");
-
-    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
-    assert_eq!(outcome.renamed_count, 1);
-
-    let after = snapshot(&conn, "v1");
-    assert_eq!(after.file_path, format!("{new_folder}\\a.mp4"));
-    assert_eq!(after.status, "online");
-}
+// --- The new path decides online/offline per row, from the disk ----------
+//
+// An offline row whose file exists under the new folder (e.g. the drive was
+// disconnected before the user edited the path) must flip back to online
+// without waiting for a rescan; an online row whose file is not there must
+// go offline. Both rewrite `file_path`.
 
 #[test]
 fn rename_reflects_a_per_row_mix_of_online_and_offline_outcomes() {
@@ -209,15 +137,19 @@ fn rename_reflects_a_per_row_mix_of_online_and_offline_outcomes() {
     let new_folder = new_folder_dir.to_string_lossy().into_owned();
 
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "present", r"C:\OldVideos\present.mp4", "offline");
-    insert_video(&conn, "absent", r"C:\OldVideos\absent.mp4", "online");
+    insert_video_with_status(&conn, "present", r"C:\OldVideos\present.mp4", "offline");
+    insert_video(&conn, "absent", r"C:\OldVideos\absent.mp4");
 
     let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
     assert_eq!(outcome.renamed_count, 2);
     assert_eq!(outcome.collision_skipped_count, 0);
 
-    assert_eq!(snapshot(&conn, "present").status, "online");
-    assert_eq!(snapshot(&conn, "absent").status, "offline");
+    let present = snapshot(&conn, "present");
+    assert_eq!(present.file_path, format!("{new_folder}\\present.mp4"));
+    assert_eq!(present.status, "online");
+    let absent = snapshot(&conn, "absent");
+    assert_eq!(absent.file_path, format!("{new_folder}\\absent.mp4"));
+    assert_eq!(absent.status, "offline");
 }
 
 // --- A colliding new path is skipped, not fatal to the whole batch --
@@ -232,14 +164,9 @@ fn a_colliding_row_is_skipped_and_recorded_while_other_rows_still_rename() {
     // "clashing" will be renamed to `{new_folder}\taken.mp4`, which
     // "outside" already occupies -- a pre-existing, unrelated row, not
     // itself under `old_folder`.
-    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4", "online");
-    insert_video(&conn, "free", r"C:\OldVideos\free.mp4", "online");
-    insert_video(
-        &conn,
-        "outside",
-        &format!("{new_folder}\\taken.mp4"),
-        "online",
-    );
+    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4");
+    insert_video(&conn, "free", r"C:\OldVideos\free.mp4");
+    insert_video(&conn, "outside", &format!("{new_folder}\\taken.mp4"));
 
     let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
     assert_eq!(outcome.renamed_count, 1, "only \"free\" should be renamed");
@@ -271,6 +198,23 @@ fn a_colliding_row_is_skipped_and_recorded_while_other_rows_still_rename() {
             format!("{new_folder}\\taken.mp4"),
         )]
     );
+
+    // Only the row that actually moved is reported for thumbnail relocation;
+    // the collision-skipped one must not be.
+    assert_eq!(
+        outcome.renamed_videos.len(),
+        1,
+        "only the non-colliding row must be reported"
+    );
+    assert_eq!(outcome.renamed_videos[0].video_id, "free");
+    assert_eq!(
+        outcome.renamed_videos[0].old_file_path,
+        r"C:\OldVideos\free.mp4"
+    );
+    assert_eq!(
+        outcome.renamed_videos[0].new_file_path,
+        format!("{new_folder}\\free.mp4")
+    );
 }
 
 #[test]
@@ -284,8 +228,8 @@ fn a_colliding_row_versus_an_offline_occupant_is_still_skipped() {
     let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
 
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4", "online");
-    insert_video(
+    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4");
+    insert_video_with_status(
         &conn,
         "outside_offline",
         &format!("{new_folder}\\taken.mp4"),
@@ -313,13 +257,13 @@ fn every_non_colliding_row_under_the_folder_is_renamed_together() {
     let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
 
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "a", r"C:\OldVideos\a.mp4", "online");
-    insert_video(&conn, "b", r"C:\OldVideos\Sub\b.mp4", "online");
-    insert_video(&conn, "c", r"C:\OldVideos\Sub\Deep\c.mp4", "online");
+    insert_video(&conn, "a", r"C:\OldVideos\a.mp4");
+    insert_video(&conn, "b", r"C:\OldVideos\Sub\b.mp4");
+    insert_video(&conn, "c", r"C:\OldVideos\Sub\Deep\c.mp4");
     // A sibling folder that merely shares a string prefix must be left
     // completely alone (same folder-boundary-safety fixture as
     // db_folder_removal.rs).
-    insert_video(&conn, "sibling", r"C:\OldVideos2\d.mp4", "online");
+    insert_video(&conn, "sibling", r"C:\OldVideos2\d.mp4");
 
     let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
     assert_eq!(outcome.renamed_count, 3);
@@ -342,69 +286,37 @@ fn every_non_colliding_row_under_the_folder_is_renamed_together() {
         r"C:\OldVideos2\d.mp4",
         "a sibling folder with a shared string prefix must not be touched"
     );
-}
 
-// --- renamed_videos: the data settings_cmds::rename_watch_folder relies on
-// to move thumbnails video-by-video rather than as a whole-subdirectory
-// rename (see `queries::RenameWatchFolderOutcome`'s doc comment) ---------
-
-#[test]
-fn renamed_videos_reports_the_old_and_new_file_path_for_every_actually_renamed_row() {
-    let (dir, db) = init_temp_db();
-    let old_folder = r"C:\OldVideos".to_string();
-    let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
-
-    let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "a", r"C:\OldVideos\a.mp4", "online");
-    insert_video(&conn, "b", r"C:\OldVideos\Sub\b.mp4", "online");
-
-    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
-
+    // `renamed_videos` is what `settings_cmds::rename_watch_folder` relies on
+    // to move thumbnails video-by-video rather than as a whole-subdirectory
+    // rename: every renamed row, with its old and new path, and nothing else.
     let mut renamed = outcome.renamed_videos;
     renamed.sort_by(|a, b| a.video_id.cmp(&b.video_id));
-    assert_eq!(renamed.len(), 2);
-    assert_eq!(renamed[0].video_id, "a");
-    assert_eq!(renamed[0].old_file_path, r"C:\OldVideos\a.mp4");
-    assert_eq!(renamed[0].new_file_path, format!("{new_folder}\\a.mp4"));
-    assert_eq!(renamed[1].video_id, "b");
-    assert_eq!(renamed[1].old_file_path, r"C:\OldVideos\Sub\b.mp4");
+    let reported: Vec<(&str, &str, String)> = renamed
+        .iter()
+        .map(|r| {
+            (
+                r.video_id.as_str(),
+                r.old_file_path.as_str(),
+                r.new_file_path.clone(),
+            )
+        })
+        .collect();
     assert_eq!(
-        renamed[1].new_file_path,
-        format!("{new_folder}\\Sub\\b.mp4")
-    );
-}
-
-#[test]
-fn renamed_videos_excludes_a_collision_skipped_row() {
-    let (dir, db) = init_temp_db();
-    let old_folder = r"C:\OldVideos".to_string();
-    let new_folder = dir.path().join("NewVideos").to_string_lossy().into_owned();
-
-    let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "clashing", r"C:\OldVideos\taken.mp4", "online");
-    insert_video(&conn, "free", r"C:\OldVideos\free.mp4", "online");
-    insert_video(
-        &conn,
-        "outside",
-        &format!("{new_folder}\\taken.mp4"),
-        "online",
-    );
-
-    let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
-
-    assert_eq!(
-        outcome.renamed_videos.len(),
-        1,
-        "only the non-colliding row must be reported"
-    );
-    assert_eq!(outcome.renamed_videos[0].video_id, "free");
-    assert_eq!(
-        outcome.renamed_videos[0].old_file_path,
-        r"C:\OldVideos\free.mp4"
-    );
-    assert_eq!(
-        outcome.renamed_videos[0].new_file_path,
-        format!("{new_folder}\\free.mp4")
+        reported,
+        vec![
+            ("a", r"C:\OldVideos\a.mp4", format!("{new_folder}\\a.mp4")),
+            (
+                "b",
+                r"C:\OldVideos\Sub\b.mp4",
+                format!("{new_folder}\\Sub\\b.mp4")
+            ),
+            (
+                "c",
+                r"C:\OldVideos\Sub\Deep\c.mp4",
+                format!("{new_folder}\\Sub\\Deep\\c.mp4")
+            ),
+        ]
     );
 }
 
@@ -415,35 +327,17 @@ fn rename_of_an_already_empty_folder_is_a_no_op() {
     let new_folder = dir.path().join("StillEmpty").to_string_lossy().into_owned();
 
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "elsewhere", r"D:\Other\a.mp4", "online");
+    insert_video(&conn, "elsewhere", r"D:\Other\a.mp4");
+    insert_skipped_file(&conn, r"D:\Other\①a.mp4");
 
     let outcome = queries::rename_watch_folder_videos(&mut conn, &old_folder, &new_folder).unwrap();
     assert_eq!(outcome.renamed_count, 0);
     assert_eq!(outcome.collision_skipped_count, 0);
     assert_eq!(snapshot(&conn, "elsewhere").file_path, r"D:\Other\a.mp4");
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
 }
 
 // --- skipped_files follow the folder rename ---------------------------------
-
-fn insert_skipped_file(conn: &Connection, file_path: &str) {
-    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
-    conn.execute(
-        "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
-         VALUES (?1, ?2, 'unsupported_char', '①')",
-        params![file_path, file_name],
-    )
-    .unwrap();
-}
-
-fn skipped_paths(conn: &Connection) -> Vec<String> {
-    let mut stmt = conn
-        .prepare("SELECT file_path FROM skipped_files ORDER BY file_path")
-        .unwrap();
-    stmt.query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap()
-}
 
 #[test]
 fn rename_rewrites_skipped_files_under_the_folder_including_subfolders() {
@@ -504,22 +398,11 @@ fn rename_treats_a_case_differing_skipped_row_at_the_new_path_as_a_collision() {
 }
 
 #[test]
-fn rename_of_a_folder_with_no_skipped_files_changes_nothing_there() {
-    let (_dir, db) = init_temp_db();
-    let mut conn = db.writer.lock().unwrap();
-    insert_skipped_file(&conn, r"D:\Other\①a.mp4");
-
-    queries::rename_watch_folder_videos(&mut conn, r"C:\Videos", r"C:\Renamed").unwrap();
-
-    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
-}
-
-#[test]
 fn a_failure_while_rewriting_skipped_files_rolls_back_the_video_rewrite() {
     let (dir, db) = init_temp_db();
     let new_folder = dir.path().join("Renamed").to_string_lossy().into_owned();
     let mut conn = db.writer.lock().unwrap();
-    insert_video(&conn, "v1", r"C:\Videos\a.mp4", "online");
+    insert_video(&conn, "v1", r"C:\Videos\a.mp4");
     insert_skipped_file(&conn, r"C:\Videos\①a.mp4");
     conn.execute_batch(
         "CREATE TRIGGER fail_skipped_update BEFORE UPDATE ON skipped_files
