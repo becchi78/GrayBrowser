@@ -145,24 +145,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::CountingNotifier;
+    use crate::test_support::{all_reachable, registry_over};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-
-    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
-
-    fn all_reachable() -> ReachabilityRegistry {
-        registry_over(Arc::new(FakeFolderProbe::default()))
-    }
-
-    struct CountingNotifier(AtomicUsize);
-
-    impl CatalogNotifier for CountingNotifier {
-        fn notify_changed(&self) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
 
     #[test]
     fn a_failed_probe_also_notifies_the_catalog_changed() {
@@ -243,7 +228,7 @@ mod tests {
             db.clone(),
             Arc::clone(&ffmpeg),
             Arc::clone(&notifier),
-            registry_over(Arc::clone(&probe)),
+            registry_over(probe.clone()),
         );
 
         assert_eq!(metadata_attempts_of(&db, "nas-1"), 0);
@@ -266,7 +251,7 @@ mod tests {
         let (_db_dir, db) = init_temp_db();
         register_nas_video(&db, "nas-1");
         let probe = Arc::new(FakeFolderProbe::default());
-        let registry = registry_over(Arc::clone(&probe));
+        let registry = registry_over(probe.clone());
         // Known reachable, so the worker goes ahead; the share then drops.
         assert!(registry.is_reachable(NAS));
         probe.set_reachable(NAS, false);

@@ -471,16 +471,9 @@ pub fn start_one_shot_diff_scan<N: CatalogNotifier + 'static>(
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::{FakeCatalogNotifier, NoopReachabilityNotifier};
+    use crate::events::FakeCatalogNotifier;
+    use crate::test_support::{all_reachable, registry_over};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-
-    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
-
-    fn all_reachable() -> ReachabilityRegistry {
-        registry_over(Arc::new(FakeFolderProbe::default()))
-    }
 
     #[test]
     fn diff_scan_triggers_follow_up_for_a_new_file() {
@@ -578,7 +571,7 @@ mod tests {
         std::fs::write(dir.path().join("movie.mp4"), b"bytes").unwrap();
         let folder = dir.path().to_string_lossy().to_string();
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
-        let registry = registry_over(Arc::clone(&probe));
+        let registry = registry_over(probe.clone());
         let follow_up = Arc::new(FollowUp::with_timing(
             Duration::from_secs(60),
             Duration::from_secs(60),

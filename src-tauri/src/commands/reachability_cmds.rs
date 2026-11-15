@@ -74,7 +74,7 @@ pub fn check_folder_reachability(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::registry_over;
     use gb_core::ports::folder_probe::FolderProbe;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::sync::{Arc, Condvar, Mutex};
@@ -82,10 +82,6 @@ mod tests {
     const NAS: &str = "W:/video";
     const OTHER: &str = "D:/other";
     const HOUR: Duration = Duration::from_secs(3600);
-
-    fn registry_over(probe: Arc<dyn FolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
 
     #[test]
     fn a_folder_that_is_not_a_watch_folder_is_not_probed() {
@@ -169,7 +165,7 @@ mod tests {
     #[test]
     fn reports_only_folders_found_unreachable_and_never_probes() {
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&["W:/video"]));
-        let registry = ReachabilityRegistry::new(probe.clone(), Arc::new(NoopReachabilityNotifier));
+        let registry = registry_over(probe.clone());
         assert!(current_unreachable_folders(&registry).is_empty());
         assert!(probe.calls().is_empty());
 

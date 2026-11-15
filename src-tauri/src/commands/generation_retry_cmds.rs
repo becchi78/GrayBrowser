@@ -397,6 +397,7 @@ pub fn reprobe_missing_metadata(
 mod tests {
     use super::*;
     use crate::db::test_support::{init_temp_db, insert_test_video};
+    use crate::test_support::thumbnail_attempts_of;
 
     /// `retry_thumbnail_generation`/`retry_metadata_probe` need a real
     /// `tauri::AppHandle` to notify with, which this codebase's own
@@ -638,18 +639,6 @@ mod tests {
             attempts, 1,
             "the immediate retry attempt is exactly one attempt, not zero and not two"
         );
-    }
-
-    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
-        db.writer
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
-                [id],
-                |r| r.get(0),
-            )
-            .unwrap()
     }
 
     fn add_failed_attempts(db: &Db, id: &str, n: u32) {

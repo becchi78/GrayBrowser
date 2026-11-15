@@ -154,6 +154,7 @@ mod tests {
     use crate::db::test_support::init_temp_db;
     use crate::events::{FakeCatalogNotifier, NoopReachabilityNotifier};
     use crate::scan::mtime_from_metadata;
+    use crate::test_support::{registry_over, wait_until, Gate};
     use gb_core::ports::folder_probe::FolderProbe;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -178,16 +179,6 @@ mod tests {
         .unwrap()
     }
 
-    fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
-        for _ in 0..400 {
-            if cond() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        cond()
-    }
-
     struct Harness {
         db: Db,
         _db_dir: tempfile::TempDir,
@@ -201,7 +192,7 @@ mod tests {
 
     fn harness(unreachable: &[&str]) -> Harness {
         let probe = Arc::new(FakeFolderProbe::with_unreachable(unreachable));
-        let registry = ReachabilityRegistry::new(probe.clone(), Arc::new(NoopReachabilityNotifier));
+        let registry = registry_over(probe.clone());
         // Prime the registry so the worker's "still unreachable?" check sees
         // the state a real probe would have recorded.
         for folder in unreachable {
@@ -411,28 +402,23 @@ mod tests {
     /// it answers "reachable". Every other folder answers "unreachable".
     struct BlockingProbe {
         blocked: String,
-        closed: Mutex<bool>,
-        cond: Condvar,
-        waiting: AtomicUsize,
+        gate: Gate,
     }
 
     impl BlockingProbe {
         fn new(blocked: &str, closed: bool) -> Arc<Self> {
             Arc::new(Self {
                 blocked: blocked.into(),
-                closed: Mutex::new(closed),
-                cond: Condvar::new(),
-                waiting: AtomicUsize::new(0),
+                gate: Gate::new(closed),
             })
         }
 
         fn close(&self) {
-            *self.closed.lock().unwrap() = true;
+            self.gate.close();
         }
 
         fn release(&self) {
-            *self.closed.lock().unwrap() = false;
-            self.cond.notify_all();
+            self.gate.release();
         }
     }
 
@@ -441,13 +427,7 @@ mod tests {
             if folder != self.blocked {
                 return false;
             }
-            let closed = self.closed.lock().unwrap();
-            if !*closed {
-                return false;
-            }
-            self.waiting.fetch_add(1, Ordering::SeqCst);
-            drop(self.cond.wait_while(closed, |c| *c).unwrap());
-            true
+            self.gate.pass()
         }
     }
 
@@ -457,6 +437,24 @@ mod tests {
             Arc::new(NoopReachabilityNotifier),
             Duration::from_millis(30),
         )
+    }
+
+    /// A harness over `registry` holding one online row under `D:\video` ("in")
+    /// and one under `D:\other` ("o"), both folders just reported unreachable.
+    /// Returns once "in" has been decided: jobs run in order, so the second
+    /// one finishing means the first one has been.
+    fn harness_with_rows_in_video_and_other(registry: ReachabilityRegistry) -> Harness {
+        let h = harness_over(Arc::new(FakeFolderProbe::default()), registry, |_| {
+            Arc::new(|| {})
+        });
+        insert(&h.db, "in", "D:\\video\\a.mp4", "online", 1, 1, "h1");
+        insert(&h.db, "o", "D:\\other\\a.mp4", "online", 1, 1, "h2");
+
+        h.sync.on_unreachable("D:\\video");
+        h.sync.on_unreachable("D:\\other");
+
+        assert!(wait_until(|| h.dedup_runs.load(Ordering::SeqCst) == 1));
+        h
     }
 
     fn is_published(registry: &ReachabilityRegistry, folder: &str) -> bool {
@@ -473,18 +471,8 @@ mod tests {
             thread::spawn(move || registry.is_reachable("D:\\video"))
         };
         assert!(wait_until(|| is_published(&registry, "D:\\video")));
-        let h = harness_over(Arc::new(FakeFolderProbe::default()), registry, |_| {
-            Arc::new(|| {})
-        });
-        insert(&h.db, "in", "D:\\video\\a.mp4", "online", 1, 1, "h1");
-        insert(&h.db, "o", "D:\\other\\a.mp4", "online", 1, 1, "h2");
+        let h = harness_with_rows_in_video_and_other(registry);
 
-        h.sync.on_unreachable("D:\\video");
-        h.sync.on_unreachable("D:\\other");
-
-        // Jobs run in order, so the second one finishing means the first one
-        // has been decided.
-        assert!(wait_until(|| h.dedup_runs.load(Ordering::SeqCst) == 1));
         assert_eq!(status_of(&h.db, "in"), "online");
         assert_eq!(status_of(&h.db, "o"), "offline");
 
@@ -505,16 +493,8 @@ mod tests {
             thread::spawn(move || registry.is_reachable("D:\\video"))
         };
         assert!(wait_until(|| is_published(&registry, "D:\\video")));
-        let h = harness_over(Arc::new(FakeFolderProbe::default()), registry, |_| {
-            Arc::new(|| {})
-        });
-        insert(&h.db, "in", "D:\\video\\a.mp4", "online", 1, 1, "h1");
-        insert(&h.db, "o", "D:\\other\\a.mp4", "online", 1, 1, "h2");
+        let h = harness_with_rows_in_video_and_other(registry);
 
-        h.sync.on_unreachable("D:\\video");
-        h.sync.on_unreachable("D:\\other");
-
-        assert!(wait_until(|| h.dedup_runs.load(Ordering::SeqCst) == 1));
         assert_eq!(status_of(&h.db, "in"), "online");
 
         probe.release();
@@ -531,7 +511,7 @@ mod tests {
             let registry = registry.clone();
             thread::spawn(move || registry.refresh("D:\\video"))
         };
-        assert!(wait_until(|| probe.waiting.load(Ordering::SeqCst) == 1));
+        assert!(wait_until(|| probe.gate.waiting() == 1));
         let h = harness_over(Arc::new(FakeFolderProbe::default()), registry, |_| {
             Arc::new(|| {})
         });
@@ -554,7 +534,7 @@ mod tests {
         let meta = std::fs::metadata(&file).unwrap();
 
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
-        let registry = ReachabilityRegistry::new(probe.clone(), Arc::new(NoopReachabilityNotifier));
+        let registry = registry_over(probe.clone());
         registry.refresh(&folder);
 
         // The first job stops in its duplicate-refresh step, with the worker

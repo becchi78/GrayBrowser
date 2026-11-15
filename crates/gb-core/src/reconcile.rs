@@ -513,7 +513,7 @@ mod tests {
 
     // --- decide_missing_video_ids ---
 
-    fn known_videos(count: usize) -> Vec<KnownOnlineVideo> {
+    pub(super) fn known_videos(count: usize) -> Vec<KnownOnlineVideo> {
         (0..count)
             .map(|i| KnownOnlineVideo {
                 video_id: format!("v{i}"),
@@ -757,17 +757,9 @@ mod tests {
 // with it enabled; a featureless build/clippy would otherwise fail here.
 #[cfg(all(test, feature = "testing"))]
 mod confirm_tests {
+    use super::tests::known_videos;
     use super::*;
     use crate::testing::fake_path_existence::FakePathExistence;
-
-    fn known_videos(count: usize) -> Vec<KnownOnlineVideo> {
-        (0..count)
-            .map(|i| KnownOnlineVideo {
-                video_id: format!("v{i}"),
-                file_path: format!("\\\\nas\\share\\video{i}.mp4"),
-            })
-            .collect()
-    }
 
     fn listing(present: &[&KnownOnlineVideo]) -> EnumerationResult {
         EnumerationResult {

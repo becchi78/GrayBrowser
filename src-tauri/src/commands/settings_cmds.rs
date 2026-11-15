@@ -525,6 +525,7 @@ pub fn rename_watch_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::strings;
     use crate::thumbnail::paths::slot_path;
     use gb_core::ports::dialog::DialogError;
     use gb_core::testing::fake_dialog::FakeFolderPicker;
@@ -620,13 +621,9 @@ mod tests {
 
     // --- reorder / per-folder update check --------------------------------
 
-    fn v(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     fn db_with_folders(folders: &[&str]) -> (tempfile::TempDir, Db) {
         let (dir, db) = crate::db::test_support::init_temp_db();
-        queries::set_watch_folders(&db.writer.lock().unwrap(), &v(folders)).unwrap();
+        queries::set_watch_folders(&db.writer.lock().unwrap(), &strings(folders)).unwrap();
         (dir, db)
     }
 
@@ -635,12 +632,12 @@ mod tests {
         let (_d, db) = db_with_folders(&["A", "B", "C"]);
         let conn = db.writer.lock().unwrap();
         assert_eq!(
-            apply_reorder(&conn, v(&["C", "A", "B"])).unwrap(),
-            v(&["C", "A", "B"])
+            apply_reorder(&conn, strings(&["C", "A", "B"])).unwrap(),
+            strings(&["C", "A", "B"])
         );
         assert_eq!(
             queries::get_watch_folders(&conn).unwrap(),
-            v(&["C", "A", "B"])
+            strings(&["C", "A", "B"])
         );
     }
 
@@ -648,10 +645,18 @@ mod tests {
     fn reorder_rejects_non_permutations_and_leaves_the_stored_order() {
         let (_d, db) = db_with_folders(&["A", "B"]);
         let conn = db.writer.lock().unwrap();
-        for bad in [v(&["A"]), v(&["A", "B", "X"]), v(&["A", "A"]), v(&[])] {
+        for bad in [
+            strings(&["A"]),
+            strings(&["A", "B", "X"]),
+            strings(&["A", "A"]),
+            strings(&[]),
+        ] {
             assert!(apply_reorder(&conn, bad).is_err());
         }
-        assert_eq!(queries::get_watch_folders(&conn).unwrap(), v(&["A", "B"]));
+        assert_eq!(
+            queries::get_watch_folders(&conn).unwrap(),
+            strings(&["A", "B"])
+        );
     }
 
     #[test]
@@ -666,37 +671,46 @@ mod tests {
     fn check_off_adds_without_duplicates_and_on_removes_keeping_order() {
         let (_d, db) = db_with_folders(&["A", "B", "C"]);
         let conn = db.writer.lock().unwrap();
-        assert_eq!(apply_check_enabled(&conn, "C", false).unwrap(), v(&["C"]));
         assert_eq!(
-            apply_check_enabled(&conn, "A", false).unwrap(),
-            v(&["C", "A"])
+            apply_check_enabled(&conn, "C", false).unwrap(),
+            strings(&["C"])
         );
         assert_eq!(
             apply_check_enabled(&conn, "A", false).unwrap(),
-            v(&["C", "A"])
+            strings(&["C", "A"])
+        );
+        assert_eq!(
+            apply_check_enabled(&conn, "A", false).unwrap(),
+            strings(&["C", "A"])
         );
         assert_eq!(
             apply_check_enabled(&conn, "B", true).unwrap(),
-            v(&["C", "A"])
+            strings(&["C", "A"])
         );
-        assert_eq!(apply_check_enabled(&conn, "C", true).unwrap(), v(&["A"]));
-        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["A"]));
+        assert_eq!(
+            apply_check_enabled(&conn, "C", true).unwrap(),
+            strings(&["A"])
+        );
+        assert_eq!(
+            queries::get_watch_check_disabled(&conn).unwrap(),
+            strings(&["A"])
+        );
     }
 
     #[test]
     fn rename_replaces_the_old_path_in_the_disabled_list() {
         let (_d, db) = db_with_folders(&["A", "B"]);
         let conn = db.writer.lock().unwrap();
-        queries::set_watch_check_disabled(&conn, &v(&["B", "A"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &strings(&["B", "A"])).unwrap();
         rename_in_check_disabled(&conn, "A", "A2").unwrap();
         assert_eq!(
             queries::get_watch_check_disabled(&conn).unwrap(),
-            v(&["B", "A2"])
+            strings(&["B", "A2"])
         );
         rename_in_check_disabled(&conn, "Q", "Q2").unwrap();
         assert_eq!(
             queries::get_watch_check_disabled(&conn).unwrap(),
-            v(&["B", "A2"])
+            strings(&["B", "A2"])
         );
     }
 
@@ -704,11 +718,17 @@ mod tests {
     fn remove_drops_the_folder_from_the_disabled_list() {
         let (_d, db) = db_with_folders(&["A", "B"]);
         let conn = db.writer.lock().unwrap();
-        queries::set_watch_check_disabled(&conn, &v(&["A", "B"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &strings(&["A", "B"])).unwrap();
         remove_from_check_disabled(&conn, "A").unwrap();
-        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
+        assert_eq!(
+            queries::get_watch_check_disabled(&conn).unwrap(),
+            strings(&["B"])
+        );
         remove_from_check_disabled(&conn, "Q").unwrap();
-        assert_eq!(queries::get_watch_check_disabled(&conn).unwrap(), v(&["B"]));
+        assert_eq!(
+            queries::get_watch_check_disabled(&conn).unwrap(),
+            strings(&["B"])
+        );
     }
 
     // --- NAS poll interval ------------------------------------------------
@@ -719,7 +739,7 @@ mod tests {
         let conn = db.writer.lock().unwrap();
         let (secs, folders) = apply_nas_poll_interval(&conn, 30).unwrap();
         assert_eq!(secs, 1800);
-        assert_eq!(folders, v(&["A", "B"]));
+        assert_eq!(folders, strings(&["A", "B"]));
         assert_eq!(queries::get_nas_poll_interval_secs(&conn).unwrap(), 1800);
     }
 

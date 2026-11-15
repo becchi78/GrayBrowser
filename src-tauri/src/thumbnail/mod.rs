@@ -441,24 +441,9 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::{all_reachable, registry_over};
+    use crate::test_support::{thumbnail_attempts_of, CountingNotifier};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-
-    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
-
-    fn all_reachable() -> ReachabilityRegistry {
-        registry_over(Arc::new(FakeFolderProbe::default()))
-    }
-
-    struct CountingNotifier(AtomicUsize);
-
-    impl CatalogNotifier for CountingNotifier {
-        fn notify_changed(&self) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
 
     #[derive(Default)]
     struct ProgressRecorder(Mutex<Vec<(u32, u32)>>);
@@ -986,18 +971,6 @@ mod tests {
         (id.to_string(), PathBuf::from(format!("{NAS}/{id}.mp4")))
     }
 
-    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
-        db.writer
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
-                rusqlite::params![id],
-                |r| r.get(0),
-            )
-            .unwrap()
-    }
-
     fn watch_folders() -> Vec<String> {
         vec![NAS.to_string(), "C:/videos".to_string()]
     }
@@ -1026,7 +999,7 @@ mod tests {
                 nas_entry("nas-2"),
                 pending_entry("local-1"),
             ],
-            registry_over(Arc::clone(&probe)),
+            registry_over(probe.clone()),
         );
 
         assert_eq!(thumbnail_attempts_of(&db, "nas-1"), 0);
@@ -1048,7 +1021,7 @@ mod tests {
         let thumbs = tempfile::tempdir().unwrap();
         insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");
         let probe = Arc::new(FakeFolderProbe::default());
-        let registry = registry_over(Arc::clone(&probe));
+        let registry = registry_over(probe.clone());
         // Known reachable, so the worker goes ahead; the share then drops.
         assert!(registry.is_reachable(NAS));
         probe.set_reachable(NAS, false);
@@ -1108,7 +1081,7 @@ mod tests {
             failing_ffmpeg(),
             Arc::new(CountingNotifier(AtomicUsize::new(0))),
             ids.iter().map(|id| nas_entry(id)).collect(),
-            registry_over(Arc::clone(&probe)),
+            registry_over(probe.clone()),
         );
 
         assert_eq!(probe.call_count_for(NAS), 1);

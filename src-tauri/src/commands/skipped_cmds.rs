@@ -351,7 +351,8 @@ pub fn rename_skipped_file(
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::{FakeCatalogNotifier, FakeReachabilityNotifier};
+    use crate::events::FakeCatalogNotifier;
+    use crate::test_support::registry_over;
     use gb_core::scan_pipeline::NewSkippedFile;
     use gb_core::testing::fake_file_rename::FakeFileRenamer;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
@@ -383,10 +384,7 @@ mod tests {
     }
 
     fn registry(unreachable: &[&str]) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(
-            Arc::new(FakeFolderProbe::with_unreachable(unreachable)),
-            Arc::new(FakeReachabilityNotifier::default()),
-        )
+        registry_over(Arc::new(FakeFolderProbe::with_unreachable(unreachable)))
     }
 
     fn watch(db: &Db, folders: &[&str]) {

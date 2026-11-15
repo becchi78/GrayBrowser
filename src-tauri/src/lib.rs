@@ -17,6 +17,9 @@ pub mod wb_import;
 mod menu;
 mod startup;
 
+#[cfg(test)]
+mod test_support;
+
 use std::sync::Arc;
 
 use tauri::Manager;

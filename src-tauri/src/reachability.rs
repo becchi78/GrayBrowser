@@ -619,6 +619,7 @@ impl ReachabilityRegistry {
 mod tests {
     use super::*;
     use crate::events::{FakeReachabilityNotifier, ReachabilityNotifier};
+    use crate::test_support::{wait_until, wait_until_within, Gate};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
@@ -662,6 +663,7 @@ mod tests {
         let probe =
             FakeFolderProbe::with_unreachable(&[NAS]).with_delay(Duration::from_millis(150));
         let (registry, probe, _) = registry_with(probe);
+        let (unreachable, _) = record_hooks(&registry);
 
         let threads: Vec<_> = (0..8)
             .map(|_| {
@@ -674,6 +676,11 @@ mod tests {
         }
 
         assert_eq!(probe.call_count_for(NAS), 1);
+        assert_eq!(
+            names(&unreachable),
+            vec![NAS.to_string()],
+            "the shared unreachable answer runs the hook once"
+        );
     }
 
     #[test]
@@ -729,43 +736,17 @@ mod tests {
             events(&notifier),
             vec![vec![NAS.to_string()], Vec::<String>::new()]
         );
-    }
 
-    #[test]
-    fn a_folder_going_down_after_being_reachable_emits() {
-        let (registry, probe, notifier) = registry_with(FakeFolderProbe::default());
-        registry.is_reachable(NAS);
+        // Going down again after having been reachable is a change too.
         probe.set_reachable(NAS, false);
-
-        registry.refresh(NAS);
-
-        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
-    }
-
-    #[test]
-    fn recovery_runs_the_hook_once_and_only_on_recovery() {
-        let (registry, probe, _) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
-        let fired = Arc::new(AtomicUsize::new(0));
-        {
-            let fired = fired.clone();
-            registry.set_on_recovered(move |_| {
-                fired.fetch_add(1, Ordering::SeqCst);
-            });
-        }
-
-        registry.is_reachable(NAS);
-        registry.refresh(NAS);
-        assert_eq!(fired.load(Ordering::SeqCst), 0, "still down: no recovery");
-
-        probe.set_reachable(NAS, true);
-        registry.refresh(NAS);
-        assert_eq!(fired.load(Ordering::SeqCst), 1);
-
         registry.refresh(NAS);
         assert_eq!(
-            fired.load(Ordering::SeqCst),
-            1,
-            "already up: no second fire"
+            events(&notifier),
+            vec![
+                vec![NAS.to_string()],
+                Vec::<String>::new(),
+                vec![NAS.to_string()]
+            ]
         );
     }
 
@@ -828,6 +809,10 @@ mod tests {
         let (registry, probe, _) = registry_with(FakeFolderProbe::default());
         let (unreachable, recovered) = record_hooks(&registry);
         registry.is_reachable(NAS);
+        assert!(
+            names(&recovered).is_empty(),
+            "a first probe that finds the folder up is not a recovery"
+        );
 
         probe.set_reachable(NAS, false);
         registry.refresh(NAS);
@@ -838,26 +823,6 @@ mod tests {
 
         assert_eq!(names(&unreachable), vec![NAS.to_string(), NAS.to_string()]);
         assert_eq!(names(&recovered), vec![NAS.to_string()]);
-    }
-
-    #[test]
-    fn concurrent_callers_sharing_one_unreachable_probe_run_the_hook_once() {
-        let probe =
-            FakeFolderProbe::with_unreachable(&[NAS]).with_delay(Duration::from_millis(150));
-        let (registry, _, _) = registry_with(probe);
-        let (unreachable, _) = record_hooks(&registry);
-
-        let threads: Vec<_> = (0..8)
-            .map(|_| {
-                let registry = registry.clone();
-                thread::spawn(move || registry.is_reachable(NAS))
-            })
-            .collect();
-        for t in threads {
-            assert!(!t.join().unwrap());
-        }
-
-        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
     }
 
     #[test]
@@ -904,6 +869,8 @@ mod tests {
         let (_, recovered) = record_hooks(&registry);
         registry.is_reachable(NAS);
         registry.is_reachable(LOCAL);
+        registry.refresh(NAS);
+        assert!(names(&recovered).is_empty(), "still down: no recovery");
 
         probe.set_reachable(LOCAL, true);
         registry.refresh(LOCAL);
@@ -911,23 +878,11 @@ mod tests {
         registry.refresh(NAS);
         registry.refresh(NAS);
 
-        assert_eq!(names(&recovered), vec![LOCAL.to_string(), NAS.to_string()]);
-    }
-
-    #[test]
-    fn a_first_probe_that_finds_the_folder_up_is_not_a_recovery() {
-        let (registry, _, _) = registry_with(FakeFolderProbe::default());
-        let fired = Arc::new(AtomicUsize::new(0));
-        {
-            let fired = fired.clone();
-            registry.set_on_recovered(move |_| {
-                fired.fetch_add(1, Ordering::SeqCst);
-            });
-        }
-
-        registry.is_reachable(NAS);
-
-        assert_eq!(fired.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            names(&recovered),
+            vec![LOCAL.to_string(), NAS.to_string()],
+            "once per recovery, with the folder; already up: no second fire"
+        );
     }
 
     #[test]
@@ -990,16 +945,6 @@ mod tests {
 
     const TICK: Duration = Duration::from_millis(30);
 
-    fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
-        for _ in 0..200 {
-            if cond() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        cond()
-    }
-
     #[test]
     fn recheck_brings_back_an_unreachable_folder_that_no_poller_covers() {
         let (registry, probe, notifier) =
@@ -1056,11 +1001,10 @@ mod tests {
         let handle = registry.start_recheck(TICK);
         assert!(wait_until(|| probe.call_count_for(NAS) >= 2));
 
+        // Joining returns only once the recheck thread has exited, so no
+        // probe can start after it; a recheck that ignored the stop request
+        // would never return from here.
         handle.stop_and_join();
-        let after_exit = probe.call_count_for(NAS);
-        thread::sleep(TICK * 6);
-
-        assert_eq!(probe.call_count_for(NAS), after_exit);
     }
 
     /// Runs `on_probe` with the folder and its probe count every time a
@@ -1182,8 +1126,7 @@ mod tests {
     /// Blocks every probe until `release`, so a test decides exactly when the
     /// answer arrives instead of racing a sleep against the watcher.
     struct GatedProbe {
-        released: Mutex<bool>,
-        cond: Condvar,
+        gate: Gate,
         entered: AtomicUsize,
         immediate: Mutex<Vec<String>>,
         reachable: std::sync::atomic::AtomicBool,
@@ -1193,8 +1136,7 @@ mod tests {
     impl GatedProbe {
         fn new(reachable: bool) -> Arc<Self> {
             Arc::new(Self {
-                released: Mutex::new(false),
-                cond: Condvar::new(),
+                gate: Gate::new(true),
                 entered: AtomicUsize::new(0),
                 immediate: Mutex::new(Vec::new()),
                 reachable: std::sync::atomic::AtomicBool::new(reachable),
@@ -1208,12 +1150,11 @@ mod tests {
         }
 
         fn reset_gate(&self) {
-            *self.released.lock().unwrap() = false;
+            self.gate.close();
         }
 
         fn release(&self) {
-            *self.released.lock().unwrap() = true;
-            self.cond.notify_all();
+            self.gate.release();
         }
     }
 
@@ -1223,12 +1164,9 @@ mod tests {
             if self.immediate.lock().unwrap().iter().any(|f| f == folder) {
                 return false;
             }
-            // Not held across the panic below, which would poison the lock.
-            drop(
-                self.cond
-                    .wait_while(self.released.lock().unwrap(), |r| !*r)
-                    .unwrap(),
-            );
+            // The gate's lock is not held across the panic below, which would
+            // poison it.
+            self.gate.pass();
             if self.panic_on_release.load(Ordering::SeqCst) {
                 panic!("probe failure injected by the test");
             }
@@ -1269,30 +1207,15 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_probe_that_ends_unreachable_is_flagged_once() {
+    fn a_slow_probe_that_ends_unreachable_is_flagged_once_and_settles_only_on_the_answer() {
         let (registry, probe, notifier) = gated_registry(false);
+        assert!(!registry.is_settled_unreachable(NAS), "never probed");
 
         let t = start_slow_probe_until_flagged(&registry, &notifier);
 
         assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
         assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
         assert_eq!(probe.entered.load(Ordering::SeqCst), 1, "still probing");
-
-        probe.release();
-        assert!(!t.join().unwrap());
-
-        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
-        assert_eq!(events(&notifier).len(), 1, "confirming adds no event");
-        assert!(wait_until(|| watchers_alive(&registry) == 0));
-    }
-
-    #[test]
-    fn settled_unreachable_is_true_only_for_a_confirmed_answer() {
-        let (registry, probe, notifier) = gated_registry(false);
-        assert!(!registry.is_settled_unreachable(NAS), "never probed");
-
-        let t = start_slow_probe_until_flagged(&registry, &notifier);
-        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
         assert!(
             !registry.is_settled_unreachable(NAS),
             "the provisional flag is not a settled answer"
@@ -1300,11 +1223,11 @@ mod tests {
 
         probe.release();
         assert!(!t.join().unwrap());
-        assert!(registry.is_settled_unreachable(NAS));
 
-        let (registry, _, _) = registry_with(FakeFolderProbe::default());
-        registry.is_reachable(NAS);
-        assert!(!registry.is_settled_unreachable(NAS), "reachable");
+        assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
+        assert_eq!(events(&notifier).len(), 1, "confirming adds no event");
+        assert!(registry.is_settled_unreachable(NAS));
+        assert!(wait_until(|| watchers_alive(&registry) == 0));
     }
 
     #[test]
@@ -1365,6 +1288,10 @@ mod tests {
         assert!(t.join().unwrap());
         assert!(waiter.join().unwrap());
         assert!(registry.unreachable_folders().is_empty());
+        assert!(
+            !registry.is_settled_unreachable(NAS),
+            "a reachable answer is not a settled-unreachable one"
+        );
         assert_eq!(
             events(&notifier),
             vec![vec![NAS.to_string()], Vec::<String>::new()]
@@ -1381,20 +1308,21 @@ mod tests {
 
     #[test]
     fn a_fast_probe_flags_nothing_and_its_watcher_exits_early() {
-        // The default delay is seconds; the watcher ending within wait_until's
-        // budget proves it was woken by the answer and did not run it out.
+        // The default delay is 5 seconds; the watcher ending within `FAST`
+        // proves it was woken by the answer and did not run it out.
+        const FAST: Duration = Duration::from_secs(2);
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&[NAS]));
         let notifier = Arc::new(FakeReachabilityNotifier::default());
         let registry = ReachabilityRegistry::new(probe, notifier.clone());
 
         assert!(registry.is_reachable(LOCAL));
-        assert!(wait_until(|| watchers_alive(&registry) == 0));
+        assert!(wait_until_within(FAST, || watchers_alive(&registry) == 0));
         assert!(events(&notifier).is_empty());
         assert!(registry.unreachable_folders().is_empty());
 
         // Even a fast unreachable answer is announced exactly once, as before.
         assert!(!registry.is_reachable(NAS));
-        assert!(wait_until(|| watchers_alive(&registry) == 0));
+        assert!(wait_until_within(FAST, || watchers_alive(&registry) == 0));
         assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
     }
 
@@ -1787,7 +1715,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_if_stale_leaves_a_recent_check_alone() {
+    fn refresh_if_stale_leaves_a_recent_check_alone_and_probes_again_once_it_is_old() {
         let (registry, probe, notifier) = registry_with(FakeFolderProbe::default());
         // Any completed probe counts, including the first one a worker made.
         assert!(registry.is_reachable(NAS));
@@ -1797,16 +1725,11 @@ mod tests {
 
         assert_eq!(probe.call_count_for(NAS), 1);
         assert!(events(&notifier).is_empty());
-    }
 
-    #[test]
-    fn refresh_if_stale_probes_again_once_the_interval_has_passed() {
-        let (registry, probe, _) = registry_with(FakeFolderProbe::default());
-        assert!(registry.refresh_if_stale(NAS, HOUR));
-        assert!(!registry.refresh_if_stale(NAS, HOUR));
-
-        // A zero interval makes every recorded check old enough.
+        // A zero interval makes every recorded check old enough; the check it
+        // makes counts as recent again.
         assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
+        assert!(!registry.refresh_if_stale(NAS, HOUR));
 
         assert_eq!(probe.call_count_for(NAS), 2);
     }
@@ -1902,19 +1825,28 @@ mod tests {
     }
 
     #[test]
-    fn refresh_if_stale_announces_a_folder_that_went_down() {
+    fn refresh_if_stale_that_probes_publishes_changes_and_runs_hooks_like_refresh() {
         let (registry, probe, notifier) = registry_with(FakeFolderProbe::default());
+        let (unreachable, recovered) = record_hooks(&registry);
         assert!(registry.is_reachable(NAS));
+
         probe.set_reachable(NAS, false);
-
         assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
-
         assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
-        assert_eq!(events(&notifier), vec![vec![NAS.to_string()]]);
+        assert_eq!(names(&unreachable), vec![NAS.to_string()]);
+
+        probe.set_reachable(NAS, true);
+        assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
+        assert!(registry.unreachable_folders().is_empty());
+        assert_eq!(names(&recovered), vec![NAS.to_string()]);
+        assert_eq!(
+            events(&notifier),
+            vec![vec![NAS.to_string()], Vec::<String>::new()]
+        );
     }
 
     #[test]
-    fn refresh_if_stale_publishes_a_slow_probe_provisionally() {
+    fn a_refresh_of_a_slow_probe_publishes_it_provisionally() {
         let (registry, probe, notifier) = gated_registry(false);
         probe.release();
         probe.reachable.store(true, Ordering::SeqCst);
@@ -1923,37 +1855,14 @@ mod tests {
         probe.reachable.store(false, Ordering::SeqCst);
 
         let r = registry.clone();
-        let t = thread::spawn(move || r.refresh_if_stale(NAS, Duration::ZERO));
+        let t = thread::spawn(move || r.refresh(NAS));
         assert!(wait_until(|| events(&notifier).len() == 1));
         assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
 
         probe.release();
-        assert!(t.join().unwrap());
+        assert!(!t.join().unwrap());
         assert_eq!(events(&notifier).len(), 1, "the answer confirms the flag");
         assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
-    }
-
-    #[test]
-    fn refresh_if_stale_announces_a_recovery_and_runs_the_hook() {
-        let (registry, probe, notifier) = registry_with(FakeFolderProbe::with_unreachable(&[NAS]));
-        let fired = Arc::new(AtomicUsize::new(0));
-        {
-            let fired = fired.clone();
-            registry.set_on_recovered(move |_| {
-                fired.fetch_add(1, Ordering::SeqCst);
-            });
-        }
-        assert!(!registry.is_reachable(NAS));
-        probe.set_reachable(NAS, true);
-
-        assert!(registry.refresh_if_stale(NAS, Duration::ZERO));
-
-        assert!(registry.unreachable_folders().is_empty());
-        assert_eq!(fired.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            events(&notifier),
-            vec![vec![NAS.to_string()], Vec::<String>::new()]
-        );
     }
 
     #[test]

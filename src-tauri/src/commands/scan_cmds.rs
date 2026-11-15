@@ -359,26 +359,26 @@ pub fn list_skipped_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn v(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
+    use crate::test_support::{registry_over, strings};
 
     #[test]
     fn scan_targets_exclude_folders_with_the_update_check_off() {
         let (_d, db) = crate::db::test_support::init_temp_db();
         let conn = db.writer.lock().unwrap();
-        queries::set_watch_folders(&conn, &v(&["A", "B", "C"])).unwrap();
-        queries::set_watch_check_disabled(&conn, &v(&["B"])).unwrap();
-        assert_eq!(load_scan_target_folders(&conn).unwrap(), v(&["A", "C"]));
+        queries::set_watch_folders(&conn, &strings(&["A", "B", "C"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &strings(&["B"])).unwrap();
+        assert_eq!(
+            load_scan_target_folders(&conn).unwrap(),
+            strings(&["A", "C"])
+        );
     }
 
     #[test]
     fn scan_targets_are_empty_when_every_folder_is_unchecked() {
         let (_d, db) = crate::db::test_support::init_temp_db();
         let conn = db.writer.lock().unwrap();
-        queries::set_watch_folders(&conn, &v(&["A", "B"])).unwrap();
-        queries::set_watch_check_disabled(&conn, &v(&["A", "B"])).unwrap();
+        queries::set_watch_folders(&conn, &strings(&["A", "B"])).unwrap();
+        queries::set_watch_check_disabled(&conn, &strings(&["A", "B"])).unwrap();
         assert!(load_scan_target_folders(&conn).unwrap().is_empty());
     }
 
@@ -386,8 +386,11 @@ mod tests {
     fn scan_targets_include_everything_when_nothing_is_unchecked() {
         let (_d, db) = crate::db::test_support::init_temp_db();
         let conn = db.writer.lock().unwrap();
-        queries::set_watch_folders(&conn, &v(&["A", "B"])).unwrap();
-        assert_eq!(load_scan_target_folders(&conn).unwrap(), v(&["A", "B"]));
+        queries::set_watch_folders(&conn, &strings(&["A", "B"])).unwrap();
+        assert_eq!(
+            load_scan_target_folders(&conn).unwrap(),
+            strings(&["A", "B"])
+        );
     }
 
     fn video_row(thumbnail_ready: bool) -> queries::VideoRow {
@@ -463,21 +466,10 @@ mod tests {
         }
     }
 
-    fn registry_with(
-        probe: Arc<dyn gb_core::ports::folder_probe::FolderProbe>,
-    ) -> ReachabilityRegistry {
-        use crate::events::FakeReachabilityNotifier;
-        ReachabilityRegistry::new(probe, Arc::new(FakeReachabilityNotifier::default()))
-    }
-
-    fn strings(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
     #[test]
     fn partition_keeps_reachable_folders_in_original_order() {
         use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-        let registry = registry_with(Arc::new(FakeFolderProbe::default()));
+        let registry = registry_over(Arc::new(FakeFolderProbe::default()));
         let folders = strings(&["C:/c", "C:/a", "C:/b"]);
 
         let (reachable, unreachable) = partition_by_reachability(&folders, &registry);
@@ -489,7 +481,7 @@ mod tests {
     #[test]
     fn partition_separates_unreachable_folders_keeping_order() {
         use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-        let registry = registry_with(Arc::new(FakeFolderProbe::with_unreachable(&[
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
             "W:/z", "W:/y",
         ])));
         let folders = strings(&["W:/z", "C:/a", "W:/y", "C:/b"]);
@@ -504,7 +496,7 @@ mod tests {
     fn partition_probes_folders_that_were_never_checked_and_uses_the_cache_after() {
         use gb_core::testing::fake_folder_probe::FakeFolderProbe;
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&["W:/n"]));
-        let registry = registry_with(probe.clone());
+        let registry = registry_over(probe.clone());
         let folders = strings(&["C:/a", "W:/n"]);
 
         partition_by_reachability(&folders, &registry);
@@ -546,7 +538,7 @@ mod tests {
         }
 
         let folders = strings(&["W:/a", "W:/b", "W:/c"]);
-        let registry = registry_with(Arc::new(RendezvousProbe {
+        let registry = registry_over(Arc::new(RendezvousProbe {
             expected: folders.len(),
             in_flight: AtomicUsize::new(0),
         }));
@@ -592,7 +584,7 @@ mod tests {
             released: Mutex::new(false),
             gate: Condvar::new(),
         });
-        let registry = registry_with(probe.clone());
+        let registry = registry_over(probe.clone());
         assert!(!registry.is_reachable("W:/down"));
 
         let rechecker = {
@@ -633,7 +625,7 @@ mod tests {
 
         let (_d, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
-        let registry = registry_with(Arc::new(FakeFolderProbe::with_unreachable(&[
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
             "W:/a", "W:/b",
         ])));
 
@@ -664,7 +656,7 @@ mod tests {
 
         // The share looks empty, as a dead mount can.
         std::fs::remove_file(down.path().join("a.mp4")).unwrap();
-        let registry = registry_with(Arc::new(FakeFolderProbe::with_unreachable(&[
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&[
             down_path.as_str()
         ])));
 
@@ -680,7 +672,6 @@ mod tests {
     #[test]
     fn skipped_list_flags_only_files_verifiably_gone() {
         use crate::db::test_support::init_temp_db;
-        use crate::events::FakeReachabilityNotifier;
         use gb_core::scan_pipeline::NewSkippedFile;
         use gb_core::testing::fake_folder_probe::FakeFolderProbe;
         use gb_core::testing::fake_path_existence::FakePathExistence;
@@ -708,10 +699,7 @@ mod tests {
         }
         // W:/n is down; its parent "exists" in the fake, so only the
         // reachability check can keep its row from reading as missing.
-        let registry = ReachabilityRegistry::new(
-            Arc::new(FakeFolderProbe::with_unreachable(&["W:/n"])),
-            Arc::new(FakeReachabilityNotifier::default()),
-        );
+        let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&["W:/n"])));
         let fs = FakePathExistence::with_paths(&["C:/a", "C:/a/here\u{2460}.mp4", "W:/n"]);
 
         let list = list_skipped_files_impl(&db, &registry, &fs).unwrap();

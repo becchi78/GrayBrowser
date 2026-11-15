@@ -978,7 +978,7 @@ fn reconcile_missing_videos(
 pub(crate) mod move_fixture {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::registry_over;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::fs;
     use std::path::PathBuf;
@@ -1008,8 +1008,7 @@ pub(crate) mod move_fixture {
                 .collect();
             queries::set_watch_folders(&db.writer.lock().unwrap(), &watch_folders).unwrap();
             let probe = Arc::new(FakeFolderProbe::default());
-            let registry =
-                ReachabilityRegistry::new(probe.clone(), Arc::new(NoopReachabilityNotifier));
+            let registry = registry_over(probe.clone());
             Self {
                 db,
                 thumbs: tempfile::tempdir().unwrap(),

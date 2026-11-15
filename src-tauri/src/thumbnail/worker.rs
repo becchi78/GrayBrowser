@@ -284,6 +284,7 @@ pub fn list_all_videos_missing_thumbnails(
 mod tests {
     use super::*;
     use crate::db::test_support::{init_temp_db, insert_test_video};
+    use crate::test_support::{rename_onto_dir_error_text, thumbnail_attempts_of};
     use gb_core::ports::ffmpeg::FfmpegError;
     use gb_core::testing::fake_ffmpeg::FakeCall;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
@@ -1018,16 +1019,6 @@ mod tests {
         assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-5"));
     }
 
-    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
-        let conn = db.writer.lock().unwrap();
-        conn.query_row(
-            "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .unwrap()
-    }
-
     #[test]
     fn rename_failure_returns_err_counts_one_attempt_and_leaves_no_files_behind() {
         let (_db_dir, db) = init_temp_db();
@@ -1111,16 +1102,6 @@ mod tests {
             tmp_paths.len(),
             "every call's tmp paths must be distinct from the other call's"
         );
-    }
-
-    /// The `io::Error` text a rename of a plain file onto `blocker` (an
-    /// existing directory) produces on this machine, so the expected
-    /// messages don't hard-code an OS- and locale-dependent string.
-    fn rename_onto_dir_error_text(blocker: &Path) -> String {
-        let probe_dir = tempfile::tempdir().unwrap();
-        let probe = probe_dir.path().join("probe.tmp");
-        std::fs::write(&probe, b"probe").unwrap();
-        std::fs::rename(&probe, blocker).unwrap_err().to_string()
     }
 
     #[test]

@@ -226,9 +226,9 @@ pub fn delete_duplicate_video_and_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_support::init_temp_db;
     use crate::dedup::{DuplicateGroupKind, DuplicateGroupMember};
     use crate::events::FakeCatalogNotifier;
+    use crate::test_support::LibraryEnv;
     use gb_core::ports::drive_type::DriveTypeError;
     use gb_core::ports::trash::TrashError;
     use gb_core::testing::fake_drive_type::FakeDriveTypeDetector;
@@ -238,78 +238,23 @@ mod tests {
 
     const CONTENT: &[u8] = b"duplicate video bytes";
 
-    struct Env {
-        dir: tempfile::TempDir,
-        db: Db,
-        folder: PathBuf,
-        thumbs: PathBuf,
+    struct Env(LibraryEnv);
+
+    impl std::ops::Deref for Env {
+        type Target = LibraryEnv;
+        fn deref(&self) -> &LibraryEnv {
+            &self.0
+        }
     }
 
     impl Env {
         fn new() -> Self {
-            let (dir, db) = init_temp_db();
-            let folder = dir.path().join("lib");
-            std::fs::create_dir_all(&folder).unwrap();
-            let thumbs = dir.path().join("thumbs");
-            {
-                let conn = db.writer.lock().unwrap();
-                crate::db::queries::set_watch_folders(
-                    &conn,
-                    &[folder.to_string_lossy().into_owned()],
-                )
-                .unwrap();
-            }
-            Self {
-                dir,
-                db,
-                folder,
-                thumbs,
-            }
-        }
-
-        fn insert_row(&self, id: &str, path: &Path, status: &str, size: i64) {
-            let conn = self.db.writer.lock().unwrap();
-            conn.execute(
-                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
-                 VALUES (?1, ?2, ?3, ?4, 'h', ?5)",
-                rusqlite::params![
-                    id,
-                    path.to_string_lossy(),
-                    path.file_name().unwrap().to_string_lossy(),
-                    size,
-                    status
-                ],
-            )
-            .unwrap();
+            Self(LibraryEnv::new())
         }
 
         /// A throwaway file inside the registered folder plus its row.
         fn add_video(&self, id: &str, status: &str) -> PathBuf {
-            let path = self.folder.join(format!("{id}.mp4"));
-            std::fs::write(&path, CONTENT).unwrap();
-            self.insert_row(id, &path, status, CONTENT.len() as i64);
-            path
-        }
-
-        fn row_exists(&self, id: &str) -> bool {
-            crate::db::queries::find_video_by_id(&self.db.read_pool, id)
-                .unwrap()
-                .is_some()
-        }
-
-        fn tag_count(&self, id: &str) -> i64 {
-            let conn = self.db.read_pool.get().unwrap();
-            conn.query_row(
-                "SELECT COUNT(*) FROM video_tags WHERE video_id = ?1",
-                [id],
-                |r| r.get(0),
-            )
-            .unwrap()
-        }
-
-        fn add_tag(&self, id: &str) {
-            let mut conn = self.db.writer.lock().unwrap();
-            crate::db::queries::assign_tag_to_video(&mut conn, id, "tag").unwrap();
+            self.add_video_with(id, status, CONTENT)
         }
 
         fn thumb_path(&self, id: &str, path: &Path) -> PathBuf {

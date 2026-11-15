@@ -359,17 +359,9 @@ pub fn refresh_duplicate_groups<N>(
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::{all_reachable, registry_over};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
     use std::fs;
-
-    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
-
-    fn all_reachable() -> ReachabilityRegistry {
-        registry_over(Arc::new(FakeFolderProbe::default()))
-    }
 
     fn insert_online_video(db: &Db, id: &str, file_path: &Path, quick_hash: &str, file_size: i64) {
         let conn = db.writer.lock().unwrap();
@@ -714,7 +706,7 @@ mod tests {
         queries::set_watch_folders(&db.writer.lock().unwrap(), std::slice::from_ref(&folder))
             .unwrap();
         let probe = Arc::new(FakeFolderProbe::with_unreachable(&[folder.as_str()]));
-        let registry = registry_over(Arc::clone(&probe));
+        let registry = registry_over(probe.clone());
 
         let groups = detect_duplicate_groups(&db, &registry).unwrap();
 
