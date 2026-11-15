@@ -55,6 +55,7 @@ pub struct UnreadableRetry {
 impl UnreadableRetry {
     /// An `UnreadableRetry` whose `defer` does nothing and owns no thread; used
     /// where no retry is wanted (tests).
+    #[cfg(test)]
     pub fn noop() -> Self {
         Self { inner: None }
     }

@@ -207,10 +207,12 @@ impl RealtimeWatchManager {
         *self.unreadable_retry.lock().unwrap() = Some(new_retry);
     }
 
+    #[cfg(test)]
     pub fn active_handle_count(&self) -> usize {
         self.handles.lock().unwrap().len()
     }
 
+    #[cfg(test)]
     pub fn active_nas_poller_count(&self) -> usize {
         self.nas_pollers.lock().unwrap().len()
     }
