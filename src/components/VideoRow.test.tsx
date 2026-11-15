@@ -2,6 +2,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import * as api from "../api";
+import { THUMBNAIL_CACHE_MAX_ENTRIES } from "../lib/boundedCache";
 import { THUMBNAIL_PLACEHOLDER_LABELS } from "../lib/thumbnailPlaceholder";
 import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
@@ -185,6 +186,19 @@ test("取得したらキャッシュに入り、画像の alt はファイル名
     expect(img).toHaveAttribute("alt", "a.mp4");
     expect(img).toHaveAttribute("loading", "lazy");
   }
+});
+
+// 追い出しの規則そのものは lib(boundedCache)が確かめる。ここは、取得結果の登録が
+// 追い出しを通ることを確かめる。
+test("キャッシュが上限を超えたら最も古いエントリが追い出される", async () => {
+  const cache = new Map<string, string[]>();
+  for (let i = 0; i < THUMBNAIL_CACHE_MAX_ENTRIES; i++) cache.set(`old${i}:0`, [`old${i}`]);
+  await renderRow({ cache });
+
+  expect(cache.size).toBe(THUMBNAIL_CACHE_MAX_ENTRIES);
+  expect(cache.has("old0:0")).toBe(false);
+  expect(cache.has("old1:0")).toBe(true);
+  expect(cache.get("a:0")).toEqual(urlsOf("a"));
 });
 
 test("取得結果が null なら何も変わらない", async () => {

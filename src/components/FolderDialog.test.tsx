@@ -468,7 +468,7 @@ test.each([
     note: "「更新チェック」が入っているフォルダを、あらためて全件確認します。チェックを外したフォルダは対象外です。",
   },
 ])(
-  "$state とき、再スキャンを押せるか: $enabled。理由か対象の説明を出す",
+  "$state とき、再スキャンの押せる状態は $enabled で、理由か対象の説明を出す",
   async ({ arm, expectRows, enabled, note }) => {
     arm();
     await renderOpen({ expectRows });

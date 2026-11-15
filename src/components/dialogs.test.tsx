@@ -629,6 +629,17 @@ test.each(CHILDREN)(
   },
 );
 
+test.each(CHILDREN)("$pair の子は、中をクリックしても閉じず、親も閉じない", async ({ open: openPair }) => {
+  const { user, parent, child, parentClosed } = await openPair();
+
+  await user.click(within(child).getByRole("heading"));
+  await user.click(child);
+
+  expect(child).toBeInTheDocument();
+  expect(parent).toBeInTheDocument();
+  expect(parentClosed()).toBe(false);
+});
+
 test.each(CHILDREN)("$pair の子は、背景のクリックで子だけが閉じる", async ({ open: openPair }) => {
   const { user, parent, child, parentClosed, assertNothingExecuted } = await openPair();
 

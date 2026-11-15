@@ -620,7 +620,7 @@ test("クリック・Ctrl・Shift のクリックで選択が変わり、件数�
   expect(selectedIds()).toEqual(["c"]);
   expect(multiSelectedIds()).toEqual([]);
 
-  expect(onSelectionCountChange).toHaveBeenLastCalledWith(1);
+  expect(onSelectionCountChange.mock.calls).toEqual([[0], [1], [2], [4], [3], [1]]);
 });
 
 test("⌘ のクリックは Ctrl と同じく1件ずつ切り替える", async () => {
@@ -640,7 +640,6 @@ test("Ctrl+A / ⌘+A で全件を選び(既定動作は止める)、Esc で選�
   expect(fireEvent.keyDown(list(), { key: "a", ctrlKey: true })).toBe(false);
   expect(selectedIds()).toEqual(["a", "b", "c"]);
   expect(multiSelectedIds()).toEqual(["a", "b", "c"]);
-  expect(onSelectionCountChange).toHaveBeenLastCalledWith(3);
 
   expect(fireEvent.keyDown(list(), { key: "Escape" })).toBe(true);
   expect(selectedIds()).toEqual([]);
@@ -653,7 +652,7 @@ test("Ctrl+A / ⌘+A で全件を選び(既定動作は止める)、Esc で選�
   expect(fireEvent.keyDown(list(), { key: "a" })).toBe(true);
   expect(selectedIds()).toEqual([]);
 
-  expect(onSelectionCountChange).toHaveBeenLastCalledWith(0);
+  expect(onSelectionCountChange.mock.calls).toEqual([[0], [3], [0], [3], [0]]);
 });
 
 test.each(["row-input", "row-textarea", "row-select"])(
@@ -722,7 +721,7 @@ test("refreshKey が変わっても選択は残る", async () => {
 
   expect(api.listVideos).toHaveBeenCalledTimes(2);
   expect(selectedIds()).toEqual(["a", "c"]);
-  expect(onSelectionCountChange).toHaveBeenLastCalledWith(2);
+  expect(onSelectionCountChange.mock.calls).toEqual([[0], [1], [2]]);
 });
 
 test.each<[string, object]>([
@@ -1106,16 +1105,15 @@ test("取り直しの応答とジャンプの要求が同じ描画に入って�
 
 test("件数を onCountChange に知らせ、件数が同じ取り直しでは知らせない", async () => {
   const { update, onCountChange } = await renderGrid();
-  expect(onCountChange).toHaveBeenLastCalledWith(3);
-  const notified = onCountChange.mock.calls.length;
+  expect(onCountChange.mock.calls).toEqual([[0], [3]]);
 
   vi.mocked(api.listVideos).mockResolvedValue(videos("x", "y", "z"));
   await emitCatalogChanged();
-  expect(onCountChange).toHaveBeenCalledTimes(notified);
+  expect(onCountChange.mock.calls).toEqual([[0], [3]]);
 
   vi.mocked(api.listVideos).mockResolvedValue([]);
   await update({ search: "none" });
-  expect(onCountChange).toHaveBeenLastCalledWith(0);
+  expect(onCountChange.mock.calls).toEqual([[0], [3], [0]]);
 });
 
 // ---- 空の表示 ----
