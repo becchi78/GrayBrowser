@@ -8,8 +8,8 @@ interface Props {
   /** `dialog` に続けて付ける class。 */
   className: string;
   testId: string;
-  /** 背景のクリックと Escape で呼ぶ。undefined ならどちらでも何もしない。 */
-  onDismiss?: () => void;
+  /** 背景のクリックと Escape で呼ぶ。 */
+  onDismiss: () => void;
   /** false の間は、背景のクリックでも Escape でも onDismiss を呼ばない。既定は true。 */
   dismissible?: boolean;
   /** 指定すると `.dialog` を form(noValidate)として描き、送信をこれに渡す。 */

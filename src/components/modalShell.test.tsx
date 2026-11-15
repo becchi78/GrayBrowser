@@ -703,7 +703,7 @@ test.each([
 
 // ---- ModalShell の規則 ----
 
-function renderShell(props: { onDismiss?: () => void; dismissible?: boolean }) {
+function renderShell(props: { onDismiss: () => void; dismissible?: boolean }) {
   const { user } = renderWithProviders(
     <ModalShell label="殻" className="shell" testId="shell" {...props}>
       <p>本文</p>
@@ -742,14 +742,4 @@ test("ModalShell は dismissible が false なら、背景のクリックでも 
   await user.keyboard("{Escape}");
 
   expect(onDismiss).not.toHaveBeenCalled();
-});
-
-// 呼ぶ相手が無いので、例外にならず描画が残ることだけを確かめる。
-test("ModalShell は onDismiss が無ければ、背景のクリックや Escape で例外にならない", async () => {
-  const { user, overlay } = renderShell({});
-
-  await user.click(overlay);
-  await user.keyboard("{Escape}");
-
-  expect(screen.getByTestId("shell")).toBeInTheDocument();
 });

@@ -3,7 +3,7 @@ import { useEffect } from "react";
 // enabled が false の間はリスナーを登録しない(閉じてはいけない状態で
 // Escape を握りつぶさないため)。preventDefault するのは、フォーカス中の
 // 入力欄などが Escape を別の用途に使うのを防ぐため。
-export function useEscapeKey(onEscape: () => void, enabled: boolean = true) {
+export function useEscapeKey(onEscape: () => void, enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     function onKeyDown(e: KeyboardEvent) {
