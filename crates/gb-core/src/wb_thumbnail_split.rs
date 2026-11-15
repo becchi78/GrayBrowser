@@ -16,7 +16,7 @@ pub struct ThumbLayout {
 
 impl ThumbLayout {
     /// Number of frames, or `None` if the product overflows.
-    pub fn tile_count(&self) -> Option<u32> {
+    pub(crate) fn tile_count(&self) -> Option<u32> {
         self.cols.checked_mul(self.rows)
     }
 
@@ -54,13 +54,13 @@ pub fn parse_thum_size(value: &str) -> Option<ThumbLayout> {
 /// The setting describes how thumbnails were made, not this particular file,
 /// so a differently sized image (hand-edited, other skin) must not be cut by
 /// it.
-pub fn layout_matches_image(layout: &ThumbLayout, img_w: u32, img_h: u32) -> bool {
+pub(crate) fn layout_matches_image(layout: &ThumbLayout, img_w: u32, img_h: u32) -> bool {
     layout.tile_w.checked_mul(layout.cols) == Some(img_w)
         && layout.tile_h.checked_mul(layout.rows) == Some(img_h)
 }
 
 /// Crop rectangles of every frame, left to right then top to bottom.
-pub fn tile_rects(layout: &ThumbLayout) -> Vec<CropRect> {
+pub(crate) fn tile_rects(layout: &ThumbLayout) -> Vec<CropRect> {
     let mut rects = Vec::new();
     for row in 0..layout.rows {
         for col in 0..layout.cols {

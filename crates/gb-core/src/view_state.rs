@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::rating::MAX_RATING;
 
-pub const DEFAULT_SORT_FIELD: &str = "created_at";
-pub const DEFAULT_SORT_DIRECTION: &str = "asc";
+pub(crate) const DEFAULT_SORT_FIELD: &str = "created_at";
+pub(crate) const DEFAULT_SORT_DIRECTION: &str = "asc";
 
 /// Must stay in step with the frontend's `SortField` values.
 const SORT_FIELDS: [&str; 6] = [

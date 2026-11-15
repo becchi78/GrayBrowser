@@ -7,7 +7,7 @@ use crate::ports::wb_source::WbMovieRow;
 /// Converts a `.wb` `score` (0-20) to a 0-5 star rating. 0 = unrated, 1-5
 /// map to themselves, 6+ are clamped to 5 (confirmed with the data owner;
 /// proportional remapping was rejected).
-pub fn parse_score_to_rating(score: i64) -> u8 {
+pub(crate) fn parse_score_to_rating(score: i64) -> u8 {
     score.clamp(0, 5) as u8
 }
 
@@ -29,7 +29,7 @@ const MAX_RATING: u8 = 5;
 /// returns the star count capped at 5. WhiteBrowser users encoded ratings as
 /// tags like `★★★`; anything mixed with other characters (`★お気に入り`) or
 /// using a different glyph (`☆`) is a real tag and yields `None`.
-pub fn star_tag_rating(tag: &str) -> Option<u8> {
+pub(crate) fn star_tag_rating(tag: &str) -> Option<u8> {
     let folded = wb_fold_width(tag);
     let trimmed = folded.trim();
     if trimmed.is_empty() || !trimmed.chars().all(|c| c == '★') {
@@ -206,7 +206,7 @@ pub fn file_name_from_path(path: &str) -> &str {
 
 /// Extracts the video-name part of a legacy thumbnail filename: everything
 /// before the last `.#`. `None` when there is no `.#` or nothing before it.
-pub fn extract_thumbnail_name_part(filename: &str) -> Option<&str> {
+pub(crate) fn extract_thumbnail_name_part(filename: &str) -> Option<&str> {
     let (name, _) = filename.rsplit_once(".#")?;
     (!name.is_empty()).then_some(name)
 }
@@ -406,7 +406,7 @@ pub enum WbImportError {
 /// structured date type: the rest of the codebase
 /// keeps SQLite `DATETIME` columns as plain TEXT (see db/migrations.rs), and
 /// there is no chrono/time dependency in this workspace to add one for.
-pub fn parse_wb_datetime(s: &str) -> Result<String, WbImportError> {
+pub(crate) fn parse_wb_datetime(s: &str) -> Result<String, WbImportError> {
     let bytes = s.as_bytes();
     let separators_ok = bytes.len() == 19
         && bytes[4] == b'-'
