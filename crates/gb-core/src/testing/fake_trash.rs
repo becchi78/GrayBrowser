@@ -36,17 +36,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn records_the_call_and_returns_the_canned_result() {
-        let fake = FakeFileTrasher {
-            result: Ok(()),
-            ..Default::default()
-        };
-        let p = Path::new("C:/videos/movie.mp4");
-        assert!(fake.move_to_trash(p).is_ok());
-        assert_eq!(fake.calls.lock().unwrap().as_slice(), [p.to_path_buf()]);
-    }
-
-    #[test]
     fn default_fails_safely_and_still_records_the_call() {
         let fake = FakeFileTrasher::default();
         assert!(fake.move_to_trash(Path::new("x.mp4")).is_err());

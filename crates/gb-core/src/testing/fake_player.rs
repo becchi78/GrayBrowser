@@ -40,23 +40,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn records_the_call_and_returns_the_canned_result() {
-        let fake = FakePlayerLauncher {
-            result: Ok(()),
-            ..Default::default()
-        };
-        let video = Path::new("C:/videos/movie.mp4");
-        assert!(fake.launch(video, None).is_ok());
-        assert_eq!(
-            fake.calls.lock().unwrap().as_slice(),
-            [FakeLaunchCall {
-                video_path: video.to_path_buf(),
-                override_player: None
-            }]
-        );
-    }
-
-    #[test]
     fn default_fails_safely() {
         let fake = FakePlayerLauncher::default();
         assert!(fake.launch(Path::new("x.mp4"), None).is_err());

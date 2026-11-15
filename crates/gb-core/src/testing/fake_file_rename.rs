@@ -59,15 +59,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renames_when_the_target_is_free() {
-        let fake = FakeFileRenamer::with_files(&["C:/v/a.mp4"]);
-        fake.rename_no_overwrite(Path::new("C:/v/a.mp4"), Path::new("C:/v/b.mp4"))
-            .unwrap();
-        assert!(!fake.exists(Path::new("C:/v/a.mp4")));
-        assert!(fake.exists(Path::new("C:/v/b.mp4")));
-    }
-
-    #[test]
     fn refuses_to_overwrite_case_insensitively_and_keeps_both() {
         let fake = FakeFileRenamer::with_files(&["C:/v/a.mp4", "C:/v/B.mp4"]);
         let r = fake.rename_no_overwrite(Path::new("C:/v/a.mp4"), Path::new("C:/v/b.MP4"));

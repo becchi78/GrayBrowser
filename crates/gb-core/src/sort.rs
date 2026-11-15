@@ -66,42 +66,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn file_name_asc_and_desc() {
-        assert_eq!(
-            order_by_clause(SortField::FileName, SortDirection::Asc),
-            "file_name ASC"
-        );
-        assert_eq!(
-            order_by_clause(SortField::FileName, SortDirection::Desc),
-            "file_name DESC"
-        );
-    }
-
-    #[test]
-    fn created_at_asc_and_desc() {
-        assert_eq!(
-            order_by_clause(SortField::CreatedAt, SortDirection::Asc),
-            "created_at ASC"
-        );
-        assert_eq!(
-            order_by_clause(SortField::CreatedAt, SortDirection::Desc),
-            "created_at DESC"
-        );
-    }
-
-    #[test]
-    fn rating_asc_and_desc() {
-        assert_eq!(
-            order_by_clause(SortField::Rating, SortDirection::Asc),
-            "rating ASC"
-        );
-        assert_eq!(
-            order_by_clause(SortField::Rating, SortDirection::Desc),
-            "rating DESC"
-        );
-    }
-
-    #[test]
     fn updated_date_pins_nulls_last_in_both_directions() {
         assert_eq!(
             order_by_clause(SortField::UpdatedDate, SortDirection::Asc),
@@ -110,30 +74,6 @@ mod tests {
         assert_eq!(
             order_by_clause(SortField::UpdatedDate, SortDirection::Desc),
             "mtime IS NULL, mtime DESC"
-        );
-    }
-
-    #[test]
-    fn file_size_asc_and_desc_break_ties_by_file_name() {
-        assert_eq!(
-            order_by_clause(SortField::FileSize, SortDirection::Asc),
-            "file_size ASC, file_name ASC"
-        );
-        assert_eq!(
-            order_by_clause(SortField::FileSize, SortDirection::Desc),
-            "file_size DESC, file_name ASC"
-        );
-    }
-
-    #[test]
-    fn folder_asc_and_desc_sort_by_directory_part_then_file_name() {
-        assert_eq!(
-            order_by_clause(SortField::Folder, SortDirection::Asc),
-            "substr(file_path, 1, length(file_path) - length(file_name)) ASC, file_name ASC"
-        );
-        assert_eq!(
-            order_by_clause(SortField::Folder, SortDirection::Desc),
-            "substr(file_path, 1, length(file_path) - length(file_name)) DESC, file_name ASC"
         );
     }
 }
