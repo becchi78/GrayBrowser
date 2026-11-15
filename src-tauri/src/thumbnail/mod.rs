@@ -209,48 +209,46 @@ fn run_thumbnail_queue<F, N>(
     F: FfmpegAdapter + 'static,
     N: CatalogNotifier + 'static,
 {
-    {
-        if !crate::queue_support::ffmpeg_and_ffprobe_available(ffmpeg.as_ref()) {
-            log::warn!(
-                "ffmpeg/ffprobe not found on PATH -- skipping thumbnail generation for this run"
+    if !crate::queue_support::ffmpeg_and_ffprobe_available(ffmpeg.as_ref()) {
+        log::warn!(
+            "ffmpeg/ffprobe not found on PATH -- skipping thumbnail generation for this run"
+        );
+        return;
+    }
+
+    let watch_folders = match read_watch_folders(&db.read_pool) {
+        Ok(folders) => folders,
+        Err(WatchFoldersReadError::Query(e)) => {
+            log::error!("failed to read watch_folders before enqueueing thumbnails: {e}");
+            return;
+        }
+        Err(WatchFoldersReadError::Connection(e)) => {
+            log::error!(
+                "failed to acquire a DB connection to read watch_folders before enqueueing \
+                     thumbnails: {e}"
             );
             return;
         }
+    };
 
-        let watch_folders = match read_watch_folders(&db.read_pool) {
-            Ok(folders) => folders,
-            Err(WatchFoldersReadError::Query(e)) => {
-                log::error!("failed to read watch_folders before enqueueing thumbnails: {e}");
-                return;
-            }
-            Err(WatchFoldersReadError::Connection(e)) => {
-                log::error!(
-                    "failed to acquire a DB connection to read watch_folders before enqueueing \
-                     thumbnails: {e}"
-                );
-                return;
-            }
-        };
-
-        let pending =
-            match worker::list_videos_missing_thumbnails(&db, &thumbnails_dir, &watch_folders) {
-                Ok(pending) => pending,
-                Err(e) => {
-                    log::error!("failed to list videos missing thumbnails: {e}");
-                    return;
-                }
-            };
-        process_pending(
-            db,
-            thumbnails_dir,
-            watch_folders,
-            queue,
-            ffmpeg,
-            notifier,
-            pending,
-            reachability,
-        );
-    }
+    let pending = match worker::list_videos_missing_thumbnails(&db, &thumbnails_dir, &watch_folders)
+    {
+        Ok(pending) => pending,
+        Err(e) => {
+            log::error!("failed to list videos missing thumbnails: {e}");
+            return;
+        }
+    };
+    process_pending(
+        db,
+        thumbnails_dir,
+        watch_folders,
+        queue,
+        ffmpeg,
+        notifier,
+        pending,
+        reachability,
+    );
 }
 
 /// Generates the given videos on a small worker pool. `pending` is a
@@ -276,28 +274,26 @@ fn process_pending<F, N>(
     if pending.is_empty() {
         return;
     }
-    {
-        queue.track_pending(pending.iter().map(|(id, _)| id.as_str()));
-        queue.publish_progress(notifier.as_ref());
+    queue.track_pending(pending.iter().map(|(id, _)| id.as_str()));
+    queue.publish_progress(notifier.as_ref());
 
-        let worker_count = WORKER_THREAD_COUNT.min(pending.len());
-        let pending = Arc::new(Mutex::new(pending.into_iter()));
-        let ctx = WorkerContext {
-            db,
-            thumbnails_dir,
-            watch_folders,
-            queue,
-            ffmpeg,
-            notifier,
-            reachability,
-        };
+    let worker_count = WORKER_THREAD_COUNT.min(pending.len());
+    let pending = Arc::new(Mutex::new(pending.into_iter()));
+    let ctx = WorkerContext {
+        db,
+        thumbnails_dir,
+        watch_folders,
+        queue,
+        ffmpeg,
+        notifier,
+        reachability,
+    };
 
-        crate::queue_support::run_workers_to_completion(worker_count, || {
-            let pending = Arc::clone(&pending);
-            let ctx = ctx.clone();
-            move || worker_loop(&ctx, &pending)
-        });
-    }
+    crate::queue_support::run_workers_to_completion(worker_count, || {
+        let pending = Arc::clone(&pending);
+        let ctx = ctx.clone();
+        move || worker_loop(&ctx, &pending)
+    });
 }
 
 /// The handles one worker thread needs, so each worker takes a single clone
