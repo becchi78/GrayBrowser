@@ -121,8 +121,6 @@ export const setWatchFolderCheckEnabled = (folderPath: string, enabled: boolean)
 export const readLog = (offset: number | null) => invoke<LogChunkDto>("read_log", { offset });
 export const getLogDir = () => invoke<string>("get_log_dir");
 export const startScan = () => invoke<ScanSummary>("start_scan");
-export const toggleThumbnailPause = (paused: boolean) =>
-  invoke<void>("toggle_thumbnail_pause", { paused });
 export const getThumbnails = (videoId: string) =>
   invoke<string[] | null>("get_thumbnails", { videoId });
 export const getThumbnailProgress = () => invoke<ThumbnailProgress>("get_thumbnail_progress");

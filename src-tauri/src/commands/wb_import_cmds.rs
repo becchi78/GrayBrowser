@@ -71,7 +71,7 @@ pub fn pick_wb_thumbnail_folder(app: tauri::AppHandle) -> Result<Option<String>,
 /// identical parameter: `pipeline::run_wb_import` hands this straight to
 /// `thumbnail::enqueue_missing_thumbnails` once the row-import pass is done,
 /// so online `.wb` videos get a thumbnail generated from the real video file
-/// through the same pause-aware queue a normal scan uses. Online rows skip
+/// through the same queue a normal scan uses. Online rows skip
 /// the conversion of the `.wb` thumbnail JPGs entirely (see
 /// the `Inserted` match arm of `pipeline::rows::RowTally::record_written`).
 #[tauri::command]
