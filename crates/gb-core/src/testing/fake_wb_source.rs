@@ -1,8 +1,7 @@
-use crate::ports::wb_source::{WbMovieRow, WbSourceAdapter, WbSourceError, WbTextCell};
+use crate::ports::wb_source::{WbMovieRow, WbSourceAdapter, WbSourceError};
 
 pub struct FakeWbSourceAdapter {
     pub movies: Result<Vec<WbMovieRow>, WbSourceError>,
-    pub text_cells: Result<Vec<WbTextCell>, WbSourceError>,
     /// Returned for every key, whatever was asked.
     pub profile_values: Result<Vec<String>, WbSourceError>,
 }
@@ -16,7 +15,6 @@ impl Default for FakeWbSourceAdapter {
         };
         Self {
             movies: Err(not_configured()),
-            text_cells: Err(not_configured()),
             profile_values: Err(not_configured()),
         }
     }
@@ -25,10 +23,6 @@ impl Default for FakeWbSourceAdapter {
 impl WbSourceAdapter for FakeWbSourceAdapter {
     fn read_movies(&self) -> Result<Vec<WbMovieRow>, WbSourceError> {
         self.movies.clone()
-    }
-
-    fn read_all_text_cells(&self) -> Result<Vec<WbTextCell>, WbSourceError> {
-        self.text_cells.clone()
     }
 
     fn read_profile_value(&self, _key: &str) -> Result<Vec<String>, WbSourceError> {
@@ -53,7 +47,6 @@ mod tests {
     fn default_is_a_safe_failure_for_every_method() {
         let fake = FakeWbSourceAdapter::default();
         assert!(fake.read_movies().is_err());
-        assert!(fake.read_all_text_cells().is_err());
         assert!(fake.read_profile_value("thum_size").is_err());
     }
 }

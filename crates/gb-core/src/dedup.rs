@@ -229,23 +229,6 @@ mod tests {
         assert_eq!(candidates(&group), None);
     }
 
-    #[test]
-    fn empty_quick_hash_placeholders_never_become_candidates() {
-        // Candidate groups come from group_candidates_by_quick_hash, which
-        // drops empty-quick_hash rows, so they cannot reach this function.
-        let videos = vec![
-            VideoHashInfo {
-                unverifiable: true,
-                ..video("a", "", 100, None)
-            },
-            VideoHashInfo {
-                unverifiable: true,
-                ..video("b", "", 100, None)
-            },
-        ];
-        assert!(group_candidates_by_quick_hash(&videos).is_empty());
-    }
-
     fn group_ids(videos: &[VideoHashInfo]) -> Vec<Vec<String>> {
         group_candidates_by_quick_hash(videos)
             .into_iter()

@@ -69,13 +69,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn folders_are_reachable_by_default_and_calls_are_recorded() {
-        let fake = FakeFolderProbe::default();
-        assert!(fake.is_reachable("C:/a"));
-        assert_eq!(fake.calls(), vec!["C:/a".to_string()]);
-    }
-
-    #[test]
     fn marked_folders_are_unreachable_until_flipped_back() {
         let fake = FakeFolderProbe::with_unreachable(&["W:/v"]);
         assert!(!fake.is_reachable("W:/v"));

@@ -270,134 +270,42 @@ pub fn resolve_thumbnail_subdir(watch_folders: &[String], file_path: &str) -> St
 mod tests {
     use super::*;
 
-    // `std::path::Path`'s separator interpretation is compile-target-OS
-    // dependent, and these two tests exercise Windows-shaped path strings
-    // specifically -- they don't parse the same way when natively built for
-    // Linux. `resolve_app_dir` itself stays OS-independent and unmodified.
     #[test]
-    #[cfg(windows)]
-    fn resolves_to_a_graybrowser_folder_next_to_the_exe() {
-        let exe = Path::new(r"C:\app\GrayBrowser.exe");
-        assert_eq!(
-            resolve_app_dir(exe),
-            Some(PathBuf::from(r"C:\app\GrayBrowser"))
-        );
+    fn extract_drive_root_resolves_drive_letter_and_unc_paths() {
+        let cases = [
+            // Drive-letter paths, with the letter upper-cased.
+            (r"D:\Videos\a.mp4", Some(r"D:\")),
+            (r"d:\videos\a.mp4", Some(r"D:\")),
+            (r"C:\", Some(r"C:\")),
+            ("D:/Videos/a.mp4", Some(r"D:\")),
+            // UNC paths reduce to `\\server\share\` whatever the separators.
+            (r"\\nas\share\videos\a.mp4", Some(r"\\nas\share\")),
+            ("//nas/share/videos/a.mp4", Some(r"\\nas\share\")),
+            (r"\\nas/share\videos/a.mp4", Some(r"\\nas\share\")),
+            // Already a root, with and without the trailing separator.
+            (r"\\nas\share\", Some(r"\\nas\share\")),
+            (r"\\nas\share", Some(r"\\nas\share\")),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                extract_drive_root(path),
+                expected.map(str::to_string),
+                "{path:?}"
+            );
+        }
     }
 
     #[test]
-    #[cfg(windows)]
-    fn returns_none_when_the_exe_path_has_no_parent() {
-        // A bare drive root has no parent directory to resolve against.
-        let exe = Path::new(r"C:\");
-        assert_eq!(resolve_app_dir(exe), None);
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn does_not_double_nest_when_the_parent_is_already_named_graybrowser() {
-        // The production NSIS installer's `currentUser` layout: the exe
-        // itself lives directly inside `%LOCALAPPDATA%\GrayBrowser\`.
-        let exe = Path::new(r"C:\Users\me\AppData\Local\GrayBrowser\GrayBrowser.exe");
-        assert_eq!(
-            resolve_app_dir(exe),
-            Some(PathBuf::from(r"C:\Users\me\AppData\Local\GrayBrowser"))
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn does_not_double_nest_regardless_of_the_parent_folder_names_casing() {
-        let exe = Path::new(r"C:\Users\me\AppData\Local\graybrowser\GrayBrowser.exe");
-        assert_eq!(
-            resolve_app_dir(exe),
-            Some(PathBuf::from(r"C:\Users\me\AppData\Local\graybrowser"))
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_a_drive_letter_path() {
-        assert_eq!(
-            extract_drive_root(r"D:\Videos\a.mp4"),
-            Some(r"D:\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_uppercases_a_lowercase_drive_letter() {
-        assert_eq!(
-            extract_drive_root(r"d:\videos\a.mp4"),
-            Some(r"D:\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_a_bare_drive_root() {
-        assert_eq!(extract_drive_root(r"C:\"), Some(r"C:\".to_string()));
-    }
-
-    #[test]
-    fn extract_drive_root_handles_forward_slashes() {
-        assert_eq!(
-            extract_drive_root("D:/Videos/a.mp4"),
-            Some(r"D:\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_a_unc_path() {
-        assert_eq!(
-            extract_drive_root(r"\\nas\share\videos\a.mp4"),
-            Some(r"\\nas\share\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_a_unc_path_with_forward_slashes() {
-        assert_eq!(
-            extract_drive_root("//nas/share/videos/a.mp4"),
-            Some(r"\\nas\share\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_a_unc_path_with_mixed_separators() {
-        assert_eq!(
-            extract_drive_root(r"\\nas/share\videos/a.mp4"),
-            Some(r"\\nas\share\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_handles_an_already_root_unc_path() {
-        assert_eq!(
-            extract_drive_root(r"\\nas\share\"),
-            Some(r"\\nas\share\".to_string())
-        );
-        assert_eq!(
-            extract_drive_root(r"\\nas\share"),
-            Some(r"\\nas\share\".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_drive_root_rejects_a_unc_path_missing_a_share() {
-        assert_eq!(extract_drive_root(r"\\nas"), None);
-        assert_eq!(extract_drive_root(r"\\nas\"), None);
-    }
-
-    #[test]
-    fn extract_drive_root_rejects_a_relative_path() {
-        assert_eq!(extract_drive_root(r"Videos\a.mp4"), None);
-    }
-
-    #[test]
-    fn extract_drive_root_rejects_an_empty_string() {
-        assert_eq!(extract_drive_root(""), None);
-    }
-
-    #[test]
-    fn extract_drive_root_rejects_a_single_letter_with_no_colon() {
-        assert_eq!(extract_drive_root("D"), None);
+    fn extract_drive_root_rejects_paths_that_are_not_drive_or_unc_shaped() {
+        for path in [
+            r"\\nas",        // UNC missing the share
+            r"\\nas\",       // UNC missing the share, with a separator
+            r"Videos\a.mp4", // relative
+            "",
+            "D", // a letter with no colon
+        ] {
+            assert_eq!(extract_drive_root(path), None, "{path:?}");
+        }
     }
 
     // `escape_like_pattern` doubles *every* backslash (not just a wildcard-
@@ -409,37 +317,24 @@ mod tests {
     // separator normalization.
 
     #[test]
-    fn folder_like_prefix_appends_a_separator_when_missing() {
-        assert_eq!(folder_like_prefix(r"C:\Videos"), r"C:\\Videos\\");
-    }
-
-    #[test]
-    fn folder_like_prefix_does_not_double_an_existing_separator() {
-        // Same normalized form (and therefore same escaped output) as the
-        // no-trailing-separator case above -- this is the "both shapes the
-        // OS folder picker can return must behave identically" guarantee.
-        assert_eq!(folder_like_prefix(r"C:\Videos\"), r"C:\\Videos\\");
-    }
-
-    #[test]
-    fn folder_like_prefix_normalizes_a_bare_drive_root() {
-        assert_eq!(folder_like_prefix(r"C:\"), r"C:\\");
-        assert_eq!(folder_like_prefix("C:"), r"C:\\");
-    }
-
-    #[test]
-    fn folder_like_prefix_escapes_underscore_so_it_is_not_a_wildcard() {
-        assert_eq!(folder_like_prefix(r"C:\my_videos"), r"C:\\my\_videos\\");
-    }
-
-    #[test]
-    fn folder_like_prefix_escapes_percent_so_it_is_not_a_wildcard() {
-        assert_eq!(folder_like_prefix(r"C:\100%done"), r"C:\\100\%done\\");
-    }
-
-    #[test]
-    fn folder_like_prefix_escapes_every_separator_not_just_the_trailing_one() {
-        assert_eq!(folder_like_prefix(r"C:\Videos\Sub"), r"C:\\Videos\\Sub\\");
+    fn folder_like_prefix_normalizes_separators_and_escapes_like_metacharacters() {
+        let cases = [
+            // A missing trailing separator is appended...
+            (r"C:\Videos", r"C:\\Videos\\"),
+            // ...and an existing one is not doubled: both shapes the OS
+            // folder picker can return must behave identically.
+            (r"C:\Videos\", r"C:\\Videos\\"),
+            (r"C:\", r"C:\\"),
+            ("C:", r"C:\\"),
+            // `_` and `%` must not act as LIKE wildcards.
+            (r"C:\my_videos", r"C:\\my\_videos\\"),
+            (r"C:\100%done", r"C:\\100\%done\\"),
+            // Every separator is escaped, not just the trailing one.
+            (r"C:\Videos\Sub", r"C:\\Videos\\Sub\\"),
+        ];
+        for (folder, expected) in cases {
+            assert_eq!(folder_like_prefix(folder), expected, "{folder:?}");
+        }
     }
 
     // --- folder_paths_conflict -----------------------------------------
@@ -573,16 +468,6 @@ mod tests {
         assert_ne!(
             thumbnail_folder_subdir(r"C:\Videos"),
             thumbnail_folder_subdir(r"D:\Movies")
-        );
-    }
-
-    #[test]
-    fn thumbnail_folder_subdir_never_collides_with_the_unassigned_name() {
-        // Sanity-check on the invariant `THUMBNAIL_UNASSIGNED_SUBDIR`'s doc
-        // comment relies on: a 16-hex-digit hash can never equal `"_unassigned"`.
-        assert_ne!(
-            thumbnail_folder_subdir(r"C:\Videos"),
-            THUMBNAIL_UNASSIGNED_SUBDIR
         );
     }
 

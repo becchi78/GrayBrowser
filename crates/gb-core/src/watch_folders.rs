@@ -472,59 +472,50 @@ mod tests {
     }
 
     #[test]
-    fn filter_checked_drops_disabled_folders_and_keeps_order() {
-        assert_eq!(
-            filter_checked(&v(&["A", "B", "C", "D"]), &v(&["D", "B"])),
-            v(&["A", "C"])
-        );
+    fn filter_checked_drops_only_disabled_folders_and_keeps_order() {
+        // (folders, disabled, expected)
+        let cases: [(&[&str], &[&str], &[&str]); 5] = [
+            (&["A", "B", "C", "D"], &["D", "B"], &["A", "C"]),
+            // Nothing disabled.
+            (&["A", "B"], &[], &["A", "B"]),
+            // A disabled entry that is not a folder is ignored.
+            (&["A"], &["Z"], &["A"]),
+            (&["A", "B"], &["A", "B"], &[]),
+            (&[], &["A"], &[]),
+        ];
+        for (folders, disabled, expected) in cases {
+            assert_eq!(
+                filter_checked(&v(folders), &v(disabled)),
+                v(expected),
+                "{folders:?} minus {disabled:?}"
+            );
+        }
     }
 
     #[test]
-    fn filter_checked_with_no_disabled_returns_all() {
-        assert_eq!(filter_checked(&v(&["A", "B"]), &[]), v(&["A", "B"]));
-    }
-
-    #[test]
-    fn filter_checked_ignores_disabled_entries_not_in_folders() {
-        assert_eq!(filter_checked(&v(&["A"]), &v(&["Z"])), v(&["A"]));
-    }
-
-    #[test]
-    fn filter_checked_with_everything_disabled_or_empty_is_empty() {
-        assert!(filter_checked(&v(&["A", "B"]), &v(&["A", "B"])).is_empty());
-        assert!(filter_checked(&[], &v(&["A"])).is_empty());
-    }
-
-    #[test]
-    fn appends_new_folders_to_existing() {
-        let existing = vec!["C:/Videos".to_string()];
-        let picked = vec!["D:/Movies".to_string()];
-        assert_eq!(merge(existing, picked), vec!["C:/Videos", "D:/Movies"]);
-    }
-
-    #[test]
-    fn does_not_duplicate_already_present_folders() {
-        let existing = vec!["C:/Videos".to_string()];
-        let picked = vec!["C:/Videos".to_string(), "D:/Movies".to_string()];
-        assert_eq!(merge(existing, picked), vec!["C:/Videos", "D:/Movies"]);
-    }
-
-    #[test]
-    fn preserves_existing_order_and_appends_new_ones_in_given_order() {
-        let existing = vec!["A".to_string(), "B".to_string()];
-        let picked = vec!["C".to_string(), "D".to_string()];
-        assert_eq!(merge(existing, picked), vec!["A", "B", "C", "D"]);
-    }
-
-    #[test]
-    fn empty_picked_list_returns_existing_unchanged() {
-        let existing = vec!["C:/Videos".to_string()];
-        assert_eq!(merge(existing.clone(), vec![]), existing);
-    }
-
-    #[test]
-    fn empty_existing_list_returns_just_the_picked_folders() {
-        let picked = vec!["C:/Videos".to_string()];
-        assert_eq!(merge(vec![], picked.clone()), picked);
+    fn merge_appends_only_new_folders_preserving_order() {
+        // (existing, picked, expected)
+        let cases: [(&[&str], &[&str], &[&str]); 6] = [
+            (&["C:/Videos"], &["D:/Movies"], &["C:/Videos", "D:/Movies"]),
+            // Already-present folders are not duplicated.
+            (
+                &["C:/Videos"],
+                &["C:/Videos", "D:/Movies"],
+                &["C:/Videos", "D:/Movies"],
+            ),
+            // New ones are appended in the order given.
+            (&["A", "B"], &["C", "D"], &["A", "B", "C", "D"]),
+            // The same folder picked twice is added once.
+            (&["A"], &["B", "B"], &["A", "B"]),
+            (&["C:/Videos"], &[], &["C:/Videos"]),
+            (&[], &["C:/Videos"], &["C:/Videos"]),
+        ];
+        for (existing, picked, expected) in cases {
+            assert_eq!(
+                merge(v(existing), v(picked)),
+                v(expected),
+                "{existing:?} + {picked:?}"
+            );
+        }
     }
 }

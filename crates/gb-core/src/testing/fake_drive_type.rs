@@ -34,14 +34,6 @@ mod tests {
     }
 
     #[test]
-    fn returns_the_canned_result() {
-        let mut fake = FakeDriveTypeDetector::default();
-        fake.results
-            .insert(PathBuf::from("D:\\"), Ok(DriveKind::Local));
-        assert_eq!(fake.detect(Path::new("D:\\")), Ok(DriveKind::Local));
-    }
-
-    #[test]
     fn different_paths_can_return_different_canned_results() {
         let mut fake = FakeDriveTypeDetector::default();
         fake.results

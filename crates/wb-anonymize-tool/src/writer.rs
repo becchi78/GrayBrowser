@@ -3,7 +3,7 @@
 //! path -- never opens or touches the real input `.wb`.
 //!
 //! The written `movie` table intentionally has a *reduced* schema: only the
-//! 11 columns `wb-anonymize-tool::reader::read_movies` (and, in
+//! 11 columns `wb-anonymize-tool::reader::ReadOnlyWb::read_movies` (and, in
 //! `src-tauri`, `RealWbSourceAdapter::read_movies`) actually select, not the
 //! real data's full 30-column schema. Nothing in the codebase reads the
 //! other columns (title/artist/comment1-3/etc., which are 0-filled in the
@@ -57,4 +57,75 @@ pub fn write_movies(conn: &Connection, rows: &[WbMovieRow]) -> rusqlite::Result<
         ])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reader::ReadOnlyWb;
+    use gb_core::ports::wb_source::WbSourceAdapter;
+
+    fn movie(id: i64, name: &str, tag: &str, hash: &str) -> WbMovieRow {
+        WbMovieRow {
+            movie_id: id,
+            movie_name: name.to_string(),
+            movie_path: format!("T:\\dir\\{name}"),
+            tag: tag.to_string(),
+            score: id % 6,
+            hash: hash.to_string(),
+            kana: format!("kana{id}"),
+            roma: format!("roma{id}"),
+            file_date: "2011-05-04 12:00:00".to_string(),
+            regist_date: "2011-05-05 12:00:00".to_string(),
+            last_date: "2011-05-06 12:00:00".to_string(),
+        }
+    }
+
+    #[test]
+    fn written_rows_read_back_identically() {
+        let rows = vec![
+            movie(1, "a.mp4", "t1\nt2", "1e5e0fbf"),
+            movie(2, "日本語.mp4", "", ""),
+            movie(30, "c d.mkv", "only", "00000000"),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.wb");
+        let conn = create_output(&path).unwrap();
+        write_movies(&conn, &rows).unwrap();
+        drop(conn);
+
+        let mut read_back = ReadOnlyWb::open(&path).unwrap().read_movies().unwrap();
+        read_back.sort_by_key(|r| r.movie_id);
+        assert_eq!(read_back, rows);
+    }
+
+    #[test]
+    fn output_contains_only_the_movie_table_with_its_text_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.wb");
+        let conn = create_output(&path).unwrap();
+        write_movies(&conn, &[movie(1, "a.mp4", "t", "h")]).unwrap();
+        drop(conn);
+
+        let cells = ReadOnlyWb::open(&path)
+            .unwrap()
+            .read_all_text_cells()
+            .unwrap();
+        let mut columns: Vec<(&str, &str)> = cells
+            .iter()
+            .map(|c| (c.table_name.as_str(), c.column_name.as_str()))
+            .collect();
+        columns.sort();
+        assert_eq!(
+            columns,
+            [
+                ("movie", "hash"),
+                ("movie", "kana"),
+                ("movie", "movie_name"),
+                ("movie", "movie_path"),
+                ("movie", "roma"),
+                ("movie", "tag"),
+            ]
+        );
+    }
 }

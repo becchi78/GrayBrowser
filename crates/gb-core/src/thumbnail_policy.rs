@@ -122,18 +122,15 @@ mod tests {
     }
 
     #[test]
-    fn zero_duration_is_treated_like_unknown() {
-        assert_eq!(thumbnail_seek_positions(Some(0.0)), [1.0; 6]);
-    }
-
-    #[test]
-    fn nan_duration_is_treated_like_unknown() {
-        assert_eq!(thumbnail_seek_positions(Some(f64::NAN)), [1.0; 6]);
-    }
-
-    #[test]
-    fn negative_duration_is_treated_like_unknown() {
-        assert_eq!(thumbnail_seek_positions(Some(-5.0)), [1.0; 6]);
+    fn unusable_durations_are_treated_like_unknown() {
+        let unusable = [0.0, -0.0, -5.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        for duration in unusable {
+            assert_eq!(
+                thumbnail_seek_positions(Some(duration)),
+                [1.0; 6],
+                "duration {duration}"
+            );
+        }
     }
 
     #[test]

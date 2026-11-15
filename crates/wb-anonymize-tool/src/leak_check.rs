@@ -1,5 +1,5 @@
 //! Coverage/leak check for the anonymizer. Works
-//! entirely in memory against `read_all_text_cells` output -- no second
+//! entirely in memory against `ReadOnlyWb::read_all_text_cells` output -- no second
 //! `.wb` file is written just for this check. Never logs or returns any
 //! real or dummy *values* -- only counts, so callers (the CLI's stderr
 //! summary, and the integration test) can report on this safely.
@@ -19,9 +19,11 @@
 //! per-cell-pure-function anonymization model.
 
 use std::collections::HashSet;
+use std::fmt;
 
-use gb_core::ports::wb_source::WbTextCell;
 use gb_core::wb_anonymize::{self, Anonymizer};
+
+use crate::reader::WbTextCell;
 
 /// Real data's `tag` values are documented as at least 5
 /// bytes; this stays comfortably below that so genuine short tags aren't
@@ -53,6 +55,24 @@ impl LeakCheckReport {
     }
 }
 
+/// Counts only -- never a real or dummy value -- so it is safe to print.
+impl fmt::Display for LeakCheckReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cells_checked={} token_candidate_count={} token_excluded_short={} \
+             token_kept_min_len={:?} token_kept_max_len={:?} negative_violations={} positive_violations={}",
+            self.cells_checked,
+            self.token_stats.candidate_count,
+            self.token_stats.excluded_short,
+            self.token_stats.kept_min_len,
+            self.token_stats.kept_max_len,
+            self.negative_violations,
+            self.positive_violations,
+        )
+    }
+}
+
 fn candidate_tokens(value: &str) -> impl Iterator<Item = String> + '_ {
     std::iter::once(value.to_string())
         .chain(value.split(['\\', '/']).map(str::to_string))
@@ -66,12 +86,23 @@ fn forbidden_tokens_for(value: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Runs the full coverage check (Q1/Q2): for every real cell, anonymizes it
-/// with `anonymizer`, then checks both directions -- negative: none of that
+/// Runs the full coverage check: for every real cell, anonymizes it with
+/// `anonymizer`, then checks both directions -- negative: none of that
 /// cell's own real tokens survive as a substring of its own dummy output;
 /// positive: the dummy output matches `is_valid_dummy_value`'s shape for
 /// that column.
 pub fn run(real_cells: &[WbTextCell], anonymizer: &mut Anonymizer) -> LeakCheckReport {
+    run_with(real_cells, |cell| {
+        wb_anonymize::anonymize_cell(anonymizer, &cell.table_name, &cell.column_name, &cell.value)
+    })
+}
+
+/// `run` with the anonymization step injected, so the checks themselves can
+/// be exercised against a deliberately broken anonymizer.
+fn run_with(
+    real_cells: &[WbTextCell],
+    mut anonymize: impl FnMut(&WbTextCell) -> String,
+) -> LeakCheckReport {
     let mut total_candidates = 0usize;
     let mut total_kept = 0usize;
     let mut kept_min_len: Option<usize> = None;
@@ -80,12 +111,7 @@ pub fn run(real_cells: &[WbTextCell], anonymizer: &mut Anonymizer) -> LeakCheckR
     let mut positive_violations = 0usize;
 
     for cell in real_cells {
-        let dummy = wb_anonymize::anonymize_cell(
-            anonymizer,
-            &cell.table_name,
-            &cell.column_name,
-            &cell.value,
-        );
+        let dummy = anonymize(cell);
 
         let all_candidates: HashSet<String> = candidate_tokens(&cell.value)
             .filter(|t| !t.is_empty())
@@ -154,21 +180,51 @@ mod tests {
 
     #[test]
     fn detects_a_negative_violation_when_anonymization_is_a_no_op() {
-        // Simulate a buggy anonymizer that just echoes the input back --
-        // the negative check must catch this even for a hash-shaped value,
-        // where the positive/shape check alone could not.
-        let forbidden = forbidden_tokens_for("1e5e0fbf");
-        let dummy = "1e5e0fbf"; // unchanged from input
-        assert!(forbidden.iter().any(|t| dummy.contains(t.as_str())));
+        // An anonymizer that echoes its input back: a hash-shaped value
+        // passes the positive/shape check, so only the negative check can
+        // catch it.
+        let cells = vec![cell("movie", "hash", 1, "1e5e0fbf")];
+        let report = run_with(&cells, |c| c.value.clone());
+        assert_eq!(report.negative_violations, 1);
+        assert_eq!(report.positive_violations, 0);
+        assert!(!report.passed());
+    }
+
+    #[test]
+    fn detects_a_positive_violation_when_output_does_not_match_the_dummy_shape() {
+        // The output shares no token with the input (no negative
+        // violation) but is not shaped like any dummy value.
+        let cells = vec![cell("findfact", "find_text", 1, "some search term")];
+        let report = run_with(&cells, |_| "unrelated".to_string());
+        assert_eq!(report.negative_violations, 0);
+        assert_eq!(report.positive_violations, 1);
+        assert!(!report.passed());
     }
 
     #[test]
     fn token_stats_exclude_short_tokens_and_report_only_counts() {
-        let cells = vec![cell("watch", "dir", 1, "T:\\ab\\videos")]; // "T:" and "ab" are short, "videos" survives
+        // Candidates: the whole value, "T:", "ab", "videos". "T:" and "ab"
+        // are shorter than MIN_TOKEN_CHARS and are excluded.
+        let cells = vec![cell("watch", "dir", 1, "T:\\ab\\videos")];
         let mut anonymizer = Anonymizer::new();
         let report = run(&cells, &mut anonymizer);
-        assert!(report.token_stats.candidate_count >= report.token_stats.excluded_short);
-        assert!(report.token_stats.kept_min_len.unwrap() >= MIN_TOKEN_CHARS);
+        assert_eq!(report.token_stats.candidate_count, 4);
+        assert_eq!(report.token_stats.excluded_short, 2);
+        assert_eq!(report.token_stats.kept_min_len, Some("videos".len()));
+        assert_eq!(
+            report.token_stats.kept_max_len,
+            Some("T:\\ab\\videos".len())
+        );
+    }
+
+    #[test]
+    fn display_reports_counts_only() {
+        let cells = vec![cell("findfact", "find_text", 1, "secret term")];
+        let mut anonymizer = Anonymizer::new();
+        let text = run(&cells, &mut anonymizer).to_string();
+        assert!(text.contains("cells_checked=1"), "{text}");
+        assert!(text.contains("negative_violations=0"), "{text}");
+        assert!(!text.contains("secret"), "{text}");
     }
 
     #[test]

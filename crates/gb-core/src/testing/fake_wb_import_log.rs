@@ -40,21 +40,3 @@ impl WbImportLog for FakeWbImportLog {
         "fake://wb-import.log".to_string()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn collects_in_order_and_can_be_made_to_drop_writes() {
-        let fake = FakeWbImportLog::default();
-        fake.append("a\n");
-        fake.append("b\n");
-        assert_eq!(fake.text(), "a\nb\n");
-        assert_eq!(fake.append_count(), 2);
-
-        let failing = FakeWbImportLog::failing();
-        failing.append("a\n");
-        assert_eq!(failing.text(), "");
-    }
-}

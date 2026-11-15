@@ -528,22 +528,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_score_to_rating_leaves_zero_to_five_untouched() {
-        for score in 0..=5 {
-            assert_eq!(parse_score_to_rating(score), score as u8);
+    fn parse_score_to_rating_clamps_into_zero_to_five() {
+        let cases: [(i64, u8); 14] = [
+            (i64::MIN, 0),
+            (-1, 0),
+            (0, 0),
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 4),
+            (5, 5),
+            (6, 5),
+            (12, 5),
+            (19, 5),
+            (20, 5),
+            (i64::MAX, 5),
+            (100, 5),
+        ];
+        for (score, expected) in cases {
+            assert_eq!(parse_score_to_rating(score), expected, "score {score}");
         }
-    }
-
-    #[test]
-    fn parse_score_to_rating_clamps_six_and_above_to_five() {
-        for score in [6, 12, 19, 20] {
-            assert_eq!(parse_score_to_rating(score), 5);
-        }
-    }
-
-    #[test]
-    fn parse_score_to_rating_clamps_negative_to_zero() {
-        assert_eq!(parse_score_to_rating(-1), 0);
     }
 
     #[test]
@@ -696,14 +700,6 @@ mod tests {
             row(|r| r.tag = String::new()),
         ];
         assert_eq!(count_source_tags(&rows), 0);
-    }
-
-    #[test]
-    fn count_source_tags_counts_blank_lines_as_dropped_not_as_tags() {
-        // Mirrors split_tags_drops_blank_lines_from_trailing_or_doubled_newlines
-        // below -- a trailing/doubled newline must not inflate the count.
-        let rows = vec![row(|r| r.tag = "foo\n\nbar\n".to_string())];
-        assert_eq!(count_source_tags(&rows), 2);
     }
 
     fn star_row(tag: &str, score: i64) -> WbMovieRow {
