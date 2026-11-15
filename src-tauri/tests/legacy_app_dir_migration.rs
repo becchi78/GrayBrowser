@@ -6,8 +6,9 @@
 //! when the executable already lived inside one.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use gb_core::paths::resolve_app_dir;
 use graybrowser_lib::paths::migrate_legacy_nested_app_dir;
 
 /// Writes `contents` to `dir/name`, creating `dir` (and any missing
@@ -167,4 +168,48 @@ fn does_nothing_for_a_fresh_install_with_no_database_anywhere() {
 
     assert!(!app_dir.join("app.db").exists());
     assert!(!app_dir.join("GrayBrowser").exists());
+}
+
+// `resolve_app_dir` goes through `std::path::Path`, whose separator
+// interpretation depends on the compile-target OS. These cases use
+// Windows-shaped path strings, so they live here (Windows-only layer)
+// rather than in `gb-core`, which must stay free of `#[cfg(windows)]`.
+
+#[cfg(windows)]
+#[test]
+fn resolves_to_a_graybrowser_folder_next_to_the_exe() {
+    let exe = Path::new(r"C:\app\GrayBrowser.exe");
+    assert_eq!(
+        resolve_app_dir(exe),
+        Some(PathBuf::from(r"C:\app\GrayBrowser"))
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn resolve_app_dir_returns_none_when_the_exe_path_has_no_parent() {
+    // A bare drive root has no parent directory to resolve against.
+    assert_eq!(resolve_app_dir(Path::new(r"C:\")), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn does_not_double_nest_when_the_parent_is_already_named_graybrowser() {
+    // The production NSIS installer's `currentUser` layout: the exe itself
+    // lives directly inside `%LOCALAPPDATA%\GrayBrowser\`.
+    let exe = Path::new(r"C:\Users\me\AppData\Local\GrayBrowser\GrayBrowser.exe");
+    assert_eq!(
+        resolve_app_dir(exe),
+        Some(PathBuf::from(r"C:\Users\me\AppData\Local\GrayBrowser"))
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn does_not_double_nest_regardless_of_the_parent_folder_names_casing() {
+    let exe = Path::new(r"C:\Users\me\AppData\Local\graybrowser\GrayBrowser.exe");
+    assert_eq!(
+        resolve_app_dir(exe),
+        Some(PathBuf::from(r"C:\Users\me\AppData\Local\graybrowser"))
+    );
 }
