@@ -48,6 +48,11 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
   // 描画させないため。初回のマウントは prevOpen が open と同じなので何もしない。
   if (open !== prevOpen) {
     setPrevOpen(open);
+    if (open) {
+      // 前回の並べ替えの失敗は、保存中かどうかとは無関係に、開き直した時点で
+      // いまの一覧と対応しなくなる。
+      setOrderCheckError(null);
+    }
     if (open && !savingEdit) {
       setEditingPath(null);
       setEditingValue("");
@@ -64,12 +69,15 @@ export function useWatchFolders(open: boolean, onChanged: () => void) {
     listWatchFolders()
       .then((rows) => {
         if (!cancelled) {
-          // A stale error from a previous open must not outlive the reopen.
-          setOrderCheckError(null);
           setFolders(rows);
         }
       })
-      .catch(console.error);
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) {
+          setOrderCheckError(String(e));
+        }
+      });
     listWatchCheckDisabledFolders()
       .then((disabled) => {
         if (!cancelled) {

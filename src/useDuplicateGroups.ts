@@ -86,12 +86,20 @@ export function useDuplicateGroups(
     }
   }
 
-  function requestFileDelete(member: DuplicateGroupMember) {
+  // 次の操作を始めた時点で、前回の失敗表示を消す。行のエラーは同じ行の
+  // どちらの操作でも消し、他の行のエラーは残す。
+  function clearErrorsForNewAction(member: DuplicateGroupMember) {
+    setError(null);
     setFileDeleteErrors((prev) => withoutKey(prev, member.video_id));
+  }
+
+  function requestFileDelete(member: DuplicateGroupMember) {
+    clearErrorsForNewAction(member);
     setPending({ kind: "file", member });
   }
 
   function requestUnregister(member: DuplicateGroupMember) {
+    clearErrorsForNewAction(member);
     setPending({ kind: "unregister", member });
   }
 

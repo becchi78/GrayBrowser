@@ -519,19 +519,56 @@ test("ファイルを削除を押すと、その行の前回のエラーだけ�
   expect(rowErrors("b")).toEqual(["fail b"]);
 });
 
-// 今の動作を固めている: 行のエラーを消すのは「ファイルを削除」を押したときだけ。
-test("現状: 登録解除を押しても、その行のファイル削除のエラーは消えない", async () => {
-  vi.mocked(api.deleteDuplicateVideoAndFile).mockRejectedValueOnce("fail a");
+test("登録解除を押すと、その行の前回のファイル削除エラーだけを消してから確認を出す", async () => {
+  vi.mocked(api.deleteDuplicateVideoAndFile)
+    .mockRejectedValueOnce("fail a")
+    .mockRejectedValueOnce("fail b");
   const { user } = await renderPanel();
 
   await user.click(fileDeleteButton("a"));
   await user.click(confirmButton());
   await settle();
+  await user.click(fileDeleteButton("b"));
+  await user.click(confirmButton());
+  await settle();
+  expect(rowErrors("a")).toEqual(["fail a"]);
+  expect(rowErrors("b")).toEqual(["fail b"]);
 
   await user.click(unregisterButton("a"));
 
   expect(confirmDialog()).toBeInTheDocument();
-  expect(rowErrors("a")).toEqual(["fail a"]);
+  expect(rowErrors("a")).toEqual([]);
+  expect(rowErrors("b")).toEqual(["fail b"]);
+});
+
+test("登録解除を押し直すと、パネルの前回のエラーを消してから確認を出す", async () => {
+  vi.mocked(api.deleteDuplicateVideo).mockRejectedValueOnce("unregister failed");
+  const { user } = await renderPanel();
+
+  await user.click(unregisterButton("b"));
+  await user.click(confirmButton());
+  await settle();
+  expect(panelError()).toHaveTextContent(/^unregister failed$/);
+
+  await user.click(unregisterButton("b"));
+
+  expect(confirmDialog()).toBeInTheDocument();
+  expect(panelError()).toBeNull();
+});
+
+test("ファイルを削除を押すと、パネルの前回のエラーを消してから確認を出す", async () => {
+  vi.mocked(api.deleteDuplicateVideo).mockRejectedValueOnce("unregister failed");
+  const { user } = await renderPanel();
+
+  await user.click(unregisterButton("b"));
+  await user.click(confirmButton());
+  await settle();
+  expect(panelError()).toHaveTextContent(/^unregister failed$/);
+
+  await user.click(fileDeleteButton("b"));
+
+  expect(confirmDialog()).toBeInTheDocument();
+  expect(panelError()).toBeNull();
 });
 
 // ---- 押せない条件 ----
