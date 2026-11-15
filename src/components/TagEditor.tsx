@@ -31,8 +31,9 @@ export function TagEditor({ videoId, tagsVersion = 0 }: Props) {
   }
 
   useEffect(() => {
-    // Inlined rather than calling the component-scope `reloadTags` directly
-    // -- matches ThumbnailGrid's tick() idiom for async effect bodies.
+    // Inlined rather than calling the component-scope `reloadTags` directly:
+    // the `cancelled` flag guards setTags against a stale response arriving
+    // after the video changed or the editor unmounted.
     let cancelled = false;
     listTagsForVideo(videoId)
       .then((rows) => {

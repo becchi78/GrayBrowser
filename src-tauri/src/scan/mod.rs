@@ -1095,20 +1095,15 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    /// This scenario -- a path-follow target that's already claimed by
-    /// a *different*, currently-online row -- can never actually be reached
-    /// through the public `scan_folders`/`process_detected_file` entry
-    /// point: `process_detected_file` looks up `find_video_by_path(new_path)`
-    /// *before* `register_new_path` runs, and if any row (online or offline)
-    /// already has that exact `file_path`, it's routed to
-    /// `reconcile_known_path` instead -- never reaching
-    /// `register_new_path`'s candidate/collision check at all. So the
-    /// collision guard is a final-defense layer against a state that a real
-    /// `WalkDir`-driven scan/watch/poll cannot produce given this module's
-    /// current query semantics, not an ordinary hit path -- `register_new_path`
-    /// is called directly here (bypassing `find_video_by_path`'s guard) to
-    /// construct it anyway and prove the fallback doesn't panic and leaves
-    /// both existing rows exactly as they were.
+    /// A path-follow target that's already claimed by a *different*,
+    /// currently-online row. A single scan can't produce this: with no
+    /// concurrent writer, `process_detected_file`'s `find_video_by_path`
+    /// routes any already-known path to `reconcile_known_path` before
+    /// `register_new_path` runs. It is only reachable through a race, where
+    /// another detection path registers the row between that lookup and the
+    /// writer-lock section. `register_new_path` is called directly here,
+    /// bypassing the lookup, to construct that state and prove the collision
+    /// guard doesn't panic and leaves both existing rows exactly as they were.
     ///
     /// Also proves a corollary of `file_path` being `UNIQUE`: the "new file"
     /// can never actually be registered as a separate row at the path the

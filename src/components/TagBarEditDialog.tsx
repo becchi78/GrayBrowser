@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { deleteTag, listTagsWithVideoCount, setTagOrder } from "../api";
-import { moveDown, moveUp } from "../lib/reorderablePinnedTags";
+import { moveDown, moveUp } from "../lib/reorder";
 import { buildTagDeleteMessage } from "../lib/tagDeleteMessage";
 import type { TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -20,7 +20,7 @@ interface Props {
   onTagDeleted: (tagId: number) => void;
 }
 
-// Draft-then-save editing, same convention as FolderDialog's editingValue/
+// Draft-then-save editing, same convention as useWatchFolders's editingValue/
 // cancelEdit: every ↑/↓ click below only mutates local `draftTags` state.
 // Nothing reaches the backend until "保存" is clicked; "キャンセル" (or the
 // overlay click / Escape) discards the draft unpersisted -- the next `open`

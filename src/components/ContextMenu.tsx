@@ -21,7 +21,7 @@ interface Props {
 const ENABLED_ITEM_SELECTOR = '[role="menuitem"]:not(:disabled)';
 
 // 一覧のスクロール領域や重複パネルなど position / overflow の効く祖先の
-// 影響を受けないよう、ConfirmDialog と同じく document.body へ portal で描画する。
+// 影響を受けないよう、ModalShell (ConfirmDialog の土台) と同じく document.body へ portal で描画する。
 // ブラウザ標準のメニューは呼び出し側が preventDefault で抑止する。
 export function ContextMenu({ position, items, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);

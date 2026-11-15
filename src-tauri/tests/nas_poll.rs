@@ -4,7 +4,7 @@
 //!
 //! Not attempted here: a "subdirectory temporarily inaccessible" scenario
 //! via real Windows ACL manipulation (e.g. `icacls`) -- unlike the file-level
-//! `share_mode(0)` trick used elsewhere in this suite, denying access to a
+//! `share_mode(0)` trick used in `tests/scan_pipeline.rs`, denying access to a
 //! *directory* and reliably restoring it afterward (including on test
 //! panic/early return) is meaningfully riskier in a shared CI runner, and a
 //! failed cleanup could leave a broken ACL behind. That specific guarantee

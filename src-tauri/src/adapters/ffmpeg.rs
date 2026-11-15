@@ -87,9 +87,9 @@ impl FfmpegAdapter for RealFfmpegAdapter {
         let input_str = path_to_str(&long_input)?;
         let output_str = path_to_str(&long_output)?;
 
-        // Extracts one frame at the ~10% position (already computed by the
-        // caller as seek_secs), scaled to about width_px wide, low-quality-
-        // leaning WebP output via -quality/-lossless 0.
+        // Extracts one frame at the caller-chosen `seek_secs`, scaled to
+        // about width_px wide, low-quality-leaning WebP output via
+        // -quality/-lossless 0.
         let output = hidden_command("ffmpeg")
             .args([
                 "-ss",

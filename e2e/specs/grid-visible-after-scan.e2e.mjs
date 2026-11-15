@@ -24,8 +24,9 @@
 //      visually overlapping each other when space is tight, regardless of
 //      what happens to the list.
 //
-// See layout-shrink-regression.e2e.mjs for two additional regression tests
-// (horizontal shrink, 84px non-grid budget).
+// See layout-shrink-regression.e2e.mjs for the related layout regression
+// tests (horizontal shrink, 84px non-grid budget, generation-failures panel
+// width).
 //
 // This differs from incremental-search.e2e.mjs's existing `.video-row`
 // wait in that it isolates the assertion to layout metrics (container
@@ -33,7 +34,7 @@
 // points straight at the CSS/virtualizer layer instead of looking like a
 // generic timeout that could be blamed on IPC/backend timing.
 //
-// All three tests below seed `watch_folders` directly into app.db *before*
+// The tests below that scan seed `watch_folders` directly into app.db *before*
 // launching the WebDriver session, rather than seeding then calling
 // `browser.refresh()` mid-session (the pattern incremental-search.e2e.mjs/
 // tag-management.e2e.mjs use). `browser.refresh()` (and even
@@ -54,11 +55,9 @@ import { cleanupFixtureFolder, createFixtureFolder, seedWatchFolder } from "../f
 import { saveFailureScreenshot, createSession } from "../session.mjs";
 import { ensureAppDbExists, scanViaFolderDialog, searchAndWaitForCellCount, waitForAppReady } from "../uiFlows.mjs";
 
-// tauri.conf.json's confirmed values (defaults and minimum). minHeight was
-// changed from 850 to 580: the native menu bar does not consume WebView2
-// client-area height on this platform, so no extra margin beyond the 560px
-// layout calculation was needed; confirmed empirically via the two
-// window-size tests below, which stayed green against the new value.
+// tauri.conf.json's values (defaults and minimum). minHeight (580) needs no
+// margin beyond the layout calculation: the native menu bar does not consume
+// WebView2 client-area height on this platform.
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 const MIN_WINDOW = { width: 900, height: 580 };
 // ROW_HEIGHT in ThumbnailGrid.tsx / `.video-list`'s `min-height` floor in
@@ -116,9 +115,9 @@ test("default window size (1280x900) shows a full row of thumbnails", async () =
   await ensureAppDbExists();
 
   const token = `e2e${Date.now()}default`;
-  // Enough fixtures to guarantee at least one full row regardless of
-  // column count at this window width (CELL_WIDTH = 200 in
-  // ThumbnailGrid.tsx; 1280px wide comfortably fits more than 3 columns).
+  // Each video renders as its own `.video-row` (the list has one video per
+  // row, no columns), so three fixtures give three rows; the assertions
+  // below need at least one full row to measure.
   const fixtureDir = createFixtureFolder([
     `${token}_a.mp4`,
     `${token}_b.mp4`,

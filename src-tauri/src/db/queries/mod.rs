@@ -1,8 +1,9 @@
 //! CRUD against the `videos` / `skipped_files` / `settings` / `tags` /
-//! `video_tags` tables. Writes (`insert_video`, `upsert_skipped_file`,
-//! `set_watch_folders`) take the single writer `Connection`; reads
-//! (`list_videos`, `list_skipped_files`) take a pooled read connection
-//! (single-writer/many-readers rule).
+//! `video_tags` tables (plus the offline/duplicate/unmatched/attempts/wb_import
+//! helpers), split into one submodule per area and re-exported flat. Writes
+//! (`insert_video`, `upsert_skipped_file`, `set_watch_folders`) take the single
+//! writer `Connection`; reads (`list_videos_filtered`, `list_skipped_files`)
+//! take a pooled read connection (single-writer/many-readers rule).
 //!
 //! `video_tags` referential integrity: since
 //! `PRAGMA foreign_keys` is deliberately OFF (see `db::disable_foreign_keys`),

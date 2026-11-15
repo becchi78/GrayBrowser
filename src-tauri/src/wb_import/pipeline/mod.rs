@@ -54,9 +54,8 @@ use thumbnails::{
 const PROGRESS_NOTIFY_INTERVAL: u32 = 50;
 
 /// The three filesystem paths `run_wb_import` needs, bundled into one struct
-/// so the function's own parameter count stays under
-/// `clippy::too_many_arguments`'s default threshold once the source adapter
-/// and three notifier-ish handles are added alongside `db`.
+/// so they travel together instead of adding three more parameters to
+/// signatures that are already long.
 pub struct WbImportPaths {
     /// The `.wb` file path -- `wb_source` is already opened against it by
     /// the caller; this is kept only for log messages.
@@ -88,8 +87,9 @@ pub struct WbImportPaths {
 /// which would conflict with `import_all`'s own `&F`/`&N`/`&C` borrowed-
 /// reference signature (kept borrowed there specifically so tests can pass
 /// plain fakes by reference without wrapping them in `Arc`).
-// One argument over clippy's limit: each is an independent handle the spawned
-// thread needs, and grouping them would only rename the problem.
+// 15 parameters, over clippy's default limit of 7: each is an independent
+// handle the spawned thread needs, and grouping them would only rename the
+// problem.
 #[allow(clippy::too_many_arguments)]
 pub fn run_wb_import<S, F, N, C, W, D, P, V, K, L>(
     db: Db,
@@ -183,8 +183,9 @@ fn notify_row_progress<N: WbImportNotifier>(
 /// `watch` is `Some` only when the user opted in to registering the imported
 /// videos' folders as watch folders; it is then also told to re-apply the
 /// watchers once the list actually grew.
-// One argument over clippy's limit, same as `run_wb_import`: each is an
-// independent handle, and grouping them would only rename the problem.
+// 12 parameters, over clippy's default limit of 7, for the same reason as
+// `run_wb_import`: each is an independent handle, and grouping them would only
+// rename the problem.
 #[allow(clippy::too_many_arguments)]
 fn import_all<S, F, N, C, W, D, P, V, K, L>(
     db: &Db,

@@ -1,7 +1,7 @@
 // moveUp/moveDown のユニットテスト。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { moveDown, moveUp } from "./reorderablePinnedTags.ts";
+import { moveDown, moveUp } from "./reorder.ts";
 
 test("moveUp: 中間の要素を1つ前と入れ替える", () => {
   assert.deepEqual(moveUp([1, 2, 3], 1), [2, 1, 3]);

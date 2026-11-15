@@ -315,10 +315,7 @@ fn only_linked_offline_rows_become_thumbnail_ready_and_reimport_keeps_it() {
     }
 }
 
-/// Follow-up to the test above: that test only exercises
-/// `ffmpeg.convert_image_to_webp` itself failing (the early-return
-/// branch before the copy loop). This test instead exercises the copy
-/// loop's own fail-fast + best-effort-cleanup branch: conversion
+/// The copy loop's fail-fast + best-effort-cleanup branch: conversion
 /// succeeds, but `fs::copy` fails partway through duplicating the
 /// converted image into the `THUMBNAILS_PER_VIDEO` slots.
 ///
@@ -349,23 +346,13 @@ fn copy_failure_partway_through_the_slot_loop_cleans_up_and_stops() {
     // through the six slots before hitting the failure.
     std::fs::create_dir(video_dir.join(format!("{video_id}_2.webp"))).unwrap();
 
-    // Fail-fast side channel for slot 3 (the slot immediately after the
-    // failure, so the very first one a broken/missing `break` would
-    // reach): the best-effort cleanup pass below unconditionally
-    // `fs::remove_file`s every slot 0..THUMBNAILS_PER_VIDEO regardless of
-    // which slot actually failed, so merely asserting "slot 3's path
-    // doesn't exist afterward" is true whether or not slot 3 was ever
-    // copied to -- cleanup would delete it either way, making that
-    // assertion alone unable to catch a missing `break`. To observe the
-    // copy attempt itself (not just its cleaned-up-or-not-cleaned-up
-    // aftermath), hard-link slot 3's destination to a marker file that
-    // lives outside the six slot paths cleanup ever touches:
-    // `fs::copy`'s Windows implementation overwrites an existing
-    // destination in place (verified empirically: it does NOT
-    // delete-and-recreate, so a hard link to that file sees the new
-    // content too), while `fs::remove_file` on the slot path afterward
-    // only detaches that one directory entry -- the marker keeps
-    // whatever content the copy left behind, cleaned up or not.
+    // Fail-fast side channel for slot 3, the first slot a missing `break`
+    // would reach. The cleanup pass removes every slot path regardless, so
+    // asserting that slot 3's path is gone cannot tell "never attempted"
+    // from "copied then cleaned up". Instead hard-link slot 3's destination
+    // to a marker outside the slot paths: Windows `fs::copy` overwrites an
+    // existing destination in place, so the marker would see the copied
+    // bytes, while `fs::remove_file` on the slot only drops that one entry.
     let marker_path = video_dir.join("fail_fast_side_channel_marker.bin");
     std::fs::write(&marker_path, b"untouched-original-marker-content").unwrap();
     std::fs::hard_link(&marker_path, video_dir.join(format!("{video_id}_3.webp"))).unwrap();
@@ -417,9 +404,8 @@ fn copy_failure_partway_through_the_slot_loop_cleans_up_and_stops() {
     // the test's own `tempfile::TempDir` removes it on drop).
     assert!(video_dir.join(format!("{video_id}_2.webp")).is_dir());
 
-    // Slots 3..THUMBNAILS_PER_VIDEO's own destination paths must be gone
-    // too (removed by the same best-effort cleanup pass as slots 0/1 --
-    // this alone doesn't prove they were *never attempted*, see above).
+    // Slots 3.. are gone too (same cleanup pass; this alone does not prove
+    // they were never attempted -- see the marker check below).
     for i in 3..THUMBNAILS_PER_VIDEO {
         assert!(
             !video_dir.join(format!("{video_id}_{i}.webp")).exists(),
@@ -427,14 +413,8 @@ fn copy_failure_partway_through_the_slot_loop_cleans_up_and_stops() {
         );
     }
 
-    // The actual fail-fast proof: the marker file hard-linked to slot 3
-    // must still read back its original content. If the missing `break`
-    // regression were reintroduced, the loop would reach slot 3 after
-    // slot 2's failure, `fs::copy` would overwrite the marker's content
-    // in place, and this would read back the copy's ("fake webp bytes")
-    // content instead -- even though slot 3's own path gets cleaned up
-    // either way (checked above) and can't tell the two cases apart by
-    // itself.
+    // The actual fail-fast proof: without the `break`, the loop would reach
+    // slot 3 and overwrite the marker's content in place.
     assert_eq!(
         std::fs::read(&marker_path).unwrap(),
         b"untouched-original-marker-content",

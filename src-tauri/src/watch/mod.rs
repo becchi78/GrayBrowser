@@ -32,14 +32,6 @@ use follow_up::FollowUp;
 use nas_poll::NasPollHandle;
 use unreadable_retry::{RetryOutcome, UnreadableRetry};
 
-/// Holds the live watch subscriptions/pollers for as long as the app runs.
-/// Managed via `app.manage()`. No explicit shutdown wiring at process exit:
-/// dropping this drops every `WatchHandle` (whose `Drop`, through the
-/// `notify` watcher it owns, unregisters the OS-level watch);
-/// `NasPollHandle`s left un-stopped at process exit are
-/// simply killed along with their thread by the OS, same reasoning.
-/// Reconfiguration mid-run (folder list changes) goes through `reconfigure`
-/// instead, which explicitly stops the old set before starting the new one.
 /// Bundles `Db` and the `thumbnails/` root together for `RealtimeWatchManager::
 /// reconfigure` -- keeps its own parameter count under
 /// `clippy::too_many_arguments`'s default threshold now that `thumbnails_root`
@@ -51,6 +43,14 @@ pub struct WatchContext {
     pub thumbnails_root: PathBuf,
 }
 
+/// Holds the live watch subscriptions/pollers for as long as the app runs.
+/// Managed via `app.manage()`. No explicit shutdown wiring at process exit:
+/// dropping this drops every `WatchHandle` (whose `Drop`, through the
+/// `notify` watcher it owns, unregisters the OS-level watch);
+/// `NasPollHandle`s left un-stopped at process exit are
+/// simply killed along with their thread by the OS, same reasoning.
+/// Reconfiguration mid-run (folder list changes) goes through `reconfigure`
+/// instead, which explicitly stops the old set before starting the new one.
 pub struct RealtimeWatchManager {
     handles: Mutex<Vec<Box<dyn WatchHandle>>>,
     nas_pollers: Mutex<Vec<NasPollHandle>>,
@@ -1013,8 +1013,8 @@ mod tests {
         assert_eq!(manager.active_nas_poller_count(), 1);
 
         // Reconfiguring with an empty list must replace the manager's
-        // tracked set immediately -- NasPollHandle::stop() no
-        // longer joins its thread, so this only proves the *bookkeeping*
+        // tracked set immediately -- NasPollHandle::stop() only sets a
+        // flag and does not join its thread, so this only proves the *bookkeeping*
         // (active_nas_poller_count) was updated synchronously, not that the
         // old background thread has actually exited yet (it may still be
         // finishing its current cycle in the background).

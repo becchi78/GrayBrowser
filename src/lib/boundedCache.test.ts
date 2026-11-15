@@ -1,8 +1,8 @@
 // setWithEviction のユニットテスト。
-// プロジェクトにvitest等のフロントエンド向けテストランナーが未導入のため、
-// e2eテスト（e2e/specs/*.e2e.mjs）と同様にNode組み込みのtest runnerを使う。
-// 型注釈を含む.tsファイルをそのまま実行できるよう、
-// `node --experimental-strip-types --test` で実行する想定（package.jsonのtest:unit参照）。
+// DOMやReactに依存しない純粋関数なので、vitest(test:component)ではなく
+// Node組み込みのtest runnerで実行する。型注釈を含む.tsファイルをそのまま
+// 実行できるよう `node --experimental-strip-types --test` を使う
+// （package.jsonのtest:unit参照）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setWithEviction } from "./boundedCache.ts";

@@ -36,10 +36,10 @@ const DEFAULT_WINDOW = { width: 1280, height: 900 };
 //
 // SHRUNK_WIDTH itself: `.app`'s `padding: 1em` (16px, `:root`'s
 // `font-size: 16px`) on each side is 32px total, so the two columns' own
-// combined natural width is 200 (sidebar, at its unresized default) + 582
+// combined natural width is 200 (sidebar, at its unresized default) + 532
 // (`.video-list` min-width -- see App.css's own comment on that rule for
-// where 582 comes from) + 32 (`.app` padding) = 814px. 350px is
-// comfortably (464px of margin) under this threshold -- the test's purpose
+// where 532 comes from) + 32 (`.app` padding) = 764px. 350px is
+// comfortably (414px of margin) under this threshold -- the test's purpose
 // (confirming `.video-list` never collapses to 0 width) only needs the
 // window meaningfully below it, not just-under-the-threshold.
 const SHRUNK_WIDTH = 350;
@@ -90,7 +90,7 @@ test("shrinking the window well below the 900px minWidth still leaves .video-lis
     );
     assert.ok(
       layout.gridClientWidth > 0,
-      `expected .video-list clientWidth to stay nonzero (App.css's min-width: 582px floor) even at ${SHRUNK_WIDTH}px window width, got ${JSON.stringify(layout)}`,
+      `expected .video-list clientWidth to stay nonzero (App.css's min-width: 532px floor) even at ${SHRUNK_WIDTH}px window width, got ${JSON.stringify(layout)}`,
     );
   } catch (e) {
     await saveFailureScreenshot(browser, "layout-shrink-horizontal");
@@ -111,8 +111,9 @@ test("the always-visible non-grid chrome (header row + status bar) totals at mos
     await browser.pause(300);
 
     // Always-visible non-grid area budget = 52px (header row) + 32px
-    // (status bar) = 84px; the filter row moved into the left pane. Measured directly as the sum of
-    // each always-mounted region's own offsetHeight (not the .app
+    // (status bar) = 84px; the filter row lives in the left pane, so it is
+    // not part of this budget. Measured directly as the sum of each
+    // always-mounted region's own offsetHeight (not the .app
     // padding/gap around them, which is separate from the "non-grid chrome"
     // budget this is about) so a regression in any one row is individually
     // attributable, not just a total that could pass by one row shrinking
@@ -147,7 +148,7 @@ test("the always-visible non-grid chrome (header row + status bar) totals at mos
 
 // A video row whose thumbnail generation has exhausted its
 // automatic-retry budget (gb_core::retry::MAX_GENERATION_ATTEMPTS = 3,
-// src-tauri/src/db/queries.rs's list_videos_with_exhausted_thumbnail_attempts
+// src-tauri/src/db/queries/attempts.rs's list_videos_with_exhausted_thumbnail_attempts
 // requires status='online' AND thumbnail_attempts >= that threshold),
 // inserted directly into `videos` the same way uiFlows.mjs's
 // ensureAppDbExists/fixtures.mjs's seedWatchFolder write to `settings` --
