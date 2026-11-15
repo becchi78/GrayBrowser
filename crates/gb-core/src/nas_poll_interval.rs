@@ -4,6 +4,8 @@
 pub const MIN_MINUTES: i64 = 1;
 pub const MAX_MINUTES: i64 = 1440;
 pub const DEFAULT_MINUTES: i64 = 10;
+/// Storage-side default, derived so the two units cannot drift apart.
+pub const DEFAULT_SECS: i64 = DEFAULT_MINUTES * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IntervalError {

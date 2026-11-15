@@ -54,7 +54,7 @@ const NAS_POLL_INTERVAL_KEY: &str = "nas_polling_interval_sec";
 
 /// Default NAS polling interval: periodic (e.g. every 10 minutes),
 /// configurable by the user.
-const DEFAULT_NAS_POLL_INTERVAL_SECS: i64 = 600;
+const DEFAULT_NAS_POLL_INTERVAL_SECS: i64 = gb_core::nas_poll_interval::DEFAULT_SECS;
 
 pub fn get_nas_poll_interval_secs(conn: &Connection) -> anyhow::Result<i64> {
     match get_setting(conn, NAS_POLL_INTERVAL_KEY)? {
