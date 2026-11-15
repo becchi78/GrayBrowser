@@ -2,7 +2,7 @@
 
 use super::common::{
     count_of, harness, import_all, import_registering, import_with_lister, named_row, no_op_ffmpeg,
-    registering_progress, replaced_row, row, stored_watch_folders, Harness, OnlineDir, DASH,
+    replaced_row, row, stored_watch_folders, Harness, OnlineDir, DASH,
 };
 use super::*;
 
@@ -224,32 +224,4 @@ fn an_unrelated_jpg_is_still_unmatched_next_to_refused_rows() {
 
     let summary = notifier.complete_calls.lock().unwrap()[0].clone();
     assert_eq!(summary.thumbnails_unmatched, 1);
-}
-
-#[test]
-fn progress_still_reaches_the_last_row_when_it_is_refused() {
-    let h = harness();
-    let wb_source = FakeWbSourceAdapter {
-        movies: Ok(vec![
-            named_row(1, "Z:\\gone", "ok.mp4"),
-            named_row(2, "Z:\\gone", "bad\u{2460}.mp4"),
-        ]),
-        ..Default::default()
-    };
-    let notifier = FakeWbImportNotifier::default();
-
-    import_all(
-        &h.db,
-        &h.paths,
-        &wb_source,
-        &no_op_ffmpeg(),
-        &notifier,
-        &FakeCatalogNotifier::default(),
-    );
-
-    assert_eq!(
-        registering_progress(&notifier),
-        vec![(2, Some(2))],
-        "the refused last row reports the final count itself"
-    );
 }

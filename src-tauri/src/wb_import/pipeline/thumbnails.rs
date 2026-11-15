@@ -800,6 +800,46 @@ fn remove_slot_files(video_dir: &Path, video_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gb_core::ports::wb_source::WbSourceError;
+    use gb_core::testing::fake_wb_source::FakeWbSourceAdapter;
+
+    fn layout_from(values: Result<Vec<String>, WbSourceError>) -> Option<String> {
+        read_thumb_layout(&FakeWbSourceAdapter {
+            profile_values: values,
+            ..Default::default()
+        })
+        .map(|l| l.to_thum_size())
+    }
+
+    fn ok(values: &[&str]) -> Result<Vec<String>, WbSourceError> {
+        Ok(values.iter().map(|v| v.to_string()).collect())
+    }
+
+    #[test]
+    fn the_thumb_layout_is_read_only_when_the_skins_state_one_parsable_value() {
+        assert_eq!(
+            layout_from(ok(&["200x150x6x1"])),
+            Some("200x150x6x1".into())
+        );
+        assert_eq!(
+            layout_from(ok(&["200x150x6x1", "200x150x6x1"])),
+            Some("200x150x6x1".into()),
+            "skins that agree still split"
+        );
+        // Anything else imports the images whole.
+        assert_eq!(layout_from(ok(&[])), None, "none stated");
+        assert_eq!(layout_from(ok(&["wide"])), None, "unparsable");
+        assert_eq!(
+            layout_from(ok(&["200x150x6x1", "100x75x6x1"])),
+            None,
+            "skins disagree"
+        );
+        assert_eq!(
+            layout_from(Err(WbSourceError::Query("no profile table".into()))),
+            None,
+            "unreadable"
+        );
+    }
 
     #[test]
     fn a_panic_in_one_link_fails_only_that_item() {

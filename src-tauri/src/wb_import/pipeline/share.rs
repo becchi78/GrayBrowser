@@ -160,4 +160,22 @@ mod tests {
         assert!(shares.is_reachable_path(r"\server"));
         assert!(probe.calls().is_empty());
     }
+
+    #[test]
+    fn a_panicking_probe_counts_as_reachable_and_the_other_shares_keep_their_answer() {
+        struct PanicOnW;
+        impl FolderProbe for PanicOnW {
+            fn is_reachable(&self, folder: &str) -> bool {
+                if folder == r"W:\" {
+                    panic!("probe failure for the test");
+                }
+                false
+            }
+        }
+
+        let shares = ShareReachability::probe(&PanicOnW, [r"W:\a.mp4", r"X:\b.mp4"].into_iter());
+
+        assert!(shares.is_reachable_path(r"W:\a.mp4"));
+        assert!(!shares.is_reachable_path(r"X:\b.mp4"));
+    }
 }

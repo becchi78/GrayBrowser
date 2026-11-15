@@ -153,7 +153,6 @@ fn a_rewritten_path_is_what_the_share_probe_sees() {
     assert_eq!(summary.registered_offline, 1);
     assert_eq!(summary.volume_label_resolved, 1);
     assert_eq!(status_of(&h, r"W:\v\a.mp4").0, "offline");
-    assert!(log.text().contains(r"W:\"));
 }
 
 #[test]

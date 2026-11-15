@@ -180,9 +180,6 @@ fn a_panicking_probe_does_not_abort_the_import_and_counts_as_reachable() {
     );
 
     assert_eq!(notifier.complete_calls.lock().unwrap().len(), 1);
-    let shares = ShareReachability::probe(&PanicOnW, [r"W:\a.mp4", r"X:\b.mp4"].into_iter());
-    assert!(shares.is_reachable_path(r"W:\a.mp4"));
-    assert!(!shares.is_reachable_path(r"X:\b.mp4"));
 }
 
 #[test]

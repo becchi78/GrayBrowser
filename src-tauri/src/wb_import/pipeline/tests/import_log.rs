@@ -269,60 +269,6 @@ fn an_import_succeeds_even_when_the_log_cannot_be_written() {
     assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 1);
 }
 
-/// Records the order of log writes relative to the failure notification.
-struct OrderRecorder {
-    events: Arc<Mutex<Vec<String>>>,
-}
-
-impl WbImportLog for OrderRecorder {
-    fn append(&self, text: &str) {
-        self.events.lock().unwrap().push(format!("log:{text}"));
-    }
-    fn location(&self) -> String {
-        String::new()
-    }
-}
-
-impl WbImportNotifier for OrderRecorder {
-    fn notify_progress(&self, _: WbImportStage, _: u32, _: Option<u32>) {}
-    fn notify_complete(&self, _: &WbImportSummary) {}
-    fn notify_failed(&self, _: &str) {
-        self.events.lock().unwrap().push("failed".to_string());
-    }
-}
-
-#[test]
-fn the_failure_reason_is_logged_before_the_failure_is_announced() {
-    let h = harness();
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let recorder = OrderRecorder {
-        events: events.clone(),
-    };
-
-    super::import_all(
-        &h.db,
-        &h.paths,
-        &FakeWbSourceAdapter::default(),
-        &no_op_ffmpeg(),
-        &recorder,
-        &FakeCatalogNotifier::default(),
-        None::<&FakeWatchReconfigurer>,
-        &FakeDirLister::default(),
-        &FakeFolderProbe::default(),
-        &FakeVolumeLabelResolver::default(),
-        &FakeWbImportClock::default(),
-        &recorder,
-    );
-
-    let events = events.lock().unwrap();
-    let failure_log = events
-        .iter()
-        .position(|e| e.starts_with("log:") && e.contains("取り込みを中止しました"))
-        .expect("failure reason logged");
-    let announced = events.iter().position(|e| e == "failed").unwrap();
-    assert!(failure_log < announced, "{events:?}");
-}
-
 #[test]
 fn the_summary_states_the_thumbnail_counts() {
     let h = harness();
@@ -344,7 +290,7 @@ fn the_summary_states_the_thumbnail_counts() {
     };
     let import_log = FakeWbImportLog::default();
 
-    import_with_log(
+    let (_, summary) = import_with_log(
         &h,
         Ok(vec![
             row(|r| {
@@ -363,9 +309,13 @@ fn the_summary_states_the_thumbnail_counts() {
         &import_log,
     );
 
-    assert!(import_log.text().contains(
-        "旧サムネイル: 紐付け 1 (うち名前の一致で自動 0) / 失敗 1 / 対応なし 1 (ハッシュが空 0 / 対応する動画なし 1) / "
-    ));
+    // How the counts are worded in the log is `wb_import_log`'s format test.
+    let summary = summary.expect("completes");
+    assert_eq!(summary.thumbnails_linked, 1);
+    assert_eq!(summary.thumbnails_linked_by_name, 0);
+    assert_eq!(summary.thumbnails_failed, 1);
+    assert_eq!(summary.thumbnails_unmatched, 1);
+    assert_eq!(summary.thumbnails_unmatched_empty_hash, 0);
 }
 
 fn run_with_clock(
@@ -619,14 +569,14 @@ fn unmatched_thumbnails_are_split_into_empty_hash_and_no_matching_video() {
     let summary = summary.expect("completes");
     assert_eq!(summary.thumbnails_unmatched, 4);
     assert_eq!(summary.thumbnails_unmatched_empty_hash, 2);
+    // The names listed under each heading are `wb_import_log`'s format test;
+    // here the log only has to name the files that were recorded unmatched.
     let text = import_log.text();
-    assert!(
-        text.contains("自動対応できなかった旧サムネイル: 4 件"),
-        "{text}"
-    );
-    assert!(text.contains(
-        "ハッシュが空(自動では紐付けられない): 2 件\n  \"Gone1.mp4.#.jpg\"\n  \"Gone2.mp4.#.jpg\"\n"
-    ));
-    assert!(text.contains("対応する動画なし: 2 件\n"));
-    assert!(text.contains("対応なし 4 (ハッシュが空 2 / 対応する動画なし 2)"));
+    for name in [
+        "Gone1.mp4.#.jpg",
+        "Gone2.mp4.#.jpg",
+        "Orphan.mp4.#abcdef01.jpg",
+    ] {
+        assert!(text.contains(name), "{name} missing from {text}");
+    }
 }

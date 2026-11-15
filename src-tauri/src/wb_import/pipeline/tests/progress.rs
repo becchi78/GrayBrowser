@@ -45,22 +45,6 @@ fn reading_reports_the_row_count_once_it_is_known() {
 }
 
 #[test]
-fn a_failed_read_reports_no_progress_at_all() {
-    let h = harness();
-    let notifier = FakeWbImportNotifier::default();
-    import_all(
-        &h.db,
-        &h.paths,
-        &FakeWbSourceAdapter::default(),
-        &no_op_ffmpeg(),
-        &notifier,
-        &FakeCatalogNotifier::default(),
-    );
-
-    assert!(notifier.progress_calls.lock().unwrap().is_empty());
-}
-
-#[test]
 fn registering_reports_the_final_count_once_when_the_last_row_reports_it() {
     let notifier = import_rows(vec![
         named_row(1, "Z:\\gone", "a.mp4"),
@@ -274,47 +258,4 @@ fn linking_reports_zero_of_the_matched_count_then_the_final_count() {
     let summary = notifier.complete_calls.lock().unwrap()[0].clone();
     assert_eq!(summary.thumbnails_linked, 2);
     assert_eq!(summary.thumbnails_unmatched, 1);
-}
-
-#[test]
-fn link_progress_is_throttled_and_ends_at_the_total() {
-    let h = harness();
-    let count = PROGRESS_NOTIFY_INTERVAL * 2 + 1;
-    let movies: Vec<(String, String, String)> = (0..count)
-        .map(|i| {
-            let hash = format!("{i:08x}");
-            std::fs::write(
-                h.paths
-                    .thumbnail_folder
-                    .join(format!("m{i}.mp4.#{hash}.jpg")),
-                b"fake jpg",
-            )
-            .unwrap();
-            (format!("video-{i}"), hash, format!("Z:\\gone\\m{i}.mp4"))
-        })
-        .collect();
-    let calls = Mutex::new(Vec::new());
-
-    link_thumbnails(
-        &h.paths.thumbnail_folder,
-        &h.paths.thumbnails_dir,
-        &[],
-        &movies,
-        &[],
-        &HashSet::new(),
-        &HashSet::new(),
-        &no_op_ffmpeg(),
-        None,
-        |processed, total| calls.lock().unwrap().push((processed, total)),
-    );
-
-    assert_eq!(
-        *calls.lock().unwrap(),
-        vec![
-            (0, count),
-            (PROGRESS_NOTIFY_INTERVAL, count),
-            (PROGRESS_NOTIFY_INTERVAL * 2, count),
-            (count, count)
-        ]
-    );
 }

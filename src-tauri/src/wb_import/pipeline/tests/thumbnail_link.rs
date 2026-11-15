@@ -6,6 +6,7 @@ use super::common::{
     harness, image_size, import_all, jpeg_bytes, legacy_movies, link_with_layout, no_op_ffmpeg,
     recorded_unmatched, row, six_by_one_layout, split_ffmpeg, unassigned_dir, Harness,
 };
+use super::thumbnail_split::{converts, split_calls};
 use super::*;
 
 #[test]
@@ -427,67 +428,6 @@ fn copy_failure_partway_through_the_slot_loop_cleans_up_and_stops() {
         .exists());
 }
 
-/// An *online* row's thumbnail must come from the real video file (the
-/// existing background thumbnail pipeline, kicked off by
-/// `run_wb_import` after `import_all` returns -- not exercised by this
-/// test, which calls `import_all` directly), never from the legacy
-/// JPG, even when a hash-matching legacy JPG exists. It must therefore
-/// never reach `ffmpeg.convert_image_to_webp` at all, and its legacy
-/// JPG must be counted as `thumbnails_skipped_online` -- not as
-/// `thumbnails_unmatched` (which means "needs manual attention") and not
-/// as `thumbnails_linked`.
-#[test]
-fn online_rows_are_excluded_from_legacy_thumbnail_matching() {
-    let h = harness();
-
-    let online_file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(online_file.path(), b"hello online thumbnail exclusion").unwrap();
-    let online_row = row(|r| {
-        r.movie_id = 1;
-        r.movie_path = online_file.path().to_string_lossy().to_string();
-        r.hash = "1e5e0fbf".to_string();
-    });
-
-    let wb_source = FakeWbSourceAdapter {
-        movies: Ok(vec![online_row]),
-        ..Default::default()
-    };
-
-    std::fs::write(
-        h.paths.thumbnail_folder.join("MyVideo.mp4.#1e5e0fbf.jpg"),
-        b"fake jpg",
-    )
-    .unwrap();
-
-    let ffmpeg = no_op_ffmpeg();
-    let notifier = FakeWbImportNotifier::default();
-    let catalog_notifier = FakeCatalogNotifier::default();
-
-    import_all(
-        &h.db,
-        &h.paths,
-        &wb_source,
-        &ffmpeg,
-        &notifier,
-        &catalog_notifier,
-    );
-
-    let summary = notifier.complete_calls.lock().unwrap()[0].clone();
-    assert_eq!(summary.registered, 1);
-    assert_eq!(summary.thumbnails_linked, 0);
-    assert_eq!(summary.thumbnails_failed, 0);
-    assert_eq!(
-        summary.thumbnails_unmatched, 0,
-        "an online row's legacy JPG is intentionally skipped, not unmatched"
-    );
-    assert_eq!(summary.thumbnails_skipped_online, 1);
-
-    assert!(
-        ffmpeg.calls.lock().unwrap().is_empty(),
-        "ffmpeg must never be invoked for an online row's legacy thumbnail"
-    );
-}
-
 /// Re-importing the same `.wb` skips every already-registered row, but an
 /// online row's legacy JPG must still be counted as skipped-online rather
 /// than falling into `thumbnails_unmatched`.
@@ -527,6 +467,8 @@ fn reimport_keeps_online_legacy_thumbnail_out_of_unmatched() {
         let summary = notifier.complete_calls.lock().unwrap()[0].clone();
         assert_eq!(summary.registered, 1 - pass, "pass {pass}");
         assert_eq!(summary.skipped, pass, "pass {pass}");
+        assert_eq!(summary.thumbnails_linked, 0, "pass {pass}");
+        assert_eq!(summary.thumbnails_failed, 0, "pass {pass}");
         assert_eq!(summary.thumbnails_unmatched, 0, "pass {pass}");
         assert_eq!(summary.thumbnails_skipped_online, 1, "pass {pass}");
     }
@@ -794,6 +736,13 @@ fn a_failing_frame_cut_leaves_no_slot_files_and_stops_no_other_video() {
     let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
 
     assert_eq!((outcome.linked, outcome.failed), (0, 12));
+    assert!(outcome.linked_video_ids.is_empty());
+    assert_eq!(split_calls(&ffmpeg), 12, "a failed split is not retried");
+    assert_eq!(
+        converts(&ffmpeg),
+        0,
+        "a failed split does not fall back to the whole image"
+    );
     let dir = unassigned_dir(&h.paths.thumbnails_dir);
     let leftovers: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()

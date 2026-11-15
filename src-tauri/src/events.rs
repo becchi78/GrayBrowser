@@ -437,7 +437,6 @@ mod fake {
         pub progress_calls: Mutex<Vec<(WbImportStage, u32, Option<u32>)>>,
         pub complete_calls: Mutex<Vec<WbImportSummary>>,
         pub failed_calls: Mutex<Vec<String>>,
-        pub stage_calls: Mutex<Vec<WbImportStage>>,
         /// Stage and progress calls interleaved in arrival order, which the
         /// two separate lists above cannot show.
         pub event_order: Mutex<Vec<WbImportEvent>>,
@@ -452,7 +451,6 @@ mod fake {
 
     impl WbImportNotifier for FakeWbImportNotifier {
         fn notify_stage(&self, stage: WbImportStage) {
-            self.stage_calls.lock().unwrap().push(stage);
             self.event_order
                 .lock()
                 .unwrap()
