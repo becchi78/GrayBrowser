@@ -115,7 +115,7 @@ pub fn generate_thumbnail_for_video(
     }
 
     let failure = match extraction_err {
-        None => match publish_slots(thumbnails_dir, video_id, &tmp_paths) {
+        None => match publish_all_slots(thumbnails_dir, video_id, &tmp_paths) {
             Ok(()) => {
                 // Keeps videos.thumbnail_ready (migration 0008) in
                 // sync with the files that were just written, so
@@ -141,33 +141,24 @@ pub fn generate_thumbnail_for_video(
     Err(failure)
 }
 
-/// Renames each `.tmp` to its final `{video_id}_{i}.webp` name. A video's
-/// thumbnails are all-or-nothing, so if any rename fails, the finals this
-/// call already published are removed again and the error is returned.
-/// Only this call's own files are removed, never a pre-existing path that
-/// made a rename fail. `tmp_paths` must hold every slot, in slot order.
-fn publish_slots(
+/// Publishes every slot through the shared all-or-nothing rename, keeping
+/// this worker's own wording of a failed rename. `tmp_paths` must hold every
+/// slot, in slot order.
+fn publish_all_slots(
     thumbnails_dir: &Path,
     video_id: &str,
     tmp_paths: &[PathBuf],
 ) -> anyhow::Result<()> {
     debug_assert_eq!(tmp_paths.len(), THUMBNAILS_PER_VIDEO);
-    let mut renamed_finals: Vec<PathBuf> = Vec::with_capacity(THUMBNAILS_PER_VIDEO);
-    for (i, tmp_path) in tmp_paths.iter().enumerate() {
-        let final_path = thumbnails_dir.join(format!("{video_id}_{i}.webp"));
-        if let Err(e) = std::fs::rename(tmp_path, &final_path) {
-            for renamed in &renamed_finals {
-                let _ = std::fs::remove_file(renamed);
-            }
-            return Err(anyhow::anyhow!(
-                "slot {i}: failed to rename {} -> {}: {e}",
-                tmp_path.display(),
-                final_path.display()
-            ));
-        }
-        renamed_finals.push(final_path);
-    }
-    Ok(())
+    super::publish::publish_slots(thumbnails_dir, video_id, tmp_paths).map_err(|e| {
+        anyhow::anyhow!(
+            "slot {}: failed to rename {} -> {}: {}",
+            e.slot,
+            e.from.display(),
+            e.to.display(),
+            e.source
+        )
+    })
 }
 
 /// Logs a failed generation, removes the leftover `.tmp` files and counts
@@ -1119,6 +1110,63 @@ mod tests {
             unique.len(),
             tmp_paths.len(),
             "every call's tmp paths must be distinct from the other call's"
+        );
+    }
+
+    /// The `io::Error` text a rename of a plain file onto `blocker` (an
+    /// existing directory) produces on this machine, so the expected
+    /// messages don't hard-code an OS- and locale-dependent string.
+    fn rename_onto_dir_error_text(blocker: &Path) -> String {
+        let probe_dir = tempfile::tempdir().unwrap();
+        let probe = probe_dir.path().join("probe.tmp");
+        std::fs::write(&probe, b"probe").unwrap();
+        std::fs::rename(&probe, blocker).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn a_rename_failure_reports_the_slot_and_both_paths_in_the_error_text() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-msg", "C:/videos/movie.mp4");
+        let blocker = thumbs_dir.path().join("vid-msg_3.webp");
+        std::fs::create_dir(&blocker).unwrap();
+        let io_text = rename_onto_dir_error_text(&blocker);
+
+        let ffmpeg = FakeFfmpegAdapter {
+            duration: Ok(Some(120.0)),
+            extract_result: Box::new(|_seek| Ok(())),
+            ..Default::default()
+        };
+
+        let err = generate_thumbnail_for_video(
+            &ffmpeg,
+            &db,
+            thumbs_dir.path(),
+            "vid-msg",
+            Path::new("C:/videos/movie.mp4"),
+        )
+        .unwrap_err();
+
+        let tmp_path = ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::ExtractThumbnail {
+                    output_tmp_path, ..
+                } => Some(output_tmp_path.clone()),
+                _ => None,
+            })
+            .nth(3)
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "slot 3: failed to rename {} -> {}: {io_text}",
+                tmp_path.display(),
+                blocker.display()
+            )
         );
     }
 }

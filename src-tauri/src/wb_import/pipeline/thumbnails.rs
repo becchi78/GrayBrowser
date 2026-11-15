@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::panic::AssertUnwindSafe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
@@ -759,8 +759,9 @@ fn split_rects<F: FfmpegAdapter>(
 
 /// Writes frame `i` of `src_path` to slot `i`. ffmpeg writes every frame in
 /// one launch, each into its own `{video_id}_{i}.webp.tmp`; the renames only
-/// start once all of them succeeded, so a slot is never half written. Stops
-/// at the first failure; the caller removes whatever was written.
+/// start once all of them succeeded, so a slot is never half written. A
+/// failed rename undoes this call's own renames; the caller still removes
+/// every slot and scratch file afterwards.
 fn write_split_slots<F: FfmpegAdapter>(
     ffmpeg: &F,
     src_path: &Path,
@@ -781,11 +782,9 @@ fn write_split_slots<F: FfmpegAdapter>(
         // One launch covers every frame, so the ffmpeg stderr tail in `e` is
         // the only detail there is; there is no failing frame index to name.
         .map_err(|e| format!("split: {e}"))?;
-    for (i, output) in outputs.iter().enumerate() {
-        let final_path = crate::thumbnail::paths::slot_path(video_dir, video_id, i);
-        fs::rename(&output.tmp_path, &final_path).map_err(|e| format!("frame {i}: {e}"))?;
-    }
-    Ok(())
+    let tmp_paths: Vec<PathBuf> = outputs.iter().map(|o| o.tmp_path.clone()).collect();
+    crate::thumbnail::publish::publish_slots(video_dir, video_id, &tmp_paths)
+        .map_err(|e| format!("frame {}: {}", e.slot, e.source))
 }
 
 /// Best-effort removal of every slot file (and split scratch file) of a
