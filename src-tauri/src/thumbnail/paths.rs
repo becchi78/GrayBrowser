@@ -361,4 +361,117 @@ mod tests {
 
         assert!(removed);
     }
+
+    // --- remove_video_thumbnails ------------------------------------------
+
+    #[test]
+    fn remove_video_thumbnails_removes_every_slot_of_that_video_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+        let folder = r"C:\Videos".to_string();
+        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        for slot in 0..THUMBNAILS_PER_VIDEO {
+            write_slot(&dir, "vid-1", slot, "stale");
+            write_slot(&dir, "vid-2", slot, "keep");
+        }
+        // 別のフォルダの同じ動画 ID は、別の動画のファイルとして残す。
+        let other_dir = root.join(gb_core::paths::thumbnail_folder_subdir(r"D:\Other"));
+        write_slot(&other_dir, "vid-1", 0, "keep");
+
+        remove_video_thumbnails(
+            &root,
+            &[folder, r"D:\Other".to_string()],
+            "vid-1",
+            r"C:\Videos\a.mp4",
+        );
+
+        for slot in 0..THUMBNAILS_PER_VIDEO {
+            assert!(!slot_path(&dir, "vid-1", slot).exists());
+            assert_eq!(slot_contents(&dir, "vid-2", slot), "keep");
+        }
+        assert_eq!(slot_contents(&other_dir, "vid-1", 0), "keep");
+    }
+
+    #[test]
+    fn remove_video_thumbnails_leaves_files_that_are_not_this_videos_slots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+        let folder = r"C:\Videos".to_string();
+        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        write_slot(&dir, "vid-1", 0, "stale");
+        // ID が前方一致するだけの別の動画と、スロット番号の範囲外のファイル。
+        write_slot(&dir, "vid-10", 0, "keep");
+        write_slot(&dir, "vid-1", THUMBNAILS_PER_VIDEO, "keep");
+
+        remove_video_thumbnails(&root, &[folder], "vid-1", r"C:\Videos\a.mp4");
+
+        assert!(!slot_path(&dir, "vid-1", 0).exists());
+        assert_eq!(slot_contents(&dir, "vid-10", 0), "keep");
+        assert_eq!(slot_contents(&dir, "vid-1", THUMBNAILS_PER_VIDEO), "keep");
+    }
+
+    #[test]
+    fn remove_video_thumbnails_removes_the_slots_that_exist_when_others_are_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+        let folder = r"C:\Videos".to_string();
+        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        write_slot(&dir, "vid-1", 0, "stale");
+        write_slot(&dir, "vid-1", 2, "stale");
+
+        remove_video_thumbnails(&root, &[folder], "vid-1", r"C:\Videos\a.mp4");
+
+        assert!(!slot_path(&dir, "vid-1", 0).exists());
+        assert!(!slot_path(&dir, "vid-1", 2).exists());
+    }
+
+    #[test]
+    fn remove_video_thumbnails_is_a_no_op_when_the_directory_does_not_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+
+        remove_video_thumbnails(
+            &root,
+            &[r"C:\Videos".to_string()],
+            "vid-1",
+            r"C:\Videos\a.mp4",
+        );
+
+        assert!(!root.exists(), "removing must never create directories");
+    }
+
+    #[test]
+    fn remove_video_thumbnails_uses_the_unassigned_directory_outside_every_watch_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+        let unassigned = root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+        write_slot(&unassigned, "vid-1", 0, "stale");
+
+        remove_video_thumbnails(&root, &[], "vid-1", r"C:\Videos\a.mp4");
+
+        assert!(!slot_path(&unassigned, "vid-1", 0).exists());
+    }
+
+    #[test]
+    fn remove_video_thumbnails_keeps_going_when_one_slot_cannot_be_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("thumbnails");
+        let folder = r"C:\Videos".to_string();
+        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        write_slot(&dir, "vid-1", 0, "stale");
+        // スロット 1 の位置を中身のあるディレクトリにして、remove_file が NotFound 以外で失敗するようにする。
+        let blocked = slot_path(&dir, "vid-1", 1);
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("child"), "x").unwrap();
+        write_slot(&dir, "vid-1", 2, "stale");
+
+        remove_video_thumbnails(&root, &[folder], "vid-1", r"C:\Videos\a.mp4");
+
+        assert!(!slot_path(&dir, "vid-1", 0).exists());
+        assert!(blocked.is_dir(), "the unremovable entry stays");
+        assert!(
+            !slot_path(&dir, "vid-1", 2).exists(),
+            "a failure on one slot must not stop the remaining slots"
+        );
+    }
 }
