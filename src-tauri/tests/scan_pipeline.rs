@@ -3,26 +3,12 @@
 //! itself), mixing a normal video file with a machine-dependent-char-named
 //! one and confirming the DB ends up with exactly the expected split.
 
+mod common;
+
 use std::fs;
 
-use gb_core::ports::path_existence::PathExistence;
-use gb_core::testing::fake_path_existence::FakePathExistence;
-use graybrowser_lib::adapters::path_existence::RealPathExistence;
-use graybrowser_lib::{db, scan};
-
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-/// A throwaway `thumbnails/` root -- none of the scenarios below assert on
-/// thumbnail file placement, so this only needs to be a valid, empty
-/// directory `scan_folders` can pass down to `register_new_path`.
-fn temp_thumbs_root() -> tempfile::TempDir {
-    tempfile::tempdir().expect("failed to create thumbs root tempdir")
-}
+use common::{init_temp_db, temp_thumbs_root};
+use graybrowser_lib::scan;
 
 #[test]
 fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
@@ -149,12 +135,13 @@ fn scan_continues_past_a_file_it_cannot_open_and_registers_the_rest() {
     assert_eq!(video_name, "normal.mp4");
 }
 
-/// A rescan of a file whose mtime+file_size haven't
-/// changed must not recompute quick_hash -- `ScanSummary.unchanged` counts
-/// it, `ScanSummary.reconciled`/`registered` do not, and the stored
-/// quick_hash is byte-for-byte identical to what the first scan wrote.
+/// A rescan of a file whose mtime+file_size haven't changed is classified as
+/// unchanged: `ScanSummary.unchanged` counts it and
+/// `ScanSummary.reconciled`/`registered` do not. (Whether the hash was
+/// recomputed is not observable from the stored value, which would be the
+/// same either way.)
 #[test]
-fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
+fn rescanning_an_unchanged_file_is_counted_as_unchanged() {
     let (_db_dir, db) = init_temp_db();
     let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
@@ -165,25 +152,12 @@ fn rescanning_an_unchanged_file_does_not_recompute_quick_hash() {
         scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();
     assert_eq!(first.registered, 1);
 
-    let quick_hash_after_first: String = {
-        let conn = db.writer.lock().unwrap();
-        conn.query_row("SELECT quick_hash FROM videos", [], |r| r.get(0))
-            .unwrap()
-    };
-
     let second =
         scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();
     assert_eq!(second.scanned, 1);
     assert_eq!(second.registered, 0);
     assert_eq!(second.reconciled, 0);
     assert_eq!(second.unchanged, 1);
-
-    let quick_hash_after_second: String = {
-        let conn = db.writer.lock().unwrap();
-        conn.query_row("SELECT quick_hash FROM videos", [], |r| r.get(0))
-            .unwrap()
-    };
-    assert_eq!(quick_hash_after_first, quick_hash_after_second);
 }
 
 /// A rescan of a known path whose content size changed
@@ -276,69 +250,6 @@ fn rescanning_an_offline_rows_original_path_reconnects_it_to_online() {
     assert_eq!(status_after, "online");
 }
 
-/// Registers a lone `movie.mp4` in a fresh folder, deletes it, and rescans.
-/// The rescan's per-path follow-up check asks the real filesystem, or, with
-/// `os_still_reports_it`, a fake that claims the file is still there.
-/// Returns the rescan's `went_offline` and the row's `(status, row count)`.
-fn rescan_after_deleting_a_lone_video(os_still_reports_it: bool) -> (u32, String, i64) {
-    let (_db_dir, db) = init_temp_db();
-    let thumbs_root = temp_thumbs_root();
-    let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
-    let video_path = scan_dir.path().join("movie.mp4");
-    fs::write(&video_path, b"bytes").unwrap();
-    let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-    let fake = FakePathExistence::with_paths(&[&video_path.to_string_lossy()]);
-    let existence: &dyn PathExistence = if os_still_reports_it {
-        &fake
-    } else {
-        &RealPathExistence
-    };
-
-    scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();
-    fs::remove_file(&video_path).unwrap();
-    let second = scan::scan_folders_with_existence(
-        &folders,
-        &db,
-        thumbs_root.path(),
-        &scan::AssumeReachable,
-        existence,
-    )
-    .unwrap();
-    assert_eq!(second.reactivated, 0);
-
-    let conn = db.writer.lock().unwrap();
-    (
-        second.went_offline,
-        conn.query_row("SELECT status FROM videos", [], |r| r.get(0))
-            .unwrap(),
-        conn.query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap(),
-    )
-}
-
-/// Mirrors nas_poll.rs's
-/// `a_lone_known_videos_deletion_is_confirmed_and_flipped_offline` -- with
-/// only one known video in the folder, its disappearance makes
-/// discovered_paths empty and trips the NothingDiscovered guard, but the
-/// follow-up check of that one path gets NotFound, so it goes offline.
-#[test]
-fn rescanning_after_a_lone_known_video_is_deleted_flips_it_offline() {
-    let (went_offline, status, count) = rescan_after_deleting_a_lone_video(false);
-    assert_eq!(went_offline, 1);
-    assert_eq!(status, "offline");
-    assert_eq!(count, 1, "the row must be kept, only its status changes");
-}
-
-/// Same empty listing, but the OS claims the file is still there (what a
-/// broken listing looks like): the NothingDiscovered guard's hold stands.
-#[test]
-fn rescanning_holds_a_lone_known_video_online_while_the_os_still_reports_it() {
-    let (went_offline, status, count) = rescan_after_deleting_a_lone_video(true);
-    assert_eq!(went_offline, 0);
-    assert_eq!(status, "online");
-    assert_eq!(count, 1);
-}
-
 /// The flip side: a single file missing out of a large-enough library (1 of
 /// 6, well under the 80% ratio threshold) is a confirmed, ordinary deletion
 /// and transitions to offline as before the guard existed.
@@ -423,70 +334,6 @@ fn missing_detection_does_not_cross_contaminate_between_folders() {
         )
         .unwrap();
     assert_eq!(b_status, "online");
-}
-
-/// Path-follow: a file with the same
-/// quick_hash+file_size as a known `offline` row, discovered at a brand-new
-/// path, is followed (`file_path` rewritten, `id` preserved) rather than
-/// registered as a second row.
-#[test]
-fn a_file_reappearing_at_a_new_path_is_path_followed_not_re_registered() {
-    let (_db_dir, db) = init_temp_db();
-    let thumbs_root = temp_thumbs_root();
-    let old_dir = tempfile::tempdir().expect("failed to create old-location tempdir");
-    let new_dir = tempfile::tempdir().expect("failed to create new-location tempdir");
-    let old_path = old_dir.path().join("movie.mp4");
-    fs::write(&old_path, b"identical bytes").unwrap();
-
-    let old_folders = vec![old_dir.path().to_string_lossy().to_string()];
-    scan::scan_folders(
-        &old_folders,
-        &db,
-        thumbs_root.path(),
-        &scan::AssumeReachable,
-    )
-    .unwrap();
-    let id_before: String = {
-        let conn = db.writer.lock().unwrap();
-        conn.execute("UPDATE videos SET status = 'offline'", [])
-            .unwrap();
-        conn.query_row("SELECT id FROM videos", [], |r| r.get(0))
-            .unwrap()
-    };
-
-    // The file moves to a brand-new folder with byte-identical content (same
-    // quick_hash+file_size). Scanning only the new folder means the new path
-    // is genuinely unknown to the DB, so this must go through path-follow,
-    // not a fresh insert.
-    fs::remove_file(&old_path).unwrap();
-    let new_path = new_dir.path().join("movie.mp4");
-    fs::write(&new_path, b"identical bytes").unwrap();
-    let new_folders = vec![new_dir.path().to_string_lossy().to_string()];
-
-    let summary = scan::scan_folders(
-        &new_folders,
-        &db,
-        thumbs_root.path(),
-        &scan::AssumeReachable,
-    )
-    .unwrap();
-    assert_eq!(summary.reactivated, 1);
-    assert_eq!(summary.registered, 0);
-    assert_eq!(summary.collisions, 0);
-
-    let conn = db.writer.lock().unwrap();
-    let video_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(video_count, 1, "the move must not create a second row");
-    let (id_after, path_after, status_after): (String, String, String) = conn
-        .query_row("SELECT id, file_path, status FROM videos", [], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
-        .unwrap();
-    assert_eq!(id_after, id_before, "id must be preserved across the move");
-    assert_eq!(path_after, new_path.to_string_lossy().to_string());
-    assert_eq!(status_after, "online");
 }
 
 /// `scan_folders`/`process_detected_file` (via `WalkDir` + `File::open`

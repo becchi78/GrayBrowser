@@ -5,10 +5,15 @@
 //! never real paths, tags, or other cell content (those must never appear in
 //! test output or CI logs).
 //!
-//! Skips itself (prints a message, does not fail) when the local fixture is
-//! absent, since it is never committed and CI has no access to it.
+//! `#[ignore]`d, since the fixture is never committed and CI has no access to it:
+//! run it with `cargo test --test wb_source_local_fixture -- --ignored` on a
+//! machine that has the fixture.
+
+mod common;
 
 use std::path::PathBuf;
+
+use common::is_lowercase_hex8;
 
 use gb_core::ports::wb_source::WbSourceAdapter;
 use gb_core::wb_import::count_clamped_scores;
@@ -19,15 +24,14 @@ fn local_fixture_path() -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires developer-local fixture"]
 fn real_wb_fixture_matches_manually_verified_structure() {
     let path = local_fixture_path();
-    if !path.exists() {
-        eprintln!(
-            "skipping: local .wb fixture not present at {} (never committed, developer-only)",
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "local .wb fixture not present at {} (never committed, developer-only)",
+        path.display()
+    );
 
     let adapter = RealWbSourceAdapter::open(&path).expect("should open the real .wb read-only");
     let movies = adapter.read_movies().expect("read_movies should succeed");
@@ -47,10 +51,7 @@ fn real_wb_fixture_matches_manually_verified_structure() {
         movies
             .iter()
             .filter(|m| !m.hash.is_empty())
-            .all(|m| m.hash.len() == 8
-                && m.hash
-                    .chars()
-                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+            .all(|m| is_lowercase_hex8(&m.hash)),
         "every non-empty hash should be 8 lowercase hex chars"
     );
 

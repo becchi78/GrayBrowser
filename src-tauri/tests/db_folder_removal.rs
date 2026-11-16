@@ -11,39 +11,14 @@
 //! all inside a single transaction, without touching any other folder's
 //! rows.
 
-use graybrowser_lib::db::{self, queries};
+mod common;
+
+use common::{
+    assign_tag, init_temp_db, insert_skipped_file, insert_tag, insert_video, skipped_paths,
+    video_ids,
+};
+use graybrowser_lib::db::queries;
 use rusqlite::{params, Connection};
-
-fn init_temp_db() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
-    (dir, db)
-}
-
-fn insert_video(conn: &Connection, id: &str, file_path: &str) {
-    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, rating, created_at)
-         VALUES (?1, ?2, ?3, 1024, 'hash', 'online', 0, '2026-01-01 00:00:00')",
-        params![id, file_path, file_name],
-    )
-    .unwrap();
-}
-
-fn insert_tag(conn: &Connection, name: &str) -> i64 {
-    conn.execute("INSERT INTO tags (name) VALUES (?1)", params![name])
-        .unwrap();
-    conn.last_insert_rowid()
-}
-
-fn assign_tag(conn: &Connection, video_id: &str, tag_id: i64) {
-    conn.execute(
-        "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, ?2)",
-        params![video_id, tag_id],
-    )
-    .unwrap();
-}
 
 fn insert_path_collision(conn: &Connection, video_id: &str, colliding_video_id: &str) {
     conn.execute(
@@ -52,14 +27,6 @@ fn insert_path_collision(conn: &Connection, video_id: &str, colliding_video_id: 
         params![video_id, colliding_video_id],
     )
     .unwrap();
-}
-
-fn video_ids(conn: &Connection) -> Vec<String> {
-    let mut stmt = conn.prepare("SELECT id FROM videos ORDER BY id").unwrap();
-    stmt.query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap()
 }
 
 #[test]
@@ -172,6 +139,7 @@ fn delete_videos_under_folder_cascade_is_a_no_op_for_an_already_empty_folder() {
     {
         let mut conn = db.writer.lock().unwrap();
         insert_video(&conn, "elsewhere", r"D:\Other\a.mp4");
+        insert_skipped_file(&conn, r"D:\Other\①a.mp4");
 
         let deleted_ids =
             queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Empty").unwrap();
@@ -180,26 +148,7 @@ fn delete_videos_under_folder_cascade_is_a_no_op_for_an_already_empty_folder() {
 
     let conn = db.writer.lock().unwrap();
     assert_eq!(video_ids(&conn), vec!["elsewhere"]);
-}
-
-fn insert_skipped_file(conn: &Connection, file_path: &str) {
-    let file_name = file_path.rsplit('\\').next().unwrap_or(file_path);
-    conn.execute(
-        "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
-         VALUES (?1, ?2, 'unsupported_char', '①')",
-        params![file_path, file_name],
-    )
-    .unwrap();
-}
-
-fn skipped_paths(conn: &Connection) -> Vec<String> {
-    let mut stmt = conn
-        .prepare("SELECT file_path FROM skipped_files ORDER BY file_path")
-        .unwrap();
-    stmt.query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap()
+    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
 }
 
 #[test]
@@ -237,22 +186,6 @@ fn delete_videos_under_folder_cascade_keeps_skipped_files_of_a_same_prefix_sibli
         skipped_paths(&conn),
         vec![r"C:\Videos2\①b.mp4", r"D:\Videos\①c.mp4"]
     );
-}
-
-#[test]
-fn delete_videos_under_folder_cascade_leaves_skipped_files_alone_for_an_empty_folder() {
-    let (_dir, db) = init_temp_db();
-    {
-        let mut conn = db.writer.lock().unwrap();
-        insert_skipped_file(&conn, r"D:\Other\①a.mp4");
-
-        let deleted_ids =
-            queries::delete_videos_under_folder_cascade(&mut conn, r"C:\Empty").unwrap();
-        assert!(deleted_ids.is_empty());
-    }
-
-    let conn = db.writer.lock().unwrap();
-    assert_eq!(skipped_paths(&conn), vec![r"D:\Other\①a.mp4"]);
 }
 
 #[test]

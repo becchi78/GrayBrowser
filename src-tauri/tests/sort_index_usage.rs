@@ -5,16 +5,17 @@
 //! Policy: an index not shown to be
 //! used here must not ship in 0005_add_sort_indexes.sql.
 
+mod common;
+
+use common::{init_temp_db, video};
 use gb_core::sort::{order_by_clause, SortDirection, SortField};
 use graybrowser_lib::db;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 const ROW_COUNT: i64 = 2000;
 
 fn init_temp_db_with_rows() -> (tempfile::TempDir, db::Db) {
-    let dir = tempfile::tempdir().expect("failed to create tempdir");
-    let db_path = dir.path().join("app.db");
-    let db = db::init(&db_path).expect("db::init should succeed against a fresh tempdir file");
+    let (dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
         for i in 0..ROW_COUNT {
@@ -27,7 +28,6 @@ fn init_temp_db_with_rows() -> (tempfile::TempDir, db::Db) {
 fn insert_synthetic_video(conn: &Connection, i: i64) {
     let id = format!("v{i}");
     let file_path = format!("D:\\videos\\video_{i}.mp4");
-    let file_name = format!("video_{i}.mp4");
     let quick_hash = format!("hash{i}");
     let rating = i % 6; // spread across 0..=5
                         // Every third row has no mtime, to exercise the NULL-handling sort.
@@ -37,12 +37,12 @@ fn insert_synthetic_video(conn: &Connection, i: i64) {
         Some(1_700_000_000 + i)
     };
     let created_at = format!("2026-01-01 00:{:02}:{:02}", (i / 60) % 60, i % 60);
-    conn.execute(
-        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status, rating, mtime, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'online', ?6, ?7, ?8)",
-        params![id, file_path, file_name, 1024_i64, quick_hash, rating, mtime, created_at],
-    )
-    .unwrap();
+    video(&id, &file_path)
+        .quick_hash(&quick_hash)
+        .rating(rating)
+        .mtime(mtime)
+        .created_at(&created_at)
+        .insert(conn);
 }
 
 fn query_plan(conn: &Connection, sql: &str) -> String {
@@ -59,7 +59,8 @@ fn query_plan(conn: &Connection, sql: &str) -> String {
 fn sort_by_created_at_uses_its_index_instead_of_a_temp_sort() {
     let (_dir, db) = init_temp_db_with_rows();
     let conn = db.writer.lock().unwrap();
-    let plan = query_plan(&conn, "SELECT id FROM videos ORDER BY created_at DESC");
+    let clause = order_by_clause(SortField::CreatedAt, SortDirection::Desc);
+    let plan = query_plan(&conn, &format!("SELECT id FROM videos ORDER BY {clause}"));
     assert!(
         plan.contains("USING INDEX idx_videos_created_at"),
         "expected idx_videos_created_at to back this sort, got plan:\n{plan}"
@@ -74,7 +75,8 @@ fn sort_by_created_at_uses_its_index_instead_of_a_temp_sort() {
 fn sort_by_rating_uses_its_index_instead_of_a_temp_sort() {
     let (_dir, db) = init_temp_db_with_rows();
     let conn = db.writer.lock().unwrap();
-    let plan = query_plan(&conn, "SELECT id FROM videos ORDER BY rating DESC");
+    let clause = order_by_clause(SortField::Rating, SortDirection::Desc);
+    let plan = query_plan(&conn, &format!("SELECT id FROM videos ORDER BY {clause}"));
     assert!(
         plan.contains("USING INDEX idx_videos_rating"),
         "expected idx_videos_rating to back this sort, got plan:\n{plan}"
@@ -98,17 +100,15 @@ fn sort_by_rating_uses_its_index_instead_of_a_temp_sort() {
 fn sort_by_mtime_with_nulls_pinned_last() {
     let (_dir, db) = init_temp_db_with_rows();
     let conn = db.writer.lock().unwrap();
-    let plan = query_plan(
-        &conn,
-        "SELECT id FROM videos ORDER BY mtime IS NULL, mtime DESC",
-    );
+    let clause = order_by_clause(SortField::UpdatedDate, SortDirection::Desc);
+    let plan = query_plan(&conn, &format!("SELECT id FROM videos ORDER BY {clause}"));
     assert!(
         plan.contains("USE TEMP B-TREE FOR ORDER BY"),
         "expected no index to back this NULL-pinning compound sort (documented finding), got plan:\n{plan}"
     );
 
     let mut stmt = conn
-        .prepare("SELECT mtime FROM videos ORDER BY mtime IS NULL, mtime DESC")
+        .prepare(&format!("SELECT mtime FROM videos ORDER BY {clause}"))
         .unwrap();
     let mtimes: Vec<Option<i64>> = stmt
         .query_map([], |row| row.get(0))

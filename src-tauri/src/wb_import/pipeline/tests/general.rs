@@ -593,8 +593,8 @@ fn sample_fixture_imports_with_expected_counts_and_is_idempotent_on_rerun() {
 /// -- never committed, absent in CI/other machines) to get real-scale
 /// counts. Mirrors `tests/wb_source_local_fixture.rs`'s safety
 /// conventions exactly:
-/// - Skips itself (prints a message, does not fail) when the local
-///   fixture is absent -- this must never fail a normal `cargo test`.
+/// - `#[ignore]`d, because the fixture is absent in CI and on other machines;
+///   run it with `cargo test -- --ignored` where the fixture exists.
 /// - Opens the `.wb` strictly read-only via `RealWbSourceAdapter`;
 ///   nothing in this test (or `import_all`) ever writes back to it.
 /// - Only counts are asserted or printed to stderr -- never real paths,
@@ -607,19 +607,18 @@ fn sample_fixture_imports_with_expected_counts_and_is_idempotent_on_rerun() {
 /// throwaway temp DB (`harness()`'s `init_temp_db`), never the real
 /// `app.db` -- this test cannot touch a real user's database.
 #[test]
+#[ignore = "requires developer-local fixture"]
 fn real_local_fixture_import_reports_realistic_counts() {
     use crate::adapters::wb_source::RealWbSourceAdapter;
     use gb_core::ports::wb_source::WbSourceAdapter as _;
 
     let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../tests/fixtures/wb/local/default_20110504.wb");
-    if !fixture_path.exists() {
-        eprintln!(
-            "skipping: local .wb fixture not present at {} (never committed, developer-only)",
-            fixture_path.display()
-        );
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "local .wb fixture not present at {} (never committed, developer-only)",
+        fixture_path.display()
+    );
 
     let real_adapter =
         RealWbSourceAdapter::open(&fixture_path).expect("should open the real .wb read-only");
