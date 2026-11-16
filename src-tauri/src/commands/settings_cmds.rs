@@ -450,8 +450,9 @@ fn move_renamed_video_thumbnails(
     // still in there (e.g. a collision-skipped video's thumbnails, or a
     // move failure above) rather than risk deleting thumbnails that still
     // belong to a video whose `file_path` didn't actually change.
-    let old_thumbnail_dir =
-        thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(old_folder_path));
+    let old_thumbnail_dir = thumbnails_root.join(
+        gb_core::thumbnail_paths::thumbnail_folder_subdir(old_folder_path),
+    );
     let _ = std::fs::remove_dir(&old_thumbnail_dir);
 }
 
@@ -754,7 +755,9 @@ mod tests {
         // the rename.
         let old_dir = thumbs_root
             .path()
-            .join(gb_core::paths::thumbnail_folder_subdir(&old_folder));
+            .join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                &old_folder,
+            ));
         std::fs::create_dir_all(&old_dir).unwrap();
         for id in ["clashing", "free"] {
             for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
@@ -781,7 +784,9 @@ mod tests {
 
         let new_dir = thumbs_root
             .path()
-            .join(gb_core::paths::thumbnail_folder_subdir(&new_folder));
+            .join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                &new_folder,
+            ));
 
         // "free" (actually renamed) must have moved to the new subdirectory.
         for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
@@ -823,7 +828,9 @@ mod tests {
         let new_folder = r"D:\NewVideos".to_string();
         let old_dir = thumbs_root
             .path()
-            .join(gb_core::paths::thumbnail_folder_subdir(&old_folder));
+            .join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                &old_folder,
+            ));
         std::fs::create_dir_all(&old_dir).unwrap();
         for i in 0..crate::thumbnail::worker::THUMBNAILS_PER_VIDEO {
             std::fs::write(slot_path(&old_dir, "v", i), "x").unwrap();

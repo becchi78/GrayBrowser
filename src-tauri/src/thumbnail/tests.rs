@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::db::test_support::{init_temp_db, insert_test_video};
 use gb_core::ports::ffmpeg::FfmpegAvailability;
@@ -58,7 +57,7 @@ fn available_ffmpeg(extract_delay: Duration) -> Arc<FakeFfmpegAdapter> {
 }
 
 fn unassigned_dir(root: &Path) -> PathBuf {
-    root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+    root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR)
 }
 
 fn thumbnail_ready_flag(db: &Db, id: &str) -> i64 {

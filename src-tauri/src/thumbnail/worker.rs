@@ -309,7 +309,7 @@ mod tests {
     /// none of them register any `watch_folders` -- every test video's path
     /// (`C:/videos/...`) therefore falls under no registered folder.
     fn unassigned_dir(thumbs_root: &Path) -> PathBuf {
-        thumbs_root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+        thumbs_root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR)
     }
 
     fn all_six_final_files_exist(thumbs_dir: &Path, id: &str) -> bool {

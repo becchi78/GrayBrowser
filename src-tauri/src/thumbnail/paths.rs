@@ -4,7 +4,7 @@
 //! of being re-derived at each call site.
 //!
 //! Thumbnails are grouped into a subdirectory per registered
-//! watch folder (`gb_core::paths::resolve_thumbnail_subdir`) rather than
+//! watch folder (`gb_core::thumbnail_paths::resolve_thumbnail_subdir`) rather than
 //! sitting flat directly under `thumbnails/` -- this module is the only
 //! place that combines that OS-independent subdirectory-name logic with an
 //! actual filesystem path.
@@ -29,7 +29,7 @@ pub fn video_thumbnail_dir(
     watch_folders: &[String],
     file_path: &str,
 ) -> PathBuf {
-    let subdir = gb_core::paths::resolve_thumbnail_subdir(watch_folders, file_path);
+    let subdir = gb_core::thumbnail_paths::resolve_thumbnail_subdir(watch_folders, file_path);
     thumbnails_root.join(subdir)
 }
 
@@ -145,8 +145,12 @@ pub fn move_video_thumbnails_between_folders(
     old_folder_path: &str,
     new_folder_path: &str,
 ) -> bool {
-    let old_dir = thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(old_folder_path));
-    let new_dir = thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(new_folder_path));
+    let old_dir = thumbnails_root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+        old_folder_path,
+    ));
+    let new_dir = thumbnails_root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+        new_folder_path,
+    ));
     move_thumbnail_files(video_id, &old_dir, &new_dir)
 }
 
@@ -158,7 +162,9 @@ pub fn move_video_thumbnails_between_folders(
 /// A subdirectory that doesn't exist (e.g. no thumbnail was ever generated
 /// for any video under this folder) counts as success, not failure.
 pub fn remove_folder_thumbnail_dir(thumbnails_root: &Path, folder_path: &str) -> bool {
-    let dir = thumbnails_root.join(gb_core::paths::thumbnail_folder_subdir(folder_path));
+    let dir = thumbnails_root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+        folder_path,
+    ));
     match std::fs::remove_dir_all(&dir) {
         Ok(()) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
@@ -194,7 +200,9 @@ mod tests {
         let dir = video_thumbnail_dir(root, &folders, r"C:\Videos\a.mp4");
         assert_eq!(
             dir,
-            root.join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"))
+            root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                r"C:\Videos"
+            ))
         );
     }
 
@@ -202,7 +210,10 @@ mod tests {
     fn video_thumbnail_dir_falls_back_to_unassigned() {
         let root = Path::new(r"C:\app\thumbnails");
         let dir = video_thumbnail_dir(root, &[], r"C:\Videos\a.mp4");
-        assert_eq!(dir, root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR));
+        assert_eq!(
+            dir,
+            root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+        );
     }
 
     // --- move_video_thumbnails -----------------------------------------
@@ -213,7 +224,9 @@ mod tests {
         let root = tmp.path().join("thumbnails");
         let old_folder = r"C:\Videos".to_string();
         let new_folder = r"D:\Movies".to_string();
-        let old_dir = root.join(gb_core::paths::thumbnail_folder_subdir(&old_folder));
+        let old_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            &old_folder,
+        ));
         for slot in 0..THUMBNAILS_PER_VIDEO {
             write_slot(&old_dir, "vid-1", slot, &format!("slot-{slot}"));
         }
@@ -227,7 +240,9 @@ mod tests {
         );
 
         assert!(moved);
-        let new_dir = root.join(gb_core::paths::thumbnail_folder_subdir(&new_folder));
+        let new_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            &new_folder,
+        ));
         assert!(new_dir.is_dir());
         for slot in 0..THUMBNAILS_PER_VIDEO {
             assert!(!slot_path(&old_dir, "vid-1", slot).exists());
@@ -244,7 +259,9 @@ mod tests {
         let root = tmp.path().join("thumbnails");
         let old_folder = r"C:\Videos".to_string();
         let new_folder = r"D:\Movies".to_string();
-        let old_dir = root.join(gb_core::paths::thumbnail_folder_subdir(&old_folder));
+        let old_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            &old_folder,
+        ));
         // Only slots 0 and 2 exist -- e.g. generation never finished for
         // this video.
         write_slot(&old_dir, "vid-partial", 0, "slot-0");
@@ -262,7 +279,9 @@ mod tests {
             moved,
             "moving only the slots that actually exist should still count as fully moved"
         );
-        let new_dir = root.join(gb_core::paths::thumbnail_folder_subdir(&new_folder));
+        let new_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            &new_folder,
+        ));
         assert_eq!(slot_contents(&new_dir, "vid-partial", 0), "slot-0");
         assert_eq!(slot_contents(&new_dir, "vid-partial", 2), "slot-2");
         assert!(!slot_path(&new_dir, "vid-partial", 1).exists());
@@ -273,7 +292,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
         let folder = r"C:\Videos".to_string();
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(&folder));
         write_slot(&dir, "vid-same", 0, "slot-0");
 
         let moved = move_video_thumbnails(
@@ -304,7 +323,9 @@ mod tests {
         assert!(moved);
         assert!(
             !root
-                .join(gb_core::paths::thumbnail_folder_subdir(r"D:\Movies"))
+                .join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                    r"D:\Movies"
+                ))
                 .exists(),
             "the destination directory must not be created when there was nothing to move into it"
         );
@@ -316,7 +337,7 @@ mod tests {
     fn move_video_thumbnails_between_folders_moves_all_six_slots() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
-        let old_dir = root.join(gb_core::paths::thumbnail_folder_subdir(r"C:\Old"));
+        let old_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(r"C:\Old"));
         for slot in 0..THUMBNAILS_PER_VIDEO {
             write_slot(&old_dir, "vid-rn", slot, &format!("slot-{slot}"));
         }
@@ -325,7 +346,9 @@ mod tests {
             move_video_thumbnails_between_folders(&root, "vid-rn", r"C:\Old", r"C:\Renamed");
 
         assert!(moved);
-        let new_dir = root.join(gb_core::paths::thumbnail_folder_subdir(r"C:\Renamed"));
+        let new_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            r"C:\Renamed",
+        ));
         for slot in 0..THUMBNAILS_PER_VIDEO {
             assert!(!slot_path(&old_dir, "vid-rn", slot).exists());
             assert_eq!(
@@ -341,7 +364,9 @@ mod tests {
     fn remove_folder_thumbnail_dir_removes_an_existing_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            r"C:\Videos",
+        ));
         write_slot(&dir, "vid-1", 0, "slot-0");
         write_slot(&dir, "vid-2", 0, "slot-0");
         assert!(dir.exists());
@@ -369,13 +394,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
         let folder = r"C:\Videos".to_string();
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(&folder));
         for slot in 0..THUMBNAILS_PER_VIDEO {
             write_slot(&dir, "vid-1", slot, "stale");
             write_slot(&dir, "vid-2", slot, "keep");
         }
         // 別のフォルダの同じ動画 ID は、別の動画のファイルとして残す。
-        let other_dir = root.join(gb_core::paths::thumbnail_folder_subdir(r"D:\Other"));
+        let other_dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+            r"D:\Other",
+        ));
         write_slot(&other_dir, "vid-1", 0, "keep");
 
         remove_video_thumbnails(
@@ -397,7 +424,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
         let folder = r"C:\Videos".to_string();
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(&folder));
         write_slot(&dir, "vid-1", 0, "stale");
         // ID が前方一致するだけの別の動画と、スロット番号の範囲外のファイル。
         write_slot(&dir, "vid-10", 0, "keep");
@@ -415,7 +442,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
         let folder = r"C:\Videos".to_string();
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(&folder));
         write_slot(&dir, "vid-1", 0, "stale");
         write_slot(&dir, "vid-1", 2, "stale");
 
@@ -444,7 +471,7 @@ mod tests {
     fn remove_video_thumbnails_uses_the_unassigned_directory_outside_every_watch_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
-        let unassigned = root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+        let unassigned = root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         write_slot(&unassigned, "vid-1", 0, "stale");
 
         remove_video_thumbnails(&root, &[], "vid-1", r"C:\Videos\a.mp4");
@@ -457,7 +484,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("thumbnails");
         let folder = r"C:\Videos".to_string();
-        let dir = root.join(gb_core::paths::thumbnail_folder_subdir(&folder));
+        let dir = root.join(gb_core::thumbnail_paths::thumbnail_folder_subdir(&folder));
         write_slot(&dir, "vid-1", 0, "stale");
         // スロット 1 の位置を中身のあるディレクトリにして、remove_file が NotFound 以外で失敗するようにする。
         let blocked = slot_path(&dir, "vid-1", 1);

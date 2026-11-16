@@ -46,7 +46,7 @@ pub(super) fn import_all<S, F, N, C>(
 /// every video in these tests to, since none of them register any
 /// `watch_folders`.
 pub(super) fn unassigned_dir(thumbnails_root: &Path) -> PathBuf {
-    thumbnails_root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+    thumbnails_root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR)
 }
 
 pub(super) fn row(overrides: impl FnOnce(&mut WbMovieRow)) -> WbMovieRow {
