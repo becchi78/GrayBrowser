@@ -2,7 +2,7 @@
 //! read/write round trip feeding `gb_core::dedup`'s pure grouping functions,
 //! and the `path_collisions` table, which persists a path-follow UNIQUE
 //! collision as a duplicate candidate; the same table also holds
-//! coincidental-rehash-match collisions, see src-tauri/src/scan/mod.rs.
+//! coincidental-rehash-match collisions, see src-tauri/src/scan/process.rs.
 //! Real tempdir-backed SQLite file, matching
 //! `db_tag_integrity.rs`'s established convention.
 

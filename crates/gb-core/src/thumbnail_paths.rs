@@ -22,7 +22,7 @@ const THUMBNAIL_SUBDIR_HASH_SEED: u64 = 0;
 ///
 /// Deterministic and pure: the same `folder_path` (up to the
 /// case/trailing-separator differences `normalize_folder_path` already
-/// treats as equivalent everywhere else in this file, e.g.
+/// treats as equivalent everywhere else in `paths.rs`, e.g.
 /// `folder_paths_conflict`) always yields the same subdirectory name, with
 /// no dependency on registration order or any other mutable state -- unlike
 /// an incrementing id, this survives folders being added/removed/re-added

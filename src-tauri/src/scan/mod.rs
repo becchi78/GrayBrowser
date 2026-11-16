@@ -2,8 +2,9 @@
 //! pure validate/build decisions and `gb_core::reconcile`'s pure
 //! classify/path-follow decisions.
 //!
-//! `process_detected_file` is the shared per-file entry point: reused as-is
-//! by this module's `scan_folders` (manual full walk), the local realtime
+//! `process_detected_file` (in `process.rs`, re-exported here) is the shared
+//! per-file entry point: reused as-is by this module's `scan_folders`
+//! (manual full walk), the local realtime
 //! watcher, and the NAS diff-scan/poll. Each caller passes a
 //! `FolderReachability` so a moved file can be told apart from a copy.
 
