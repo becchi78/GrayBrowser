@@ -1,8 +1,11 @@
 // StatusBar とジャンプメニューの現状の動作を固定する特性テスト。
 import { beforeEach, expect, test, vi } from "vitest";
 import { useEffect } from "react";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import * as api from "../api";
+import * as events from "../events";
+import type { ThumbnailProgress } from "../types";
+import { deferred, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import { StatusBar } from "./StatusBar";
 
@@ -195,4 +198,111 @@ test("メニューを開いたまま動画が0件になると閉じ、件数が�
 
   expect(screen.queryByTestId("status-jump-menu")).toBeNull();
   expect(jumpButton()).toBeEnabled();
+});
+
+const progress = (done: number, total: number): ThumbnailProgress => ({ done, total });
+
+/** onThumbnailProgress の購読を捕まえ、テストから進捗イベントを流せるようにする。 */
+function captureProgressListener() {
+  const unsubscribe = vi.fn();
+  let listener: ((p: ThumbnailProgress) => void) | null = null;
+  vi.mocked(events.onThumbnailProgress).mockImplementation((cb) => {
+    listener = cb;
+    return unsubscribe;
+  });
+  return {
+    unsubscribe,
+    emit: (p: ThumbnailProgress) =>
+      act(() => {
+        listener?.(p);
+      }),
+  };
+}
+
+const progressText = () => screen.queryByTestId("status-thumbnail-progress");
+
+test("選択が0件のときは「件選択中」を出さず、1件以上で件数を出す", async () => {
+  const { rerender, onJump } = await renderBar();
+  expect(screen.queryByTestId("status-selection-count")).toBeNull();
+
+  rerender(<StatusBar refreshKey={0} videoCount={10} selectedCount={3} onJump={onJump} />);
+
+  expect(screen.getByTestId("status-selection-count")).toHaveTextContent("3 件選択中");
+});
+
+test("起動時に読み取った進捗がバーに出る", async () => {
+  vi.mocked(api.getThumbnailProgress).mockResolvedValue(progress(2, 5));
+
+  await renderBar();
+
+  expect(progressText()).toHaveTextContent("サムネイル生成（2/5件）");
+});
+
+test("進捗の total が 0 のときは何も出さない", async () => {
+  vi.mocked(api.getThumbnailProgress).mockResolvedValue(progress(0, 0));
+
+  await renderBar();
+
+  expect(progressText()).toBeNull();
+});
+
+test("進捗イベントで表示が更新され、total が 0 になると消える", async () => {
+  const { emit } = captureProgressListener();
+  await renderBar();
+  expect(progressText()).toBeNull();
+
+  await emit(progress(1, 4));
+  expect(progressText()).toHaveTextContent("サムネイル生成（1/4件）");
+
+  await emit(progress(0, 0));
+  expect(progressText()).toBeNull();
+});
+
+test("イベントの後に遅れて解決した初回の読み取りは、新しい進捗を上書きしない", async () => {
+  const { emit } = captureProgressListener();
+  const initial = deferred<ThumbnailProgress | null>();
+  vi.mocked(api.getThumbnailProgress).mockReturnValue(initial.promise as never);
+  renderWithProviders(
+    <StatusBar refreshKey={0} videoCount={10} selectedCount={0} onJump={vi.fn()} />,
+  );
+  await screen.findByText("未登録 3");
+
+  await emit(progress(4, 5));
+  await act(async () => initial.resolve(progress(1, 5)));
+  await settle();
+
+  expect(progressText()).toHaveTextContent("サムネイル生成（4/5件）");
+});
+
+test("イベントが無いまま解決した初回の読み取りは表示に使われる", async () => {
+  captureProgressListener();
+  const initial = deferred<ThumbnailProgress | null>();
+  vi.mocked(api.getThumbnailProgress).mockReturnValue(initial.promise as never);
+  renderWithProviders(
+    <StatusBar refreshKey={0} videoCount={10} selectedCount={0} onJump={vi.fn()} />,
+  );
+  await screen.findByText("未登録 3");
+
+  await act(async () => initial.resolve(progress(1, 5)));
+
+  expect(progressText()).toHaveTextContent("サムネイル生成（1/5件）");
+});
+
+test("初回の読み取りが失敗しても落ちず、後続のイベントは反映される", async () => {
+  const { emit } = captureProgressListener();
+  vi.mocked(api.getThumbnailProgress).mockRejectedValue(new Error("ipc"));
+  await renderBar();
+
+  await emit(progress(1, 2));
+
+  expect(progressText()).toHaveTextContent("サムネイル生成（1/2件）");
+});
+
+test("アンマウントで進捗イベントの購読を解除する", async () => {
+  const { unsubscribe } = captureProgressListener();
+  const { unmount } = await renderBar();
+
+  unmount();
+
+  expect(unsubscribe).toHaveBeenCalledTimes(1);
 });
