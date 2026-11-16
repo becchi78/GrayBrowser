@@ -5,11 +5,11 @@ use gb_core::presence::Presence;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use super::skipped_cmds;
 use crate::adapters;
 use crate::db::{queries, Db};
 use crate::dedup::{self, DuplicateGroupsState};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier, TauriDedupNotifier};
+use crate::presence::presence_of;
 use crate::reachability::ReachabilityRegistry;
 use crate::scan;
 use crate::scan::reachable::scan_reachable_folders;
@@ -276,8 +276,7 @@ fn list_skipped_files_impl(
     Ok(rows
         .into_iter()
         .map(|row| {
-            let presence =
-                skipped_cmds::presence_of(&row.file_path, &watch_folders, reachability, fs);
+            let presence = presence_of(&row.file_path, &watch_folders, reachability, fs);
             SkippedFileDto::from_row(row, presence == Presence::Missing)
         })
         .collect())

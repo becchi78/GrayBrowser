@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use gb_core::ports::file_rename::{FileRenamer, RenameError};
 use gb_core::ports::path_existence::PathExistence;
-use gb_core::presence::{classify_presence, Presence};
+use gb_core::presence::Presence;
 use gb_core::rename_validation::validate_new_file_name;
 use gb_core::scan_pipeline::NewVideo;
 use gb_core::wb_skipped_payload::WbSkippedPayload;
@@ -16,6 +16,7 @@ use crate::adapters;
 use crate::adapters::long_path;
 use crate::db::{queries, Db};
 use crate::events::{CatalogNotifier, TauriCatalogNotifier};
+use crate::presence::presence_of;
 use crate::reachability::ReachabilityRegistry;
 use crate::scan;
 use crate::thumbnail::{self, ThumbnailQueueHandle};
@@ -30,25 +31,6 @@ fn require_missing(presence: Presence, present_msg: &str, unknown_msg: &str) -> 
         Presence::Present => Err(present_msg.to_string()),
         Presence::Unknown => Err(unknown_msg.to_string()),
     }
-}
-
-/// Whether the file recorded at `file_path` is verifiably gone. A path under
-/// an unreachable watch folder is `Unknown` without any file-system access:
-/// stat-ing a dead share blocks for a long time and could not prove anything.
-pub(crate) fn presence_of(
-    file_path: &str,
-    watch_folders: &[String],
-    reachability: &ReachabilityRegistry,
-    fs: &dyn PathExistence,
-) -> Presence {
-    if reachability.is_path_unreachable(file_path, watch_folders) {
-        return classify_presence(true, false, false);
-    }
-    let path = Path::new(file_path);
-    let file_exists = fs.exists(path);
-    // Only a missing file needs the parent checked.
-    let parent_exists = file_exists || path.parent().is_some_and(|parent| fs.exists(parent));
-    classify_presence(false, parent_exists, file_exists)
 }
 
 /// Hides an unregistered-file record whose file is gone. The file system is
