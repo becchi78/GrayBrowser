@@ -169,6 +169,16 @@ impl RecheckHandle {
     fn stop_and_join(mut self) {
         self.stop();
         if let Some(thread) = self.thread.take() {
+            // Bounded, so a thread that ignores the stop request fails the
+            // test instead of hanging it.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !thread.is_finished() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the recheck thread did not stop when asked"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
             thread.join().unwrap();
         }
     }
@@ -1008,7 +1018,7 @@ mod tests {
 
         // Joining returns only once the recheck thread has exited, so no
         // probe can start after it; a recheck that ignored the stop request
-        // would never return from here.
+        // fails here after a bounded wait.
         handle.stop_and_join();
     }
 

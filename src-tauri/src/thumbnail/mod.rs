@@ -985,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_in_a_reachable_folder_still_spends_an_attempt() {
+    fn a_failure_in_a_reachable_folder_spends_an_attempt_and_notifies_the_catalog() {
         let (_db_dir, db) = init_temp_db();
         let thumbs = tempfile::tempdir().unwrap();
         insert_test_video(&db, "nas-1", "W:/video/nas-1.mp4");

@@ -28,6 +28,8 @@ pub fn all_reachable() -> ReachabilityRegistry {
 /// Upper bound for [`wait_until`]. A passing test returns as soon as the
 /// condition holds, so this only bounds how long a failing one hangs.
 const WAIT_BUDGET: Duration = Duration::from_secs(5);
+/// Longest a thread waits at a closed [`Gate`].
+const GATE_LIMIT: Duration = Duration::from_secs(20);
 const WAIT_STEP: Duration = Duration::from_millis(10);
 
 /// Polls `cond` until it holds or the default budget runs out; returns the
@@ -102,7 +104,13 @@ impl Gate {
             return false;
         }
         self.waiting.fetch_add(1, Ordering::SeqCst);
-        drop(self.cond.wait_while(closed, |c| *c).unwrap());
+        // Bounded, so a gate nobody opens fails the test that depends on it
+        // instead of hanging the whole run.
+        drop(
+            self.cond
+                .wait_timeout_while(closed, GATE_LIMIT, |c| *c)
+                .unwrap(),
+        );
         true
     }
 }

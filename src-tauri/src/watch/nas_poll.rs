@@ -734,7 +734,7 @@ mod tests {
             Duration::from_secs(600),
             Arc::new(FakeCatalogNotifier::default()),
             Arc::new(FollowUp::noop()),
-            ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier)),
+            registry_over(probe),
         );
         entered_rx
             .recv_timeout(Duration::from_secs(10))
