@@ -583,11 +583,22 @@ test("通常の行の className・data-testid・title", async () => {
   expect(screen.getByTestId("video-row-thumbnails-wrap")).toContainElement(
     screen.getByTestId("video-row-filename"),
   );
-  expect(thumbs()).toHaveAttribute("title", "a.mp4");
-  expect(screen.getByTestId("video-row-filename")).toHaveAttribute("title", "a.mp4");
+  expect(thumbs()).toHaveAttribute("title", "C:\\videos\\a.mp4");
+  expect(screen.getByTestId("video-row-filename")).toHaveAttribute("title", "C:\\videos\\a.mp4");
   expect(screen.getByTestId("video-row-filename")).toHaveTextContent(/^a\.mp4$/);
   expect(row()).toContainElement(screen.getByTestId("video-row-properties"));
   expect(screen.queryByText("⚠ オフライン")).toBeNull();
+});
+
+test("title には登録パスがそのまま入る(オフライン・日本語/空白を含むパス)", async () => {
+  const offlinePath = "D:\\取り外し\\my videos\\動画 1.mp4";
+  await renderRow({
+    video: video({ file_path: offlinePath, file_name: "動画 1.mp4", status: "offline" }),
+  });
+
+  expect(thumbs()).toHaveAttribute("title", offlinePath);
+  expect(screen.getByTestId("video-row-filename")).toHaveAttribute("title", offlinePath);
+  expect(screen.getByTestId("video-row-filename")).toHaveTextContent(/^動画 1\.mp4$/);
 });
 
 test("選択中・複数選択中の className", async () => {

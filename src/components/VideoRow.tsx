@@ -98,7 +98,7 @@ export function VideoRow({
         <div
           className="video-row-thumbnails"
           data-testid="video-row-thumbnails"
-          title={video.file_name}
+          title={video.file_path}
           onClick={handleSelectClick}
           onDoubleClick={handlePlay}
         >
@@ -137,7 +137,7 @@ export function VideoRow({
         <span
           className="video-row-filename-overlay"
           data-testid="video-row-filename"
-          title={video.file_name}
+          title={video.file_path}
           onClick={handleSelectClick}
         >
           {video.file_name}
