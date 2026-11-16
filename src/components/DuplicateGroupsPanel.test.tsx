@@ -902,24 +902,23 @@ test("行を右クリックすると、パスのコピーとエクスプロー�
   expect(api.playVideo).not.toHaveBeenCalled();
 });
 
-test("オフラインの行では「エクスプローラーで開く」が無効になり、理由が付く", async () => {
+test("オフラインの行では「エクスプローラーで開く」を出さず、コピーだけを出す", async () => {
   await renderPanel({
     groups: [group([member("a", { status: "offline" }), member("b")])],
   });
 
   fireEvent.contextMenu(row("a"));
 
+  expect(menuItems().map((b) => b.textContent)).toEqual(["パスをコピー"]);
   expect(menuItems()[0]).toBeEnabled();
-  expect(menuItems()[1]).toBeDisabled();
-  expect(menuItems()[1]).toHaveTextContent("オフラインのため開けません");
 });
 
-test("保存先フォルダに届かない行も、開くが無効になる", async () => {
+test("保存先フォルダに届かない行も、コピーだけを出す", async () => {
   await renderPanel({ unreachableFolders: ["C:\\videos"] });
 
   fireEvent.contextMenu(row("a"));
 
-  expect(menuItems()[1]).toBeDisabled();
+  expect(menuItems().map((b) => b.textContent)).toEqual(["パスをコピー"]);
 });
 
 test("コピーに失敗したら、その行にエラーを表示する", async () => {

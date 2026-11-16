@@ -266,7 +266,10 @@ const BASE: GridProps = {
   jumpRequest: null,
 };
 
-async function renderGrid(overrides: Partial<GridProps> = {}) {
+async function renderGrid(
+  overrides: Partial<GridProps> = {},
+  { unreachableFolders }: { unreachableFolders?: readonly string[] } = {},
+) {
   const onCountChange = vi.fn();
   const onSelectionCountChange = vi.fn();
   let current: GridProps = { ...BASE, ...overrides };
@@ -277,7 +280,7 @@ async function renderGrid(overrides: Partial<GridProps> = {}) {
       onSelectionCountChange={onSelectionCountChange}
     />
   );
-  const view = renderWithProviders(ui(current));
+  const view = renderWithProviders(ui(current), { unreachableFolders });
   await settle();
   const update = async (next: Partial<GridProps>) => {
     current = { ...current, ...next };
@@ -758,7 +761,6 @@ const MENU_ONE = ["タグを設定...", "パスをコピー", "エクスプロ�
 const MENU_TWO = [
   "タグを設定...(2 件)",
   "パスをコピー(2 件)",
-  "エクスプローラーで開く(複数選択のため開けません)",
   "登録から削除(2 件)",
 ];
 
@@ -1293,41 +1295,46 @@ test("開くのに失敗したら、理由を表示する", async () => {
   );
 });
 
-test("複数選択では「エクスプローラーで開く」が無効で、押しても呼ばれない", async () => {
-  const { user } = await renderGrid();
+const revealItem = () =>
+  within(screen.getByTestId("context-menu")).queryByRole("menuitem", {
+    name: /^エクスプローラーで開く/,
+  });
+
+test("複数選択では「エクスプローラーで開く」を出さない", async () => {
+  await renderGrid();
   fireEvent.click(row("a"));
   fireEvent.click(row("b"), { ctrlKey: true });
   await openMenu("a");
 
-  const item = menuItem(/^エクスプローラーで開く/);
-  expect(item).toBeDisabled();
-  await user.click(item);
-
-  expect(api.revealVideoInExplorer).not.toHaveBeenCalled();
+  expect(revealItem()).toBeNull();
+  expect(menuLabels()).toEqual(MENU_TWO);
 });
 
-test("オフラインの動画では「エクスプローラーで開く」だけが無効になり、コピーは使える", async () => {
+test("オフラインの動画では「エクスプローラーで開く」を出さず、コピーは使える", async () => {
   vi.mocked(api.listVideos).mockResolvedValue([{ ...video("a"), status: "offline" }, video("b")]);
   const { user } = await renderGrid();
   const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
   await openMenu("a");
 
-  expect(menuLabels()).toEqual([
-    "タグを設定...",
-    "パスをコピー",
-    "エクスプローラーで開く(オフラインのため開けません)",
-    "登録から削除",
-  ]);
-  expect(menuItem(/^エクスプローラーで開く/)).toBeDisabled();
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
   await user.click(menuItem(/^パスをコピー/));
   expect(writeText).toHaveBeenCalledWith("C:\\videos\\a.mp4");
 });
 
-test("パスを解決できない動画では「エクスプローラーで開く」が無効になる", async () => {
+test("保存先フォルダに届かない動画では「エクスプローラーで開く」を出さない", async () => {
+  await renderGrid({}, { unreachableFolders: ["C:\\videos"] });
+  await openMenu("a");
+
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
+});
+
+test("パスを解決できない動画では「エクスプローラーで開く」を出さない", async () => {
   vi.mocked(api.listVideos).mockResolvedValue([{ ...video("a"), file_path: "::NAS\\a.mp4" }]);
   await renderGrid();
   await openMenu("a");
 
-  expect(menuItem(/^エクスプローラーで開く/)).toBeDisabled();
-  expect(menuItem(/^エクスプローラーで開く/)).toHaveTextContent("パスを解決できないため開けません");
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
 });

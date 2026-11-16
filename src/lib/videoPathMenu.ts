@@ -17,35 +17,34 @@ export function isUnresolvedPath(path: string): boolean {
   return path.startsWith("::");
 }
 
-/** 「エクスプローラーで開く」を押せない理由。押せるなら null。 */
-export function revealDisabledReason(targets: readonly PathMenuTarget[]): string | null {
-  if (targets.length >= 2) return "複数選択のため開けません";
+/** 「エクスプローラーで開く」を出せるか。1 件のオンラインで、パスを解決できている場合だけ。 */
+export function canReveal(targets: readonly PathMenuTarget[]): boolean {
+  if (targets.length !== 1) return false;
   const [target] = targets;
-  if (!target) return "対象がありません";
-  if (isUnresolvedPath(target.file_path)) return "パスを解決できないため開けません";
-  if (target.offline) return "オフラインのため開けません";
-  return null;
+  return !isUnresolvedPath(target.file_path) && !target.offline;
 }
 
 /**
  * 右クリックメニューの「パスをコピー」「エクスプローラーで開く」。一覧と重複
- * パネルで共通。コピーはオフラインでも使えるよう常に有効にする。
+ * パネルで共通。コピーはオフラインでも使えるよう常に出す。開けない対象では
+ * 「エクスプローラーで開く」を出さない。
  */
 export function buildPathMenuItems(
   targets: readonly PathMenuTarget[],
   actions: PathMenuActions,
 ): ContextMenuItem[] {
   if (targets.length === 0) return [];
-  const reason = revealDisabledReason(targets);
-  return [
+  const items: ContextMenuItem[] = [
     {
       label: targets.length >= 2 ? `パスをコピー(${targets.length} 件)` : "パスをコピー",
       onSelect: () => actions.onCopy(targets.map((t) => t.file_path)),
     },
-    {
-      label: reason ? `エクスプローラーで開く(${reason})` : "エクスプローラーで開く",
-      disabled: reason !== null,
-      onSelect: () => actions.onReveal(targets[0].id),
-    },
   ];
+  if (canReveal(targets)) {
+    items.push({
+      label: "エクスプローラーで開く",
+      onSelect: () => actions.onReveal(targets[0].id),
+    });
+  }
+  return items;
 }
