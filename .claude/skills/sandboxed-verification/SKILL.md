@@ -32,6 +32,10 @@ pwsh -File e2e/run-sandboxed.ps1 -Mode manual -Profile debug
 
 止まった場合は、**自分が起動したサンドボックスのアプリだけ**を閉じて再実行する。実アプリには触らない。表示されたパスが `-SandboxRoot` 配下であることを確認してから閉じること。
 
+### 別worktreeの古い成果物の再利用防止
+
+サンドボックスの `CARGO_TARGET_DIR`（既定 `%TEMP%\gb-e2e-sandbox`）は全worktreeで共有される。Cargoの鮮度判定はmtimeベースでfingerprintもworktreeをまたいで共有されるため、別worktreeが作った古い `gb-core` 成果物が、ソースのmtimeが古いworktreeで「最新」と誤判定されて再利用される（E0603等で失敗、最悪は別の版のコードでビルドが通る）。そのためスクリプトはビルド前に毎回 `cargo clean -p gb-core -p graybrowser`（releaseは `--release` 付き）を実行し、ワークスペースメンバーだけを再ビルドさせる。依存クレートは残るので追加の所要時間はdebugで約25〜30秒（releaseは未測定）。以前の回避策だった手動の `touch` は不要。cleanが失敗しても警告のみでビルドは続行する。ビルドが失敗した場合は、ログ末尾にerror行の抜粋が再掲される。
+
 詳細な仕組み（`sandboxGuard.mjs`によるガードの実装、パラメータ一覧）は `e2e/README.md` を参照。
 
 ## 実データに触れないはずの作業を行う場合のmtime照合
