@@ -185,7 +185,6 @@ pub fn register_missing_skipped_file(
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct RenameOutcome {
-    pub new_file_name: String,
     /// `false` when the file was renamed but registering it failed; the next
     /// scan or watch event registers it, so the caller only needs to tell
     /// the user to expect that.
@@ -258,10 +257,7 @@ fn rename_skipped_file_impl(
                 .to_string(),
         );
     }
-    Ok(RenameOutcome {
-        new_file_name: new_name,
-        registered,
-    })
+    Ok(RenameOutcome { registered })
 }
 
 #[tauri::command(async)]
@@ -738,13 +734,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            out,
-            RenameOutcome {
-                new_file_name: "movie1.mp4".into(),
-                registered: true
-            }
-        );
+        assert_eq!(out, RenameOutcome { registered: true });
         assert!(renamer.exists(Path::new("C:/videos/movie1.mp4")));
         assert!(!renamer.exists(Path::new(OLD_PATH)));
         assert_eq!(remaining(&db), 0);
@@ -870,13 +860,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            out,
-            RenameOutcome {
-                new_file_name: "movie1.mp4".into(),
-                registered: false
-            }
-        );
+        assert_eq!(out, RenameOutcome { registered: false });
         assert!(renamer.exists(Path::new("C:/videos/movie1.mp4")));
         assert_eq!(remaining(&db), 0);
         assert_eq!(notifier.calls(), 1);

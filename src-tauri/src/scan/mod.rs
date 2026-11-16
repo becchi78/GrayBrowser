@@ -102,9 +102,9 @@ pub struct ScanSummary {
     /// constraint makes a fresh insert at an already-claimed path
     /// structurally impossible, so it is *not* also counted in
     /// `registered`. The file is left unregistered this pass and picked up
-    /// again on the next scan/poll. This field exists purely so a
-    /// collision's occurrence is visible from the summary itself, not only
-    /// from the WARN log.
+    /// again on the next scan/poll. Not sent to the frontend (nothing there
+    /// reads it); it feeds the scan's completion log line and tests.
+    #[serde(skip_serializing)]
     pub collisions: u32,
     /// Watch folders a manual scan did not walk because they were known to be
     /// unreachable. `scan_folders` itself never fills this (it does not know

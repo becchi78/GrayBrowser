@@ -6,22 +6,14 @@ use crate::adapters;
 #[derive(Serialize)]
 pub struct FfmpegStatusDto {
     pub available: bool,
-    pub ffmpeg_version: Option<String>,
-    pub ffprobe_version: Option<String>,
 }
 
 fn ffmpeg_status_from(adapter: &impl FfmpegAdapter) -> FfmpegStatusDto {
     match adapter.check_available() {
         Ok(a) => FfmpegStatusDto {
             available: a.ffmpeg_version.is_some() && a.ffprobe_version.is_some(),
-            ffmpeg_version: a.ffmpeg_version,
-            ffprobe_version: a.ffprobe_version,
         },
-        Err(_) => FfmpegStatusDto {
-            available: false,
-            ffmpeg_version: None,
-            ffprobe_version: None,
-        },
+        Err(_) => FfmpegStatusDto { available: false },
     }
 }
 
@@ -44,8 +36,6 @@ mod tests {
         };
         let status = ffmpeg_status_from(&fake);
         assert!(!status.available);
-        assert!(status.ffmpeg_version.is_none());
-        assert!(status.ffprobe_version.is_none());
     }
 
     #[test]

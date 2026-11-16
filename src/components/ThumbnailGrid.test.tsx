@@ -6,7 +6,7 @@ import * as api from "../api";
 import * as events from "../events";
 import { deferred, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
-import type { AssignTagResultDto, SortDirection, SortField, VideoDto } from "../types";
+import type { SortDirection, SortField, VideoDto } from "../types";
 import { ThumbnailGrid } from "./ThumbnailGrid";
 import type { VideoRow as RealVideoRow } from "./VideoRow";
 
@@ -85,11 +85,8 @@ function video(id: string): VideoDto {
     file_name: `${id}.mp4`,
     file_size: 1024,
     duration: 60,
-    quick_hash: "qh",
-    full_hash: null,
     status: "online",
     rating: 0,
-    created_at: "2026-01-01T00:00:00Z",
     thumbnail_ready: true,
     thumbnail_failed: false,
   };
@@ -202,7 +199,7 @@ beforeEach(() => {
   vi.mocked(api.listWatchFolders).mockResolvedValue(["C:\\videos"]);
   vi.mocked(api.unregisterVideos).mockResolvedValue(0);
   vi.mocked(api.listAllTags).mockResolvedValue([]);
-  vi.mocked(api.assignTagToVideos).mockResolvedValue({} as AssignTagResultDto);
+  vi.mocked(api.assignTagToVideos).mockResolvedValue(undefined);
 });
 
 afterEach(() => {

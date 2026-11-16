@@ -12,7 +12,6 @@ function summary(unreachable: string[]): ScanSummary {
     skipped: 4,
     went_offline: 6,
     reactivated: 7,
-    collisions: 0,
     unreachable_folders: unreachable,
   };
 }
