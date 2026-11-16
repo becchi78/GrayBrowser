@@ -5,6 +5,11 @@ import { isFolderUnreachable, isPathUnreachable } from "./lib/reachability";
 // Provider の外（テストなど）では「到達不能なし」として扱う。
 export const UnreachableFoldersContext = createContext<readonly string[]>([]);
 
+/** 今到達できない監視フォルダの一覧(メニューなど、行の外で判定したいとき用)。 */
+export function useUnreachableFolders(): readonly string[] {
+  return useContext(UnreachableFoldersContext);
+}
+
 /** `path` が今到達できないフォルダの配下にあるか。 */
 export function useIsPathUnreachable(path: string): boolean {
   const folders = useContext(UnreachableFoldersContext);

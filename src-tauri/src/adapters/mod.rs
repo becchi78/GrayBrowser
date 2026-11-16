@@ -3,6 +3,7 @@ pub mod dir_lister;
 pub mod drive_type;
 pub mod ffmpeg;
 pub mod file_rename;
+pub mod file_revealer;
 pub mod folder_probe;
 pub mod log_source;
 pub mod long_path;

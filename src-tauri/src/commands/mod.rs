@@ -8,6 +8,7 @@ pub mod player_cmds;
 pub mod properties_cmds;
 pub mod rating_cmds;
 pub mod reachability_cmds;
+pub mod reveal_cmds;
 pub mod scan_cmds;
 pub mod settings_cmds;
 pub mod sidebar_cmds;

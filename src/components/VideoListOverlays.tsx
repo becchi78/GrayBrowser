@@ -1,6 +1,11 @@
 import { BulkTagDialog } from "./BulkTagDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
+import { isPathUnreachable } from "../lib/reachability";
+import { buildPathMenuItems, type PathMenuTarget } from "../lib/videoPathMenu";
+import { useUnreachableFolders } from "../reachabilityContext";
+import type { VideoDto } from "../types";
+import { usePathActions } from "../usePathActions";
 
 /** 右クリックで開くメニューの位置(viewport 座標)と、操作の対象にする動画。 */
 export interface VideoListMenu {
@@ -12,6 +17,8 @@ export interface VideoListMenu {
 interface Props {
   /** null のときメニューは閉じている。 */
   menu: VideoListMenu | null;
+  /** メニューの ids から file_path や状態を引くための、いま表示中の一覧。 */
+  videos: readonly VideoDto[];
   onCloseMenu: () => void;
   /** メニューの「タグを設定...」。対象はメニューの ids。 */
   onRequestBulkTag: (ids: string[]) => void;
@@ -33,6 +40,7 @@ interface Props {
 // 登録から削除の確認。
 export function VideoListOverlays({
   menu,
+  videos,
   onCloseMenu,
   onRequestBulkTag,
   bulkTagIds,
@@ -45,8 +53,38 @@ export function VideoListOverlays({
   onConfirmUnregister,
   onCancelUnregister,
 }: Props) {
+  const unreachableFolders = useUnreachableFolders();
+  const pathActions = usePathActions();
+
+  // メニューを開いた時点の ids のうち、今の一覧にある動画だけが対象。
+  const byId = new Map(videos.map((v) => [v.id, v]));
+  const targets: PathMenuTarget[] = (menu?.ids ?? []).flatMap((id) => {
+    const video = byId.get(id);
+    if (!video) return [];
+    return [
+      {
+        id,
+        file_path: video.file_path,
+        offline:
+          video.status === "offline" || isPathUnreachable(video.file_path, unreachableFolders),
+      },
+    ];
+  });
+  const pathItems = buildPathMenuItems(targets, {
+    onCopy: pathActions.copyPaths,
+    onReveal: pathActions.reveal,
+  });
+
   return (
     <>
+      {pathActions.error && (
+        <div className="path-action-error" role="alert" data-testid="path-action-error">
+          <span>{pathActions.error}</span>
+          <button type="button" onClick={pathActions.clearError}>
+            閉じる
+          </button>
+        </div>
+      )}
       {menu && (
         <ContextMenu
           position={{ x: menu.x, y: menu.y }}
@@ -55,6 +93,7 @@ export function VideoListOverlays({
               label: menu.ids.length >= 2 ? `タグを設定...(${menu.ids.length} 件)` : "タグを設定...",
               onSelect: () => onRequestBulkTag(menu.ids),
             },
+            ...pathItems,
             {
               label: menu.ids.length >= 2 ? `登録から削除(${menu.ids.length} 件)` : "登録から削除",
               danger: true,

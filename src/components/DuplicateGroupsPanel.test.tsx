@@ -1,6 +1,6 @@
 // DuplicateGroupsPanel の現状の動作を固定する特性テスト。
 import { beforeEach, expect, test, vi } from "vitest";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import * as api from "../api";
 import * as events from "../events";
 import { deferred, never, settle } from "../testing/async";
@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
   getThumbnails: vi.fn(),
   listDuplicateGroups: vi.fn(),
   playVideo: vi.fn(),
+  revealVideoInExplorer: vi.fn(),
   refreshDuplicateGroups: vi.fn(),
 }));
 
@@ -53,6 +54,7 @@ beforeEach(() => {
   });
   vi.mocked(api.getThumbnails).mockResolvedValue(null);
   vi.mocked(api.playVideo).mockResolvedValue(undefined);
+  vi.mocked(api.revealVideoInExplorer).mockResolvedValue(undefined);
 });
 
 async function emit(groups: DuplicateGroup[]) {
@@ -878,4 +880,55 @@ test("種別のラベルを出し、未確認の候補にだけ注記を出す",
   expect(
     headers.map((h) => h.querySelector(".duplicate-group-kind-note")?.textContent ?? null),
   ).toEqual([null, null, null, "NAS に接続できないため、内容が同じか確認できません"]);
+});
+
+// ---- 右クリックのメニュー(パスのコピー・エクスプローラーで開く) ----
+
+const menuItems = () => within(screen.getByTestId("context-menu")).getAllByRole("menuitem");
+
+test("行を右クリックすると、パスのコピーとエクスプローラーで開くのメニューを出す", async () => {
+  const { user } = await renderPanel();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+
+  expect(fireEvent.contextMenu(row("a"), { clientX: 5, clientY: 6 })).toBe(false);
+  expect(menuItems().map((b) => b.textContent)).toEqual(["パスをコピー", "エクスプローラーで開く"]);
+
+  await user.click(menuItems()[0]);
+  expect(writeText).toHaveBeenCalledWith(pathOf("a"));
+
+  fireEvent.contextMenu(row("b"));
+  await user.click(menuItems()[1]);
+  expect(api.revealVideoInExplorer).toHaveBeenCalledWith("b");
+  expect(api.playVideo).not.toHaveBeenCalled();
+});
+
+test("オフラインの行では「エクスプローラーで開く」が無効になり、理由が付く", async () => {
+  await renderPanel({
+    groups: [group([member("a", { status: "offline" }), member("b")])],
+  });
+
+  fireEvent.contextMenu(row("a"));
+
+  expect(menuItems()[0]).toBeEnabled();
+  expect(menuItems()[1]).toBeDisabled();
+  expect(menuItems()[1]).toHaveTextContent("オフラインのため開けません");
+});
+
+test("保存先フォルダに届かない行も、開くが無効になる", async () => {
+  await renderPanel({ unreachableFolders: ["C:\\videos"] });
+
+  fireEvent.contextMenu(row("a"));
+
+  expect(menuItems()[1]).toBeDisabled();
+});
+
+test("コピーに失敗したら、その行にエラーを表示する", async () => {
+  const { user } = await renderPanel();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+
+  fireEvent.contextMenu(row("a"));
+  await user.click(menuItems()[0]);
+
+  expect(rowErrors("a")).toEqual(["パスをコピーできませんでした: denied"]);
+  expect(rowErrors("b")).toEqual([]);
 });
