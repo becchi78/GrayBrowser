@@ -21,6 +21,7 @@ use crate::db::{queries, Db};
 use crate::reachability::ReachabilityRegistry;
 
 mod process;
+pub(crate) mod reachable;
 
 pub(crate) use process::hash_file;
 pub use process::{mtime_from_metadata, process_detected_file, ProcessOutcome};
@@ -313,7 +314,7 @@ pub(crate) fn log_missing_video_decision(
 /// path attached, so `"<folder>\"` lands in `inaccessible_dirs` and
 /// `is_under_folder` removes every known video of the folder from the
 /// candidates before the guard or the check runs (quietly, no WARN). Ahead
-/// of that, `scan_cmds::partition_by_reachability` already leaves folders
+/// of that, `reachable::partition_by_reachability` already leaves folders
 /// known to be unreachable out of the manual scan. Whatever remains withheld
 /// after the check is WARN-logged and stays online.
 fn reconcile_missing_videos(
