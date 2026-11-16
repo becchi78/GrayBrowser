@@ -351,7 +351,8 @@ pub fn rename_skipped_file(
 mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
-    use crate::events::{FakeCatalogNotifier, FakeReachabilityNotifier};
+    use crate::events::FakeCatalogNotifier;
+    use crate::test_support::registry_over;
     use gb_core::scan_pipeline::NewSkippedFile;
     use gb_core::testing::fake_file_rename::FakeFileRenamer;
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
@@ -383,10 +384,7 @@ mod tests {
     }
 
     fn registry(unreachable: &[&str]) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(
-            Arc::new(FakeFolderProbe::with_unreachable(unreachable)),
-            Arc::new(FakeReachabilityNotifier::default()),
-        )
+        registry_over(Arc::new(FakeFolderProbe::with_unreachable(unreachable)))
     }
 
     fn watch(db: &Db, folders: &[&str]) {
@@ -410,59 +408,40 @@ mod tests {
         assert_eq!(notifier.calls(), 1);
     }
 
+    /// `(existing paths, unreachable folders, id offset, message fragment)`:
+    /// the file is still there / its folder cannot be reached / its parent is
+    /// gone too / the record is not in the list any more.
     #[test]
-    fn dismiss_refuses_when_the_file_exists() {
-        let (_d, db, id, _renamer) = setup(&[]);
-        watch(&db, &["C:/videos"]);
-        let fs = FakePathExistence::with_paths(&["C:/videos", OLD_PATH]);
-        let notifier = FakeCatalogNotifier::default();
+    fn dismiss_refuses_unless_the_file_is_verifiably_missing() {
+        let cases: [(&[&str], &[&str], i64, &str); 4] = [
+            (&["C:/videos", OLD_PATH], &[], 0, "存在"),
+            // Would read as Missing if the dead folder were stat-ed.
+            (&["C:/videos"], &["C:/videos"], 0, "確認できない"),
+            (&[], &[], 0, "確認できない"),
+            (&["C:/videos"], &[], 99, "すでに一覧にありません"),
+        ];
+        for (existing, unreachable, id_offset, expected) in cases {
+            let (_d, db, id, _renamer) = setup(&[]);
+            watch(&db, &["C:/videos"]);
+            let fs = FakePathExistence::with_paths(existing);
+            let notifier = FakeCatalogNotifier::default();
 
-        let r = dismiss_skipped_file_impl(&db, &registry(&[]), &fs, &notifier, id);
+            let r = dismiss_skipped_file_impl(
+                &db,
+                &registry(unreachable),
+                &fs,
+                &notifier,
+                id + id_offset,
+            );
 
-        assert!(r.unwrap_err().contains("存在"));
-        assert_eq!(remaining(&db), 1);
-        assert_eq!(notifier.calls(), 0);
-    }
-
-    #[test]
-    fn dismiss_refuses_when_the_folder_is_unreachable() {
-        let (_d, db, id, _renamer) = setup(&[]);
-        watch(&db, &["C:/videos"]);
-        // Would read as Missing if the dead folder were stat-ed.
-        let fs = FakePathExistence::with_paths(&["C:/videos"]);
-        let notifier = FakeCatalogNotifier::default();
-
-        let r = dismiss_skipped_file_impl(&db, &registry(&["C:/videos"]), &fs, &notifier, id);
-
-        assert!(r.unwrap_err().contains("確認できない"));
-        assert_eq!(remaining(&db), 1);
-        assert_eq!(notifier.calls(), 0);
-    }
-
-    #[test]
-    fn dismiss_refuses_when_the_parent_folder_is_gone_too() {
-        let (_d, db, id, _renamer) = setup(&[]);
-        watch(&db, &["C:/videos"]);
-        let fs = FakePathExistence::default();
-        let notifier = FakeCatalogNotifier::default();
-
-        let r = dismiss_skipped_file_impl(&db, &registry(&[]), &fs, &notifier, id);
-
-        assert!(r.is_err());
-        assert_eq!(remaining(&db), 1);
-        assert_eq!(notifier.calls(), 0);
-    }
-
-    #[test]
-    fn dismiss_of_an_unknown_id_is_an_error() {
-        let (_d, db, id, _renamer) = setup(&[]);
-        let fs = FakePathExistence::with_paths(&["C:/videos"]);
-        let notifier = FakeCatalogNotifier::default();
-
-        let r = dismiss_skipped_file_impl(&db, &registry(&[]), &fs, &notifier, id + 99);
-
-        assert!(r.is_err());
-        assert_eq!(notifier.calls(), 0);
+            let err = r.unwrap_err();
+            assert!(
+                err.contains(expected),
+                "{existing:?} {unreachable:?}: {err}"
+            );
+            assert_eq!(remaining(&db), 1);
+            assert_eq!(notifier.calls(), 0);
+        }
     }
 
     fn video_count(db: &Db) -> i64 {
@@ -682,26 +661,27 @@ mod tests {
 
     #[test]
     fn register_missing_with_invalid_input_changes_nothing() {
-        for input in [
+        // Which names are valid is `validate_new_file_name`'s rule; one
+        // invalid name shows the rejection is applied before anything changes.
+        let (_d, db, id, _renamer) = setup(&[]);
+        watch(&db, &["C:/videos"]);
+        let fs = FakePathExistence::with_paths(&["C:/videos"]);
+        let notifier = FakeCatalogNotifier::default();
+
+        let r = register_missing_skipped_file_impl(
+            &db,
+            &registry(&[]),
+            &fs,
+            &notifier,
+            id,
             "movie\u{2461}.mp4",
-            "",
-            "a/b.mp4",
-            "movie.txt",
-            "bad:name.mp4",
-        ] {
-            let (_d, db, id, _renamer) = setup(&[]);
-            watch(&db, &["C:/videos"]);
-            let fs = FakePathExistence::with_paths(&["C:/videos"]);
-            let notifier = FakeCatalogNotifier::default();
+        );
 
-            let r =
-                register_missing_skipped_file_impl(&db, &registry(&[]), &fs, &notifier, id, input);
-
-            assert!(r.is_err(), "{input:?} should be rejected");
-            assert_eq!(remaining(&db), 1, "{input:?}");
-            assert_eq!(video_count(&db), 0, "{input:?}");
-            assert_eq!(notifier.calls(), 0, "{input:?}");
-        }
+        let err = r.unwrap_err();
+        assert!(err.contains("機種依存文字"), "{err}");
+        assert_eq!(remaining(&db), 1);
+        assert_eq!(video_count(&db), 0);
+        assert_eq!(notifier.calls(), 0);
     }
 
     #[test]
@@ -726,7 +706,11 @@ mod tests {
                 "movie.mp4",
             );
 
-            assert!(r.is_err(), "{existing:?} {unreachable:?}");
+            let err = r.unwrap_err();
+            assert!(
+                err.contains("存在") || err.contains("確認できない"),
+                "{existing:?} {unreachable:?}: {err}"
+            );
             assert_eq!(remaining(&db), 1);
             assert_eq!(video_count(&db), 0);
             assert_eq!(notifier.calls(), 0);
@@ -748,7 +732,7 @@ mod tests {
             "movie.mp4",
         );
 
-        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("すでに一覧にありません"));
         assert_eq!(video_count(&db), 0);
         assert_eq!(notifier.calls(), 0);
     }
@@ -791,36 +775,30 @@ mod tests {
 
     #[test]
     fn rejected_input_touches_nothing() {
-        for input in [
-            "",
-            "movie\u{2460}.mp4",
+        // Which names are valid is `validate_new_file_name`'s rule; one
+        // invalid name shows the rejection happens before anything is touched.
+        let (_d, db, id, renamer) = setup(&[]);
+        let notifier = FakeCatalogNotifier::default();
+        let called = RefCell::new(false);
+
+        let r = rename_skipped_file_impl(
+            &db,
+            &renamer,
+            &notifier,
+            |_| {
+                *called.borrow_mut() = true;
+                Ok(())
+            },
+            id,
             "movie\u{2461}.mp4",
-            "..\\x.mp4",
-            "a.txt",
-            "con.mp4",
-        ] {
-            let (_d, db, id, renamer) = setup(&[]);
-            let notifier = FakeCatalogNotifier::default();
-            let called = RefCell::new(false);
+        );
 
-            let r = rename_skipped_file_impl(
-                &db,
-                &renamer,
-                &notifier,
-                |_| {
-                    *called.borrow_mut() = true;
-                    Ok(())
-                },
-                id,
-                input,
-            );
-
-            assert!(r.is_err(), "{input:?}");
-            assert!(renamer.calls.lock().unwrap().is_empty(), "{input:?}");
-            assert_eq!(remaining(&db), 1, "{input:?}");
-            assert!(!*called.borrow());
-            assert_eq!(notifier.calls(), 0);
-        }
+        let err = r.unwrap_err();
+        assert!(err.contains("機種依存文字"), "{err}");
+        assert!(renamer.calls.lock().unwrap().is_empty());
+        assert_eq!(remaining(&db), 1);
+        assert!(!*called.borrow());
+        assert_eq!(notifier.calls(), 0);
     }
 
     #[test]
@@ -828,7 +806,7 @@ mod tests {
         let (_d, db, id, renamer) = setup(&[]);
         let notifier = FakeCatalogNotifier::default();
         let r = rename_skipped_file_impl(&db, &renamer, &notifier, |_| Ok(()), id + 99, "a.mp4");
-        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("すでに一覧にありません"));
         assert!(renamer.calls.lock().unwrap().is_empty());
     }
 

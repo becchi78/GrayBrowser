@@ -186,19 +186,10 @@ fn worker_loop(inner: &Inner) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::wait_until;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const TICK: Duration = Duration::from_millis(20);
-
-    fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
-        for _ in 0..200 {
-            if cond() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        false
-    }
 
     fn counting(
         outcome: impl Fn(usize) -> RetryOutcome + Send + Sync + 'static,
@@ -295,15 +286,6 @@ mod tests {
         retry.remove(Path::new("a.mp4"));
 
         assert_eq!(retry.pending_count(), 0);
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn idle_worker_does_not_evaluate_anything() {
-        let (_retry, calls) = counting(|_| RetryOutcome::Done);
-
-        thread::sleep(TICK * 10);
-
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 

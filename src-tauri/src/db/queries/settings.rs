@@ -256,3 +256,45 @@ mod read_watch_folders_tests {
         assert_eq!(err.to_string(), expected);
     }
 }
+
+#[cfg(test)]
+mod boolean_flag_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+
+    #[test]
+    fn update_check_on_startup_defaults_to_on_and_round_trips() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert!(get_update_check_on_startup(&conn).unwrap());
+        set_update_check_on_startup(&conn, false).unwrap();
+        assert!(!get_update_check_on_startup(&conn).unwrap());
+        set_update_check_on_startup(&conn, true).unwrap();
+        assert!(get_update_check_on_startup(&conn).unwrap());
+    }
+
+    #[test]
+    fn an_unrecognized_stored_update_check_value_reads_as_on() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('update_check_on_startup', 'garbage')",
+            [],
+        )
+        .unwrap();
+        assert!(get_update_check_on_startup(&conn).unwrap());
+    }
+
+    #[test]
+    fn restore_view_state_is_on_by_default_and_an_unrecognized_value_reads_as_on() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert!(get_restore_view_state_enabled(&conn).unwrap());
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('restore_view_state_enabled', 'garbage')",
+            [],
+        )
+        .unwrap();
+        assert!(get_restore_view_state_enabled(&conn).unwrap());
+    }
+}

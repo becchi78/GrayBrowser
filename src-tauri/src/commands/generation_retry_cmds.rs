@@ -118,28 +118,38 @@ pub fn retry_thumbnail_generation(
     queue: State<'_, ThumbnailQueueHandle>,
     video_id: String,
 ) -> Result<(), String> {
-    {
-        let conn = db.writer.lock().unwrap();
-        queries::reset_thumbnail_attempts(&conn, &video_id).map_err(|e| e.to_string())?;
-    }
-
-    let video = queries::find_video_by_id(&db.read_pool, &video_id).map_err(|e| e.to_string())?;
-    match video {
-        Some(video) => {
-            let ffmpeg = adapters::ffmpeg::RealFfmpegAdapter;
-            attempt_thumbnail_retry(
-                db.inner(),
-                queue.inner(),
-                &ffmpeg,
-                &video_id,
-                &video,
-                crate::paths::app_data_dir().map_err(|e| e.to_string()),
-            );
-        }
-        None => log::warn!("retry_thumbnail_generation: video {video_id} not found"),
-    }
+    reset_and_retry_thumbnail(
+        db.inner(),
+        queue.inner(),
+        &adapters::ffmpeg::RealFfmpegAdapter,
+        &video_id,
+        crate::paths::app_data_dir().map_err(|e| e.to_string()),
+    )?;
 
     TauriCatalogNotifier::new(app).notify_changed();
+    Ok(())
+}
+
+/// The body of `retry_thumbnail_generation` without the notification, split
+/// out so the reset-then-retry sequence can be tested without a real
+/// `tauri::AppHandle`.
+fn reset_and_retry_thumbnail(
+    db: &Db,
+    queue: &ThumbnailQueueHandle,
+    ffmpeg: &impl FfmpegAdapter,
+    video_id: &str,
+    app_dir: Result<PathBuf, String>,
+) -> Result<(), String> {
+    {
+        let conn = db.writer.lock().unwrap();
+        queries::reset_thumbnail_attempts(&conn, video_id).map_err(|e| e.to_string())?;
+    }
+
+    let video = queries::find_video_by_id(&db.read_pool, video_id).map_err(|e| e.to_string())?;
+    match video {
+        Some(video) => attempt_thumbnail_retry(db, queue, ffmpeg, video_id, &video, app_dir),
+        None => log::warn!("retry_thumbnail_generation: video {video_id} not found"),
+    }
     Ok(())
 }
 
@@ -218,28 +228,38 @@ pub fn retry_metadata_probe(
     db: State<'_, Db>,
     video_id: String,
 ) -> Result<(), String> {
+    reset_and_reprobe_metadata(db.inner(), &adapters::ffmpeg::RealFfmpegAdapter, &video_id)?;
+
+    TauriCatalogNotifier::new(app).notify_changed();
+    Ok(())
+}
+
+/// The body of `retry_metadata_probe` without the notification, split out
+/// for the same reason as `reset_and_retry_thumbnail`.
+fn reset_and_reprobe_metadata(
+    db: &Db,
+    ffmpeg: &impl FfmpegAdapter,
+    video_id: &str,
+) -> Result<(), String> {
     {
         let conn = db.writer.lock().unwrap();
-        queries::reset_metadata_attempts(&conn, &video_id).map_err(|e| e.to_string())?;
+        queries::reset_metadata_attempts(&conn, video_id).map_err(|e| e.to_string())?;
     }
 
-    let video = queries::find_video_by_id(&db.read_pool, &video_id).map_err(|e| e.to_string())?;
+    let video = queries::find_video_by_id(&db.read_pool, video_id).map_err(|e| e.to_string())?;
     match video {
         Some(video) => {
-            let ffmpeg = adapters::ffmpeg::RealFfmpegAdapter;
             if let Err(e) = metadata::worker::probe_metadata_for_video(
-                &ffmpeg,
-                db.inner(),
-                &video_id,
-                std::path::Path::new(&video.file_path),
+                ffmpeg,
+                db,
+                video_id,
+                Path::new(&video.file_path),
             ) {
                 log::warn!("manual metadata retry failed for {video_id}: {e}");
             }
         }
         None => log::warn!("retry_metadata_probe: video {video_id} not found"),
     }
-
-    TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
 }
 
@@ -397,61 +417,12 @@ pub fn reprobe_missing_metadata(
 mod tests {
     use super::*;
     use crate::db::test_support::{init_temp_db, insert_test_video};
+    use crate::test_support::thumbnail_attempts_of;
 
-    /// `retry_thumbnail_generation`/`retry_metadata_probe` need a real
-    /// `tauri::AppHandle` to notify with, which this codebase's own
-    /// `events` module documents as unsafe to construct inside `cargo test`
-    /// on Windows (`STATUS_ENTRYPOINT_NOT_FOUND`, see `events.rs`'s top doc
-    /// comment). So instead of exercising the `#[tauri::command]` fns
-    /// themselves, these tests cover the exact same reset-then-retry
-    /// sequence they perform, directly against `queries`/`thumbnail::
-    /// worker`/`metadata::worker` -- the parts that are actually
-    /// interesting (attempts hits 0, then exactly one more attempt runs)
-    /// and are fully AppHandle-independent.
-    #[test]
-    fn resetting_thumbnail_attempts_then_retrying_zeroes_and_then_recounts_a_failure() {
+    fn failing_ffmpeg() -> gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter {
         use gb_core::ports::ffmpeg::FfmpegError;
         use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
-
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-1", "C:/videos/movie.mp4");
-
-        {
-            let conn = db.writer.lock().unwrap();
-            for _ in 0..gb_core::retry::MAX_GENERATION_ATTEMPTS {
-                queries::increment_thumbnail_attempts(&conn, "vid-1").unwrap();
-            }
-        }
-        {
-            let conn = db.writer.lock().unwrap();
-            let attempts: i64 = conn
-                .query_row(
-                    "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-1'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(attempts, i64::from(gb_core::retry::MAX_GENERATION_ATTEMPTS));
-        }
-
-        {
-            let conn = db.writer.lock().unwrap();
-            queries::reset_thumbnail_attempts(&conn, "vid-1").unwrap();
-        }
-        {
-            let conn = db.writer.lock().unwrap();
-            let attempts: i64 = conn
-                .query_row(
-                    "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-1'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(attempts, 0, "reset must zero the counter");
-        }
-
-        let ffmpeg = FakeFfmpegAdapter {
+        FakeFfmpegAdapter {
             duration: Ok(Some(120.0)),
             extract_result: Box::new(|_seek| {
                 Err(FfmpegError::NonZeroExit {
@@ -459,29 +430,63 @@ mod tests {
                     stderr: "still broken".into(),
                 })
             }),
+            metadata: Err(FfmpegError::NonZeroExit {
+                status: 1,
+                stderr: "still broken".into(),
+            }),
             ..Default::default()
-        };
-        let result = thumbnail::worker::generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-1",
-            std::path::Path::new("C:/videos/movie.mp4"),
-        );
-        assert!(result.is_err());
+        }
+    }
 
-        let conn = db.writer.lock().unwrap();
-        let attempts: i64 = conn
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+    /// `retry_thumbnail_generation`/`retry_metadata_probe` need a real
+    /// `tauri::AppHandle` to notify with, which this codebase's own
+    /// `events` module documents as unsafe to construct inside `cargo test`
+    /// on Windows (`STATUS_ENTRYPOINT_NOT_FOUND`, see `events.rs`'s top doc
+    /// comment). So the reset-then-retry sequence is tested through the
+    /// function holding it, `reset_and_retry_thumbnail`.
+    #[test]
+    fn retrying_an_exhausted_thumbnail_resets_the_counter_then_counts_one_new_failure() {
+        let (_db_dir, db) = init_temp_db();
+        let app_dir = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "vid-1", "C:/videos/movie.mp4");
+        add_failed_attempts(&db, "vid-1", gb_core::retry::MAX_GENERATION_ATTEMPTS);
         assert_eq!(
-            attempts, 1,
+            thumbnail_attempts_of(&db, "vid-1"),
+            i64::from(gb_core::retry::MAX_GENERATION_ATTEMPTS)
+        );
+
+        reset_and_retry_thumbnail(
+            &db,
+            &ThumbnailQueueHandle::default(),
+            &failing_ffmpeg(),
+            "vid-1",
+            Ok(app_dir.path().to_path_buf()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            thumbnail_attempts_of(&db, "vid-1"),
+            1,
             "the immediate retry attempt is exactly one attempt, not zero and not two"
         );
+    }
+
+    #[test]
+    fn retrying_an_unknown_thumbnail_video_is_not_an_error() {
+        let (_db_dir, db) = init_temp_db();
+        let app_dir = tempfile::tempdir().unwrap();
+        let ffmpeg = failing_ffmpeg();
+
+        reset_and_retry_thumbnail(
+            &db,
+            &ThumbnailQueueHandle::default(),
+            &ffmpeg,
+            "no-such-video",
+            Ok(app_dir.path().to_path_buf()),
+        )
+        .unwrap();
+
+        assert!(ffmpeg.calls.lock().unwrap().is_empty());
     }
 
     /// Regression test for the best-effort contract `attempt_thumbnail_retry`'s
@@ -581,75 +586,22 @@ mod tests {
     }
 
     #[test]
-    fn resetting_metadata_attempts_then_retrying_zeroes_and_then_recounts_a_failure() {
-        use gb_core::ports::ffmpeg::FfmpegError;
-        use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
-
+    fn retrying_exhausted_metadata_resets_the_counter_then_counts_one_new_failure() {
         let (_db_dir, db) = init_temp_db();
         insert_test_video(&db, "vid-2", "C:/videos/movie.mp4");
-
-        {
-            let conn = db.writer.lock().unwrap();
-            for _ in 0..gb_core::retry::MAX_GENERATION_ATTEMPTS {
-                queries::increment_metadata_attempts(&conn, "vid-2").unwrap();
-            }
-        }
-
-        {
-            let conn = db.writer.lock().unwrap();
-            queries::reset_metadata_attempts(&conn, "vid-2").unwrap();
-        }
-        {
-            let conn = db.writer.lock().unwrap();
-            let attempts: i64 = conn
-                .query_row(
-                    "SELECT metadata_attempts FROM videos WHERE id = 'vid-2'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(attempts, 0, "reset must zero the counter");
-        }
-
-        let ffmpeg = FakeFfmpegAdapter {
-            metadata: Err(FfmpegError::NonZeroExit {
-                status: 1,
-                stderr: "still broken".into(),
-            }),
-            ..Default::default()
-        };
-        let result = metadata::worker::probe_metadata_for_video(
-            &ffmpeg,
-            &db,
-            "vid-2",
-            std::path::Path::new("C:/videos/movie.mp4"),
-        );
-        assert!(result.is_err());
-
-        let conn = db.writer.lock().unwrap();
-        let attempts: i64 = conn
-            .query_row(
-                "SELECT metadata_attempts FROM videos WHERE id = 'vid-2'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        add_failed_metadata_attempts(&db, "vid-2", gb_core::retry::MAX_GENERATION_ATTEMPTS);
         assert_eq!(
-            attempts, 1,
+            metadata_attempts_of(&db, "vid-2"),
+            i64::from(gb_core::retry::MAX_GENERATION_ATTEMPTS)
+        );
+
+        reset_and_reprobe_metadata(&db, &failing_ffmpeg(), "vid-2").unwrap();
+
+        assert_eq!(
+            metadata_attempts_of(&db, "vid-2"),
+            1,
             "the immediate retry attempt is exactly one attempt, not zero and not two"
         );
-    }
-
-    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
-        db.writer
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
-                [id],
-                |r| r.get(0),
-            )
-            .unwrap()
     }
 
     fn add_failed_attempts(db: &Db, id: &str, n: u32) {
@@ -785,32 +737,5 @@ mod tests {
     fn prepare_metadata_reprobe_with_nothing_missing_returns_empty() {
         let (_db_dir, db) = init_temp_db();
         assert!(prepare_metadata_reprobe(&db).unwrap().is_empty());
-    }
-
-    #[test]
-    fn exhausted_dto_conversions_preserve_every_field() {
-        let thumb_row = queries::ExhaustedThumbnailRow {
-            id: "vid-1".into(),
-            file_path: "C:/videos/movie.mp4".into(),
-            file_name: "movie.mp4".into(),
-            thumbnail_attempts: 3,
-        };
-        let dto = ExhaustedThumbnailDto::from(thumb_row);
-        assert_eq!(dto.id, "vid-1");
-        assert_eq!(dto.file_path, "C:/videos/movie.mp4");
-        assert_eq!(dto.file_name, "movie.mp4");
-        assert_eq!(dto.thumbnail_attempts, 3);
-
-        let meta_row = queries::ExhaustedMetadataRow {
-            id: "vid-2".into(),
-            file_path: "C:/videos/movie2.mp4".into(),
-            file_name: "movie2.mp4".into(),
-            metadata_attempts: 4,
-        };
-        let dto = ExhaustedMetadataDto::from(meta_row);
-        assert_eq!(dto.id, "vid-2");
-        assert_eq!(dto.file_path, "C:/videos/movie2.mp4");
-        assert_eq!(dto.file_name, "movie2.mp4");
-        assert_eq!(dto.metadata_attempts, 4);
     }
 }

@@ -139,17 +139,8 @@ fn worker_loop(inner: &Inner) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{wait_until, Gate};
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
-        for _ in 0..200 {
-            if cond() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        false
-    }
 
     #[test]
     fn noop_trigger_does_nothing() {
@@ -210,12 +201,8 @@ mod tests {
     fn a_trigger_during_the_action_causes_one_more_run() {
         let runs = Arc::new(AtomicUsize::new(0));
         let in_action = Arc::new(AtomicUsize::new(0));
-        let release = Arc::new(AtomicUsize::new(0));
-        let (runs_c, in_c, rel_c) = (
-            Arc::clone(&runs),
-            Arc::clone(&in_action),
-            Arc::clone(&release),
-        );
+        let gate = Arc::new(Gate::new(true));
+        let (runs_c, in_c, gate_c) = (Arc::clone(&runs), Arc::clone(&in_action), Arc::clone(&gate));
         let follow_up = FollowUp::with_timing(
             Duration::from_millis(50),
             Duration::from_secs(10),
@@ -224,12 +211,7 @@ mod tests {
                 if n == 1 {
                     in_c.store(1, Ordering::SeqCst);
                     // Hold the first run open until the test has re-triggered.
-                    for _ in 0..400 {
-                        if rel_c.load(Ordering::SeqCst) == 1 {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
+                    gate_c.pass();
                 }
             },
         );
@@ -237,7 +219,7 @@ mod tests {
         follow_up.trigger();
         assert!(wait_until(|| in_action.load(Ordering::SeqCst) == 1));
         follow_up.trigger();
-        release.store(1, Ordering::SeqCst);
+        gate.release();
 
         assert!(wait_until(|| runs.load(Ordering::SeqCst) == 2));
         thread::sleep(Duration::from_millis(300));

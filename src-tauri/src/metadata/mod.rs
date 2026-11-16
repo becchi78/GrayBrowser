@@ -143,26 +143,10 @@ mod tests {
     use gb_core::ports::ffmpeg::{FfmpegAvailability, FfmpegError};
     use gb_core::testing::fake_ffmpeg::{FakeCall, FakeFfmpegAdapter};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
 
-    use crate::events::NoopReachabilityNotifier;
+    use crate::test_support::CountingNotifier;
+    use crate::test_support::{all_reachable, registry_over};
     use gb_core::testing::fake_folder_probe::FakeFolderProbe;
-
-    fn registry_over(probe: Arc<FakeFolderProbe>) -> ReachabilityRegistry {
-        ReachabilityRegistry::new(probe, Arc::new(NoopReachabilityNotifier))
-    }
-
-    fn all_reachable() -> ReachabilityRegistry {
-        registry_over(Arc::new(FakeFolderProbe::default()))
-    }
-
-    struct CountingNotifier(AtomicUsize);
-
-    impl CatalogNotifier for CountingNotifier {
-        fn notify_changed(&self) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
 
     #[test]
     fn a_failed_probe_also_notifies_the_catalog_changed() {
@@ -181,14 +165,10 @@ mod tests {
             ..Default::default()
         });
 
-        enqueue_missing_metadata_probes(db.clone(), ffmpeg, Arc::clone(&notifier), all_reachable());
+        // Run synchronously: `enqueue_missing_metadata_probes` only spawns this
+        // on a detached thread.
+        run_metadata_queue(db.clone(), ffmpeg, Arc::clone(&notifier), all_reachable());
 
-        // The queue is fire-and-forget on a detached thread, so poll for the
-        // notification instead of joining.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while notifier.0.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
         assert_eq!(notifier.0.load(Ordering::SeqCst), 1);
     }
 
@@ -243,7 +223,7 @@ mod tests {
             db.clone(),
             Arc::clone(&ffmpeg),
             Arc::clone(&notifier),
-            registry_over(Arc::clone(&probe)),
+            registry_over(probe.clone()),
         );
 
         assert_eq!(metadata_attempts_of(&db, "nas-1"), 0);
@@ -266,7 +246,7 @@ mod tests {
         let (_db_dir, db) = init_temp_db();
         register_nas_video(&db, "nas-1");
         let probe = Arc::new(FakeFolderProbe::default());
-        let registry = registry_over(Arc::clone(&probe));
+        let registry = registry_over(probe.clone());
         // Known reachable, so the worker goes ahead; the share then drops.
         assert!(registry.is_reachable(NAS));
         probe.set_reachable(NAS, false);

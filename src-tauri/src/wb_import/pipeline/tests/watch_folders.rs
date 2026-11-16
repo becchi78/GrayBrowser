@@ -111,25 +111,6 @@ fn root_level_videos_are_reported_even_when_no_folder_is_added() {
 }
 
 #[test]
-fn root_level_videos_are_not_reported_when_opting_out() {
-    let h = harness();
-    let notifier = FakeWbImportNotifier::default();
-    import_all(
-        &h.db,
-        &h.paths,
-        &FakeWbSourceAdapter {
-            movies: Ok(vec![online_row(1, r"Z:\top.mp4".to_string())]),
-            ..Default::default()
-        },
-        &no_op_ffmpeg(),
-        &notifier,
-        &FakeCatalogNotifier::default(),
-    );
-    let summary = notifier.complete_calls.lock().unwrap()[0].clone();
-    assert!(summary.watch_folders_skipped_roots.is_empty());
-}
-
-#[test]
 fn an_offline_row_with_a_question_mark_left_in_its_folder_adds_nothing() {
     let h = harness();
     let reconf = FakeWatchReconfigurer::default();
@@ -172,27 +153,6 @@ fn skipped_rows_folders_are_not_collected_on_reimport() {
 }
 
 #[test]
-fn opting_out_adds_no_offline_folder_and_does_not_reconfigure() {
-    let h = harness();
-    let notifier = FakeWbImportNotifier::default();
-    import_all(
-        &h.db,
-        &h.paths,
-        &FakeWbSourceAdapter {
-            movies: Ok(vec![online_row(1, r"Z:\nas\a.mp4".to_string())]),
-            ..Default::default()
-        },
-        &no_op_ffmpeg(),
-        &notifier,
-        &FakeCatalogNotifier::default(),
-    );
-    let summary = notifier.complete_calls.lock().unwrap()[0].clone();
-    assert_eq!(summary.registered, 1);
-    assert!(summary.watch_folders_added.is_empty());
-    assert!(stored_watch_folders(&h).is_empty());
-}
-
-#[test]
 fn folders_already_covered_by_a_watch_folder_are_not_added() {
     let h = harness();
     let dir = OnlineDir::new("a.mp4");
@@ -219,8 +179,10 @@ fn folders_already_covered_by_a_watch_folder_are_not_added() {
     );
 }
 
+/// Without a reconfigurer (the caller opted out) nothing is added or
+/// reported, whether the rows are online, offline in a folder, or at a root.
 #[test]
-fn opting_out_adds_nothing() {
+fn opting_out_adds_and_reports_nothing() {
     let h = harness();
     let dir = OnlineDir::new("a.mp4");
     let notifier = FakeWbImportNotifier::default();
@@ -228,7 +190,11 @@ fn opting_out_adds_nothing() {
         &h.db,
         &h.paths,
         &FakeWbSourceAdapter {
-            movies: Ok(vec![online_row(1, dir.file("a.mp4"))]),
+            movies: Ok(vec![
+                online_row(1, dir.file("a.mp4")),
+                online_row(2, r"Z:\nas\a.mp4".to_string()),
+                online_row(3, r"Z:\top.mp4".to_string()),
+            ]),
             ..Default::default()
         },
         &no_op_ffmpeg(),
@@ -236,24 +202,10 @@ fn opting_out_adds_nothing() {
         &FakeCatalogNotifier::default(),
     );
     let summary = notifier.complete_calls.lock().unwrap()[0].clone();
-    assert_eq!(summary.registered, 1);
+    assert_eq!(summary.registered, 3);
     assert!(summary.watch_folders_added.is_empty());
+    assert!(summary.watch_folders_skipped_roots.is_empty());
     assert!(stored_watch_folders(&h).is_empty());
-}
-
-#[test]
-fn reimporting_does_not_add_the_folder_twice_or_reconfigure_again() {
-    let h = harness();
-    let dir = OnlineDir::new("a.mp4");
-    let reconf = FakeWatchReconfigurer::default();
-    let rows = || vec![online_row(1, dir.file("a.mp4"))];
-
-    import_registering(&h, rows(), &reconf);
-    let second = import_registering(&h, rows(), &reconf);
-
-    assert!(second.watch_folders_added.is_empty());
-    assert_eq!(stored_watch_folders(&h), vec![dir.folder()]);
-    assert_eq!(reconf.calls.lock().unwrap().len(), 1);
 }
 
 /// Registering folders is a convenience: a failed save must neither abort

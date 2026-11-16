@@ -479,238 +479,217 @@ mod tests {
     use super::*;
     use crate::db::test_support::init_temp_db;
     use crate::events::FakeCatalogNotifier;
+    use crate::test_support::wait_until;
     use gb_core::ports::drive_type::DriveTypeError;
     use gb_core::ports::watcher::WatchEventKind;
     use gb_core::testing::fake_drive_type::FakeDriveTypeDetector;
     use gb_core::testing::fake_watcher::FakeFileWatcher;
     use std::fs;
 
-    /// A throwaway `thumbnails/` root for tests that don't exercise the
-    /// thumbnail-moving side of a reactivation -- just needs to be a valid,
-    /// empty directory.
-    fn temp_thumbs_root() -> tempfile::TempDir {
-        tempfile::tempdir().unwrap()
+    /// A throwaway database, thumbnails root and scan folder. The thumbnails
+    /// root only needs to be a valid, empty directory: none of these tests
+    /// exercise the thumbnail-moving side of a reactivation.
+    struct Env {
+        _db_dir: tempfile::TempDir,
+        db: Db,
+        thumbs_root: tempfile::TempDir,
+        scan_dir: tempfile::TempDir,
     }
 
-    #[test]
-    fn handle_watch_event_registers_a_created_video_file() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
+    impl Env {
+        fn new() -> Self {
+            let (db_dir, db) = init_temp_db();
+            Self {
+                _db_dir: db_dir,
+                db,
+                thumbs_root: tempfile::tempdir().unwrap(),
+                scan_dir: tempfile::tempdir().unwrap(),
+            }
+        }
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: video_path.clone(),
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+        fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
+            let path = self.scan_dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            path
+        }
 
-        let conn = db.writer.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
+        /// A real `movie.mp4` in the scan folder.
+        fn video(&self) -> PathBuf {
+            self.file("movie.mp4", b"bytes")
+        }
+
+        fn send_with_retry(
+            &self,
+            kind: WatchEventKind,
+            path: &Path,
+            notifier: &dyn CatalogNotifier,
+            follow_up: &FollowUp,
+            retry: &UnreadableRetry,
+        ) {
+            handle_watch_event(
+                &self.db,
+                self.thumbs_root.path(),
+                WatchEvent {
+                    kind,
+                    path: path.to_path_buf(),
+                },
+                notifier,
+                follow_up,
+                retry,
+                &scan::AssumeReachable,
+            );
+        }
+
+        fn send(
+            &self,
+            kind: WatchEventKind,
+            path: &Path,
+            notifier: &dyn CatalogNotifier,
+            follow_up: &FollowUp,
+        ) {
+            self.send_with_retry(kind, path, notifier, follow_up, &UnreadableRetry::noop());
+        }
+
+        /// Sends an event whose notifications and follow-up don't matter.
+        fn send_quietly(&self, kind: WatchEventKind, path: &Path) {
+            self.send(
+                kind,
+                path,
+                &FakeCatalogNotifier::default(),
+                &FollowUp::noop(),
+            );
+        }
+
+        fn video_count(&self) -> i64 {
+            self.db
+                .writer
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+                .unwrap()
+        }
+
+        /// Waits for a background scan to register files, rather than
+        /// assuming it is done the instant the caller returns.
+        fn wait_for_video_count(&self, expected: i64) -> bool {
+            wait_until(|| self.video_count() == expected)
+        }
+
+        fn ctx(&self) -> WatchContext {
+            WatchContext {
+                db: self.db.clone(),
+                thumbnails_root: self.thumbs_root.path().to_path_buf(),
+            }
+        }
+
+        fn reconfigure(
+            &self,
+            manager: &RealtimeWatchManager,
+            folders: &[String],
+            watcher: &FakeFileWatcher,
+            drive_type: &FakeDriveTypeDetector,
+        ) {
+            manager.reconfigure(
+                self.ctx(),
+                folders,
+                watcher,
+                drive_type,
+                Duration::from_secs(600),
+                Arc::new(FakeCatalogNotifier::default()),
+            );
+        }
     }
 
-    #[test]
-    fn handle_watch_event_ignores_a_non_video_extension() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let text_path = scan_dir.path().join("notes.txt");
-        fs::write(&text_path, b"not a video").unwrap();
-
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: text_path,
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        let conn = db.writer.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
+    fn fake_watcher() -> FakeFileWatcher {
+        FakeFileWatcher {
+            watch_result: Ok(()),
+            ..Default::default()
+        }
     }
 
-    /// Verifies `Removed` transitions a known online video to offline.
-    #[test]
-    fn handle_watch_event_removed_transitions_a_known_online_video_to_offline() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: video_path.clone(),
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: video_path,
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        let conn = db.writer.lock().unwrap();
-        let (status, count): (String, i64) = (
-            conn.query_row("SELECT status FROM videos", [], |r| r.get(0))
-                .unwrap(),
-            conn.query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-                .unwrap(),
-        );
-        assert_eq!(status, "offline");
-        assert_eq!(count, 1, "the row must be kept, not deleted");
+    fn drive_types(kinds: &[(&Path, DriveKind)]) -> FakeDriveTypeDetector {
+        let mut detector = FakeDriveTypeDetector::default();
+        for (path, kind) in kinds {
+            detector.results.insert(path.to_path_buf(), Ok(*kind));
+        }
+        detector
     }
 
-    #[test]
-    fn handle_watch_event_removed_ignores_a_path_with_no_known_row() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        // Never registered (e.g. a directory removal, or a video that was
-        // never scanned) -- must be a harmless no-op, not an error.
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: scan_dir.path().join("never_registered.mp4"),
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+    fn folder_strings(dirs: &[&Path]) -> Vec<String> {
+        dirs.iter()
+            .map(|d| d.to_string_lossy().to_string())
+            .collect()
+    }
 
-        let conn = db.writer.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
+    /// A `FollowUp` that never fires during a test, so `has_pending` can be
+    /// asserted deterministically.
+    fn parked_follow_up() -> FollowUp {
+        FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {})
     }
 
     // --- Emit-triggering conditions (via FakeCatalogNotifier, no
     // AppHandle/mock_app() needed -- see events.rs's doc comment for why) ---
 
     #[test]
-    fn handle_watch_event_notifies_on_a_created_registration() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
+    fn a_created_video_file_is_registered_and_announced() {
+        let env = Env::new();
+        let video = env.video();
         let notifier = FakeCatalogNotifier::default();
+        let follow_up = parked_follow_up();
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: video_path,
-            },
-            &notifier,
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+        env.send(WatchEventKind::Created, &video, &notifier, &follow_up);
 
+        assert_eq!(env.video_count(), 1);
         assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
+        assert!(follow_up.has_pending());
     }
 
     #[test]
-    fn handle_watch_event_does_not_notify_on_an_unchanged_rescan() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"stable bytes").unwrap();
-        let event = || WatchEvent {
-            kind: WatchEventKind::Created,
-            path: video_path.clone(),
-        };
+    fn handle_watch_event_ignores_a_non_video_extension() {
+        let env = Env::new();
+        let text = env.file("notes.txt", b"not a video");
 
-        // First event registers (and notifies) the row.
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            event(),
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+        env.send_quietly(WatchEventKind::Created, &text);
 
-        // A second event for the exact same, unchanged file must classify
-        // as Unchanged (no DB write) and therefore must not notify.
+        assert_eq!(env.video_count(), 0);
+    }
+
+    #[test]
+    fn an_unchanged_rescan_neither_notifies_nor_triggers_a_follow_up() {
+        let env = Env::new();
+        let video = env.file("movie.mp4", b"stable bytes");
+        env.send_quietly(WatchEventKind::Created, &video);
+
+        // A second event for the exact same, unchanged file must classify as
+        // Unchanged (no DB write) and therefore announce nothing.
         let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            event(),
-            &notifier,
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+        let follow_up = parked_follow_up();
+        env.send(WatchEventKind::Created, &video, &notifier, &follow_up);
 
+        assert_eq!(env.video_count(), 1);
         assert_eq!(
             notifier.calls(),
             0,
             "an Unchanged outcome (no DB write) must not notify"
         );
+        assert!(!follow_up.has_pending());
     }
 
     #[test]
-    fn handle_watch_event_removed_does_not_notify_for_an_untracked_path() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
+    fn a_removed_event_for_a_path_with_no_known_row_is_a_harmless_no_op() {
+        let env = Env::new();
         let notifier = FakeCatalogNotifier::default();
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: scan_dir.path().join("never_registered.mp4"),
-            },
+        // Never registered (e.g. a directory removal, or a video that was
+        // never scanned).
+        env.send(
+            WatchEventKind::Removed,
+            &env.scan_dir.path().join("never_registered.mp4"),
             &notifier,
             &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
         );
 
+        assert_eq!(env.video_count(), 0);
         assert_eq!(
             notifier.calls(),
             0,
@@ -719,39 +698,22 @@ mod tests {
     }
 
     #[test]
-    fn handle_watch_event_removed_notifies_when_a_known_online_video_goes_offline() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: video_path.clone(),
-            },
-            &FakeCatalogNotifier::default(),
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+    fn a_removed_event_takes_a_known_online_video_offline_and_announces_it() {
+        let env = Env::new();
+        let video = env.video();
+        env.send_quietly(WatchEventKind::Created, &video);
 
         let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: video_path,
-            },
+        env.send(
+            WatchEventKind::Removed,
+            &video,
             &notifier,
             &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
         );
 
+        let (_, _, status) = query_video(&env.db);
+        assert_eq!(status, "offline");
+        assert_eq!(env.video_count(), 1, "the row must be kept, not deleted");
         assert_eq!(
             notifier.calls(),
             1,
@@ -764,57 +726,55 @@ mod tests {
     /// at the *same* path: online -> offline ->
     /// online again (via `reconcile_known_path`'s reactivation,
     /// requiring no new code). `id`/`quick_hash` must stay identical
-    /// throughout -- the row is reused, never replaced.
+    /// throughout -- the row is reused, never replaced. Also covers the
+    /// wiring itself: one `watch` call per folder, and events routed to
+    /// `handle_watch_event`.
     #[test]
     fn created_removed_created_at_the_same_path_cycles_through_fake_watcher_preserving_identity() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
+        let env = Env::new();
+        let video = env.video();
 
-        let fake = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
-        let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-        start_watching(
-            db.clone(),
-            thumbs_root.path().to_path_buf(),
+        let fake = fake_watcher();
+        let folders = folder_strings(&[env.scan_dir.path()]);
+        let (handles, _retry) = start_watching(
+            env.db.clone(),
+            env.thumbs_root.path().to_path_buf(),
             &folders,
             &fake,
             Arc::new(FakeCatalogNotifier::default()),
             Arc::new(FollowUp::noop()),
             Arc::new(scan::AssumeReachable),
         );
+        assert_eq!(handles.len(), 1);
+        assert_eq!(
+            fake.watched_folders(),
+            vec![env.scan_dir.path().to_path_buf()]
+        );
 
         let event = |kind| WatchEvent {
             kind,
-            path: video_path.clone(),
+            path: video.clone(),
         };
 
-        fake.emit(scan_dir.path(), event(WatchEventKind::Created));
-        let (id1, hash1, status1) = query_video(&db);
+        fake.emit(env.scan_dir.path(), event(WatchEventKind::Created));
+        let (id1, hash1, status1) = query_video(&env.db);
         assert_eq!(status1, "online");
 
-        fake.emit(scan_dir.path(), event(WatchEventKind::Removed));
-        let (id2, hash2, status2) = query_video(&db);
+        fake.emit(env.scan_dir.path(), event(WatchEventKind::Removed));
+        let (id2, hash2, status2) = query_video(&env.db);
         assert_eq!(status2, "offline");
         assert_eq!(id2, id1);
         assert_eq!(hash2, hash1);
 
-        fake.emit(scan_dir.path(), event(WatchEventKind::Created));
-        let (id3, hash3, status3) = query_video(&db);
+        fake.emit(env.scan_dir.path(), event(WatchEventKind::Created));
+        let (id3, hash3, status3) = query_video(&env.db);
         assert_eq!(status3, "online");
         assert_eq!(id3, id1);
         assert_eq!(hash3, hash1);
 
-        let conn = db.writer.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap();
         assert_eq!(
-            count, 1,
+            env.video_count(),
+            1,
             "the cycle must reuse one row, never insert a second"
         );
     }
@@ -828,86 +788,23 @@ mod tests {
     }
 
     #[test]
-    fn start_watching_calls_watch_once_per_folder_and_routes_events_to_handle_watch_event() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-
-        let fake = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
-        let folders = vec![scan_dir.path().to_string_lossy().to_string()];
-        let (handles, _retry) = start_watching(
-            db.clone(),
-            thumbs_root.path().to_path_buf(),
-            &folders,
-            &fake,
-            Arc::new(FakeCatalogNotifier::default()),
-            Arc::new(FollowUp::noop()),
-            Arc::new(scan::AssumeReachable),
-        );
-
-        assert_eq!(handles.len(), 1);
-        assert_eq!(fake.watched_folders(), vec![scan_dir.path().to_path_buf()]);
-
-        fake.emit(
-            scan_dir.path(),
-            WatchEvent {
-                kind: WatchEventKind::Created,
-                path: video_path,
-            },
-        );
-
-        let conn = db.writer.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
     fn reconfigure_routes_local_and_removable_to_watching_and_network_to_polling() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let local_dir = tempfile::tempdir().unwrap();
         let removable_dir = tempfile::tempdir().unwrap();
         let nas_dir = tempfile::tempdir().unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
-        drive_type
-            .results
-            .insert(removable_dir.path().to_path_buf(), Ok(DriveKind::Removable));
-        drive_type
-            .results
-            .insert(nas_dir.path().to_path_buf(), Ok(DriveKind::Network));
-
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
+        let drive_type = drive_types(&[
+            (local_dir.path(), DriveKind::Local),
+            (removable_dir.path(), DriveKind::Removable),
+            (nas_dir.path(), DriveKind::Network),
+        ]);
         let manager = RealtimeWatchManager::default();
-        let folders = vec![
-            local_dir.path().to_string_lossy().to_string(),
-            removable_dir.path().to_string_lossy().to_string(),
-            nas_dir.path().to_string_lossy().to_string(),
-        ];
 
-        manager.reconfigure(
-            WatchContext {
-                db,
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &folders,
-            &watcher,
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[local_dir.path(), removable_dir.path(), nas_dir.path()]),
+            &fake_watcher(),
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
 
         assert_eq!(
@@ -924,15 +821,10 @@ mod tests {
 
     #[test]
     fn reconfigure_falls_back_to_polling_when_drive_type_is_unknown_or_undetectable() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let unknown_dir = tempfile::tempdir().unwrap();
         let error_dir = tempfile::tempdir().unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(unknown_dir.path().to_path_buf(), Ok(DriveKind::Unknown));
+        let mut drive_type = drive_types(&[(unknown_dir.path(), DriveKind::Unknown)]);
         drive_type.results.insert(
             error_dir.path().to_path_buf(),
             Err(DriveTypeError::DetectionFailed {
@@ -940,27 +832,13 @@ mod tests {
                 message: "boom".to_string(),
             }),
         );
-
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
         let manager = RealtimeWatchManager::default();
-        let folders = vec![
-            unknown_dir.path().to_string_lossy().to_string(),
-            error_dir.path().to_string_lossy().to_string(),
-        ];
 
-        manager.reconfigure(
-            WatchContext {
-                db,
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &folders,
-            &watcher,
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[unknown_dir.path(), error_dir.path()]),
+            &fake_watcher(),
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
 
         assert_eq!(manager.active_handle_count(), 0);
@@ -973,37 +851,21 @@ mod tests {
 
     #[test]
     fn reconfigure_replaces_the_previous_set_of_handles_and_pollers() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let local_dir = tempfile::tempdir().unwrap();
         let nas_dir = tempfile::tempdir().unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
-        drive_type
-            .results
-            .insert(nas_dir.path().to_path_buf(), Ok(DriveKind::Network));
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
+        let drive_type = drive_types(&[
+            (local_dir.path(), DriveKind::Local),
+            (nas_dir.path(), DriveKind::Network),
+        ]);
+        let watcher = fake_watcher();
         let manager = RealtimeWatchManager::default();
 
-        manager.reconfigure(
-            WatchContext {
-                db: db.clone(),
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &[
-                local_dir.path().to_string_lossy().to_string(),
-                nas_dir.path().to_string_lossy().to_string(),
-            ],
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[local_dir.path(), nas_dir.path()]),
             &watcher,
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
         assert_eq!(manager.active_handle_count(), 1);
         assert_eq!(manager.active_nas_poller_count(), 1);
@@ -1014,60 +876,29 @@ mod tests {
         // (active_nas_poller_count) was updated synchronously, not that the
         // old background thread has actually exited yet (it may still be
         // finishing its current cycle in the background).
-        manager.reconfigure(
-            WatchContext {
-                db,
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &[],
-            &watcher,
-            &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
-        );
+        env.reconfigure(&manager, &[], &watcher, &drive_type);
         assert_eq!(manager.active_handle_count(), 0);
         assert_eq!(manager.active_nas_poller_count(), 0);
     }
 
     #[test]
     fn concurrent_reconfigure_calls_leave_exactly_one_set_of_handles() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let local_dir = tempfile::tempdir().unwrap();
         let nas_dir = tempfile::tempdir().unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
-        drive_type
-            .results
-            .insert(nas_dir.path().to_path_buf(), Ok(DriveKind::Network));
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
+        let drive_type = drive_types(&[
+            (local_dir.path(), DriveKind::Local),
+            (nas_dir.path(), DriveKind::Network),
+        ]);
+        let watcher = fake_watcher();
         let manager = RealtimeWatchManager::default();
-        let folders = [
-            local_dir.path().to_string_lossy().to_string(),
-            nas_dir.path().to_string_lossy().to_string(),
-        ];
+        let folders = folder_strings(&[local_dir.path(), nas_dir.path()]);
 
         std::thread::scope(|s| {
             for _ in 0..4 {
                 s.spawn(|| {
                     for _ in 0..5 {
-                        manager.reconfigure(
-                            WatchContext {
-                                db: db.clone(),
-                                thumbnails_root: thumbs_root.path().to_path_buf(),
-                            },
-                            &folders,
-                            &watcher,
-                            &drive_type,
-                            Duration::from_secs(600),
-                            Arc::new(FakeCatalogNotifier::default()),
-                        );
+                        env.reconfigure(&manager, &folders, &watcher, &drive_type);
                     }
                 });
             }
@@ -1079,155 +910,41 @@ mod tests {
 
     #[test]
     fn nas_folder_gets_diff_scanned_through_reconfigure() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let nas_dir = tempfile::tempdir().unwrap();
         fs::write(nas_dir.path().join("movie.mp4"), b"bytes").unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(nas_dir.path().to_path_buf(), Ok(DriveKind::Network));
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
+        let drive_type = drive_types(&[(nas_dir.path(), DriveKind::Network)]);
         let manager = RealtimeWatchManager::default();
 
-        manager.reconfigure(
-            WatchContext {
-                db: db.clone(),
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &[nas_dir.path().to_string_lossy().to_string()],
-            &watcher,
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[nas_dir.path()]),
+            &fake_watcher(),
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
 
         // The initial diff-scan runs on start_nas_polling's own background
         // thread (never blocking the reconfigure caller -- important for
         // .setup()/pick_watch_folders responsiveness), so its effect is
-        // only observable asynchronously; poll with a bounded timeout
-        // rather than assuming it's already done the instant reconfigure
-        // returns.
-        let mut count = 0;
-        for _ in 0..50 {
-            count = db
-                .writer
-                .lock()
-                .unwrap()
-                .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-                .unwrap();
-            if count == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert_eq!(
-            count, 1,
-            "the initial diff-scan should register the file within 5s"
+        // only observable asynchronously.
+        assert!(
+            env.wait_for_video_count(1),
+            "the initial diff-scan should register the file"
         );
-    }
-
-    /// A `FollowUp` that never fires during a test, so `has_pending` can be
-    /// asserted deterministically.
-    fn parked_follow_up() -> FollowUp {
-        FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {})
-    }
-
-    fn created_event(path: &Path) -> WatchEvent {
-        WatchEvent {
-            kind: WatchEventKind::Created,
-            path: path.to_path_buf(),
-        }
-    }
-
-    #[test]
-    fn handle_watch_event_triggers_follow_up_on_a_new_registration() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-        let follow_up = parked_follow_up();
-
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
-            &FakeCatalogNotifier::default(),
-            &follow_up,
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        assert!(follow_up.has_pending());
-    }
-
-    #[test]
-    fn handle_watch_event_does_not_trigger_follow_up_when_unchanged() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-        let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
-            &notifier,
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        let follow_up = parked_follow_up();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
-            &notifier,
-            &follow_up,
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
-
-        assert!(!follow_up.has_pending());
     }
 
     #[test]
     fn handle_watch_event_does_not_trigger_follow_up_on_removal() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("movie.mp4");
-        fs::write(&video_path, b"bytes").unwrap();
-        let notifier = FakeCatalogNotifier::default();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
-            &notifier,
-            &FollowUp::noop(),
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
-        );
+        let env = Env::new();
+        let video = env.video();
+        env.send_quietly(WatchEventKind::Created, &video);
 
         let follow_up = parked_follow_up();
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: video_path,
-            },
-            &notifier,
+        env.send(
+            WatchEventKind::Removed,
+            &video,
+            &FakeCatalogNotifier::default(),
             &follow_up,
-            &UnreadableRetry::noop(),
-            &scan::AssumeReachable,
         );
 
         assert!(!follow_up.has_pending());
@@ -1247,25 +964,15 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(windows)]
-    fn video_count(db: &Db) -> i64 {
-        db.writer
-            .lock()
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-            .unwrap()
-    }
-
     /// Starts a real `UnreadableRetry` wired like `start_watching` does, with a
     /// short interval.
     #[cfg(windows)]
-    fn fast_retry(
-        db: &Db,
-        thumbs_root: &Path,
-        notifier: &Arc<FakeCatalogNotifier>,
-    ) -> UnreadableRetry {
-        let (db, thumbs_root, notifier) =
-            (db.clone(), thumbs_root.to_path_buf(), Arc::clone(notifier));
+    fn fast_retry(env: &Env, notifier: &Arc<FakeCatalogNotifier>) -> UnreadableRetry {
+        let (db, thumbs_root, notifier) = (
+            env.db.clone(),
+            env.thumbs_root.path().to_path_buf(),
+            Arc::clone(notifier),
+        );
         UnreadableRetry::with_timing(
             Duration::from_millis(30),
             Duration::from_secs(60),
@@ -1282,13 +989,18 @@ mod tests {
         )
     }
 
+    /// A parked worker: the pending count is deterministic.
+    fn parked_retry() -> UnreadableRetry {
+        UnreadableRetry::with_timing(Duration::from_secs(60), Duration::from_secs(60), |_| {
+            RetryOutcome::StillUnreadable
+        })
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_locked_file_is_deferred_and_registered_once_the_lock_is_released() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("copying.mp4");
+        let env = Env::new();
+        let video_path = env.scan_dir.path().join("copying.mp4");
         let lock = open_exclusively(&video_path);
         // The lock must really make the file unreadable, or this test would
         // pass without reproducing anything.
@@ -1297,22 +1009,20 @@ mod tests {
             Some(32)
         );
         let notifier = Arc::new(FakeCatalogNotifier::default());
-        let retry = fast_retry(&db, thumbs_root.path(), &notifier);
+        let retry = fast_retry(&env, &notifier);
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
+        env.send_with_retry(
+            WatchEventKind::Created,
+            &video_path,
             notifier.as_ref(),
             &FollowUp::noop(),
             &retry,
-            &scan::AssumeReachable,
         );
         assert_eq!(retry.pending_count(), 1);
 
         // Several retry rounds pass while still locked: nothing registers.
         std::thread::sleep(Duration::from_millis(200));
-        assert_eq!(video_count(&db), 0);
+        assert_eq!(env.video_count(), 0);
         assert_eq!(retry.pending_count(), 1);
 
         {
@@ -1321,54 +1031,36 @@ mod tests {
             lock.write_all(b"finished copy").unwrap();
         }
 
-        let mut registered = false;
-        for _ in 0..100 {
-            if video_count(&db) == 1 && retry.pending_count() == 0 {
-                registered = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(30));
-        }
-        assert!(registered, "the retry must register the file after unlock");
+        assert!(
+            wait_until(|| env.video_count() == 1 && retry.pending_count() == 0),
+            "the retry must register the file after unlock"
+        );
         assert_eq!(notifier.calls(), 1);
     }
 
     #[cfg(windows)]
     #[test]
     fn a_removed_event_drops_a_deferred_file() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let video_path = scan_dir.path().join("copying.mp4");
+        let env = Env::new();
+        let video_path = env.scan_dir.path().join("copying.mp4");
         let _lock = open_exclusively(&video_path);
-        let notifier = Arc::new(FakeCatalogNotifier::default());
-        // Parked worker: the pending count is deterministic.
-        let retry =
-            UnreadableRetry::with_timing(Duration::from_secs(60), Duration::from_secs(60), |_| {
-                RetryOutcome::StillUnreadable
-            });
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&video_path),
-            notifier.as_ref(),
+        let notifier = FakeCatalogNotifier::default();
+        let retry = parked_retry();
+        env.send_with_retry(
+            WatchEventKind::Created,
+            &video_path,
+            &notifier,
             &FollowUp::noop(),
             &retry,
-            &scan::AssumeReachable,
         );
         assert_eq!(retry.pending_count(), 1);
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            WatchEvent {
-                kind: WatchEventKind::Removed,
-                path: video_path,
-            },
-            notifier.as_ref(),
+        env.send_with_retry(
+            WatchEventKind::Removed,
+            &video_path,
+            &notifier,
             &FollowUp::noop(),
             &retry,
-            &scan::AssumeReachable,
         );
 
         assert_eq!(retry.pending_count(), 0);
@@ -1376,22 +1068,15 @@ mod tests {
 
     #[test]
     fn a_file_that_vanished_is_not_deferred() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
-        let scan_dir = tempfile::tempdir().unwrap();
-        let retry =
-            UnreadableRetry::with_timing(Duration::from_secs(60), Duration::from_secs(60), |_| {
-                RetryOutcome::StillUnreadable
-            });
+        let env = Env::new();
+        let retry = parked_retry();
 
-        handle_watch_event(
-            &db,
-            thumbs_root.path(),
-            created_event(&scan_dir.path().join("gone.mp4")),
+        env.send_with_retry(
+            WatchEventKind::Created,
+            &env.scan_dir.path().join("gone.mp4"),
             &FakeCatalogNotifier::default(),
             &FollowUp::noop(),
             &retry,
-            &scan::AssumeReachable,
         );
 
         assert_eq!(retry.pending_count(), 0);
@@ -1399,32 +1084,18 @@ mod tests {
 
     #[test]
     fn local_folder_gets_a_startup_diff_scan_that_is_stopped_by_the_next_reconfigure() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let local_dir = tempfile::tempdir().unwrap();
         fs::write(local_dir.path().join("movie.mp4"), b"bytes").unwrap();
-
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(local_dir.path().to_path_buf(), Ok(DriveKind::Local));
-        let watcher = FakeFileWatcher {
-            watch_result: Ok(()),
-            ..Default::default()
-        };
+        let drive_type = drive_types(&[(local_dir.path(), DriveKind::Local)]);
+        let watcher = fake_watcher();
         let manager = RealtimeWatchManager::default();
-        let ctx = || WatchContext {
-            db: db.clone(),
-            thumbnails_root: thumbs_root.path().to_path_buf(),
-        };
 
-        manager.reconfigure(
-            ctx(),
-            &[local_dir.path().to_string_lossy().to_string()],
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[local_dir.path()]),
             &watcher,
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
 
         assert_eq!(manager.active_handle_count(), 1);
@@ -1433,32 +1104,12 @@ mod tests {
         let stop_flag = manager.startup_scans.lock().unwrap()[0].stop_flag();
         assert!(!stop_flag.load(std::sync::atomic::Ordering::SeqCst));
 
-        let mut count: i64 = 0;
-        for _ in 0..50 {
-            count = db
-                .writer
-                .lock()
-                .unwrap()
-                .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
-                .unwrap();
-            if count == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert_eq!(
-            count, 1,
-            "the startup scan should register the file within 5s"
+        assert!(
+            env.wait_for_video_count(1),
+            "the startup scan should register the file"
         );
 
-        manager.reconfigure(
-            ctx(),
-            &[],
-            &watcher,
-            &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
-        );
+        env.reconfigure(&manager, &[], &watcher, &drive_type);
         assert!(stop_flag.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(manager.startup_scans.lock().unwrap().len(), 0);
     }
@@ -1467,37 +1118,23 @@ mod tests {
     fn reconfigure_forgets_the_state_of_folders_no_longer_in_the_list() {
         use gb_core::testing::fake_folder_probe::FakeFolderProbe;
 
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = temp_thumbs_root();
+        let env = Env::new();
         let kept = tempfile::tempdir().unwrap();
-        let kept_folder = kept.path().to_string_lossy().to_string();
         let removed_folder = "W:/video".to_string();
         let probe = Arc::new(FakeFolderProbe::with_unreachable(
             &[removed_folder.as_str()],
         ));
-        let registry =
-            ReachabilityRegistry::new(probe, Arc::new(crate::events::NoopReachabilityNotifier));
+        let registry = crate::test_support::registry_over(probe);
         registry.is_reachable(&removed_folder);
         assert_eq!(registry.unreachable_folders(), vec![removed_folder.clone()]);
         let manager = RealtimeWatchManager::new(Arc::new(FollowUp::noop()), registry.clone());
-        let mut drive_type = FakeDriveTypeDetector::default();
-        drive_type
-            .results
-            .insert(kept.path().to_path_buf(), Ok(DriveKind::Local));
+        let drive_type = drive_types(&[(kept.path(), DriveKind::Local)]);
 
-        manager.reconfigure(
-            WatchContext {
-                db,
-                thumbnails_root: thumbs_root.path().to_path_buf(),
-            },
-            &[kept_folder],
-            &FakeFileWatcher {
-                watch_result: Ok(()),
-                ..Default::default()
-            },
+        env.reconfigure(
+            &manager,
+            &folder_strings(&[kept.path()]),
+            &fake_watcher(),
             &drive_type,
-            Duration::from_secs(600),
-            Arc::new(FakeCatalogNotifier::default()),
         );
 
         assert!(registry.unreachable_folders().is_empty());

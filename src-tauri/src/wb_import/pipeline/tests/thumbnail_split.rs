@@ -23,7 +23,7 @@ fn crops(ffmpeg: &FakeFfmpegAdapter) -> Vec<CropRect> {
         .collect()
 }
 
-fn split_calls(ffmpeg: &FakeFfmpegAdapter) -> usize {
+pub(super) fn split_calls(ffmpeg: &FakeFfmpegAdapter) -> usize {
     ffmpeg
         .calls
         .lock()
@@ -33,7 +33,7 @@ fn split_calls(ffmpeg: &FakeFfmpegAdapter) -> usize {
         .count()
 }
 
-fn converts(ffmpeg: &FakeFfmpegAdapter) -> usize {
+pub(super) fn converts(ffmpeg: &FakeFfmpegAdapter) -> usize {
     ffmpeg
         .calls
         .lock()
@@ -200,114 +200,6 @@ fn a_missing_thum_size_imports_the_jpg_whole() {
     assert_imported_whole(&run, &ffmpeg);
 }
 
-#[test]
-fn an_unreadable_thum_size_imports_the_jpg_whole() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
-    let err = WbSourceError::Query("no profile table".into());
-    let run = run_split_import(&h, Err(err), &ffmpeg);
-    assert_imported_whole(&run, &ffmpeg);
-}
-
-#[test]
-fn an_unparsable_thum_size_imports_the_jpg_whole() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
-    let run = run_split_import(&h, Ok(vec!["wide".to_string()]), &ffmpeg);
-    assert_imported_whole(&run, &ffmpeg);
-}
-
-#[test]
-fn skins_that_disagree_on_thum_size_import_the_jpg_whole() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
-    let values = Ok(vec!["200x150x6x1".to_string(), "100x75x6x1".to_string()]);
-    let run = run_split_import(&h, values, &ffmpeg);
-    assert_imported_whole(&run, &ffmpeg);
-}
-
-#[test]
-fn skins_that_agree_on_thum_size_still_split() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
-    let values = Ok(vec!["200x150x6x1".to_string(), "200x150x6x1".to_string()]);
-    let run = run_split_import(&h, values, &ffmpeg);
-    assert_eq!(crops(&ffmpeg).len(), 6);
-    assert_eq!(run.summary.thumbnails_linked, 1);
-}
-
-#[test]
-fn a_layout_that_is_not_six_frames_imports_the_jpg_whole() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(800, 150), None);
-    let run = run_split_import(&h, Ok(vec!["200x150x4x1".to_string()]), &ffmpeg);
-    assert_imported_whole(&run, &ffmpeg);
-}
-
-#[test]
-fn a_split_failure_removes_every_slot_and_counts_as_failed() {
-    let h = harness();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), Some(600));
-
-    let run = run_split_import(&h, six_by_one(), &ffmpeg);
-
-    assert_eq!(run.summary.thumbnails_failed, 1);
-    assert_eq!(run.summary.thumbnails_linked, 0);
-    assert_eq!(run.ready, 0);
-    assert_eq!(split_calls(&ffmpeg), 1, "the split is not retried");
-    assert_eq!(converts(&ffmpeg), 0, "a failed split does not fall back");
-    for i in 0..THUMBNAILS_PER_VIDEO {
-        assert!(!run.slot(i).exists(), "slot {i}");
-        assert!(!run.slot_tmp(i).exists(), "tmp {i}");
-    }
-}
-
-#[test]
-fn a_rename_failure_partway_removes_every_slot() {
-    let h = harness();
-    let video_id = "fixed-video-id-for-rename-failure-test";
-    let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
-    std::fs::create_dir_all(&video_dir).unwrap();
-    std::fs::write(
-        h.paths.thumbnail_folder.join("MyVideo.mp4.#deadbeef.jpg"),
-        b"fake jpg",
-    )
-    .unwrap();
-    // A directory at slot 2's destination makes only that rename fail.
-    std::fs::create_dir(video_dir.join(format!("{video_id}_2.webp"))).unwrap();
-    let ffmpeg = split_ffmpeg(image_size(1200, 150), None);
-    let layout = gb_core::wb_thumbnail_split::parse_thum_size("200x150x6x1").unwrap();
-
-    let outcome = link_thumbnails(
-        &h.paths.thumbnail_folder,
-        &h.paths.thumbnails_dir,
-        &[],
-        &[(
-            video_id.to_string(),
-            "deadbeef".to_string(),
-            "Z:\\rename-failure.mp4".to_string(),
-        )],
-        &[],
-        &HashSet::new(),
-        &HashSet::new(),
-        &ffmpeg,
-        Some(&layout),
-        |_, _| {},
-    );
-
-    assert_eq!(outcome.failed, 1);
-    assert_eq!(outcome.linked, 0);
-    assert!(outcome.linked_video_ids.is_empty());
-    assert_eq!(split_calls(&ffmpeg), 1);
-    for i in [0, 1, 3, 4, 5] {
-        assert!(!video_dir.join(format!("{video_id}_{i}.webp")).exists());
-    }
-    for i in 0..THUMBNAILS_PER_VIDEO {
-        assert!(!video_dir.join(format!("{video_id}_{i}.webp.tmp")).exists());
-    }
-    assert!(video_dir.join(format!("{video_id}_2.webp")).is_dir());
-}
-
 fn probes(ffmpeg: &FakeFfmpegAdapter) -> usize {
     ffmpeg
         .calls
@@ -374,27 +266,7 @@ fn a_non_jpeg_or_damaged_file_falls_back_to_ffprobe() {
 }
 
 #[test]
-fn an_unreadable_size_imports_whole_as_before() {
-    let h = harness();
-    let movies = legacy_movies(&h, 2, |_| b"fake jpg".to_vec());
-    let ffmpeg = split_ffmpeg(
-        Err(FfmpegError::NonZeroExit {
-            status: 1,
-            stderr: "bad jpg".into(),
-        }),
-        None,
-    );
-
-    let outcome = link_with_layout(&h, &movies, &ffmpeg, Some(&six_by_one_layout()));
-
-    assert_eq!((outcome.linked, outcome.failed), (2, 0));
-    assert_eq!(probes(&ffmpeg), 2);
-    assert_eq!(crops(&ffmpeg).len(), 0);
-    assert_eq!(converts(&ffmpeg), 2);
-}
-
-#[test]
-fn a_rename_failure_names_the_frame_and_the_io_error_in_the_failure_text() {
+fn a_rename_failure_names_the_frame_and_the_io_error_and_removes_every_slot() {
     let h = harness();
     let video_id = "fixed-video-id-for-rename-message-test";
     let video_dir = unassigned_dir(&h.paths.thumbnails_dir);
@@ -416,7 +288,7 @@ fn a_rename_failure_names_the_frame_and_the_io_error_in_the_failure_text() {
         &h.paths.thumbnails_dir,
         &[],
         video_id,
-        "Z:\rename-message.mp4",
+        r"Z:\rename-message.mp4",
         &src,
         Some(&layout),
     );
@@ -424,6 +296,16 @@ fn a_rename_failure_names_the_frame_and_the_io_error_in_the_failure_text() {
     match result {
         super::super::thumbnails::ItemResult::Failed(message) => {
             assert_eq!(message, format!("分割に失敗: frame 2: {io_text}"));
+            // The failed item leaves neither a partial slot nor a scratch
+            // file, and the blocked path is untouched.
+            assert_eq!(split_calls(&ffmpeg), 1);
+            for i in [0, 1, 3, 4, 5] {
+                assert!(!video_dir.join(format!("{video_id}_{i}.webp")).exists());
+            }
+            for i in 0..THUMBNAILS_PER_VIDEO {
+                assert!(!video_dir.join(format!("{video_id}_{i}.webp.tmp")).exists());
+            }
+            assert!(blocker.is_dir());
         }
         super::super::thumbnails::ItemResult::Linked { .. } => {
             panic!("a blocked rename must fail the item")

@@ -154,75 +154,100 @@ mod tests {
     use crate::db::queries as db_queries;
     use crate::db::test_support::{init_temp_db, insert_test_video};
 
-    fn write_flat_thumbnail(thumbs_root: &Path, video_id: &str, slot: usize) {
-        std::fs::create_dir_all(thumbs_root).unwrap();
-        std::fs::write(
-            thumbs_root.join(format!("{video_id}_{slot}.webp")),
-            format!("slot-{slot}"),
-        )
-        .unwrap();
+    /// A database and a thumbnails root holding flat (pre-migration) files.
+    struct Fixture {
+        _db_dir: tempfile::TempDir,
+        db: Db,
+        thumbs: tempfile::TempDir,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let (db_dir, db) = init_temp_db();
+            Self {
+                _db_dir: db_dir,
+                db,
+                thumbs: tempfile::tempdir().unwrap(),
+            }
+        }
+
+        /// A video under `C:\Videos`, which is registered as a watch folder
+        /// only when `watched`.
+        fn with_video(self, id: &str, watched: bool) -> Self {
+            insert_test_video(&self.db, id, r"C:\Videos\a.mp4");
+            if watched {
+                let conn = self.db.writer.lock().unwrap();
+                db_queries::set_watch_folders(&conn, &[r"C:\Videos".to_string()]).unwrap();
+            }
+            self
+        }
+
+        fn write_flat(&self, video_id: &str, slots: &[usize]) {
+            let root = self.thumbs.path();
+            std::fs::create_dir_all(root).unwrap();
+            for slot in slots {
+                std::fs::write(
+                    root.join(format!("{video_id}_{slot}.webp")),
+                    format!("slot-{slot}"),
+                )
+                .unwrap();
+            }
+        }
+
+        fn migrate(&self) -> MigrationSummary {
+            migrate_flat_thumbnails_to_folder_subdirs(&self.db, self.thumbs.path()).unwrap()
+        }
+
+        fn watched_dir(&self) -> std::path::PathBuf {
+            self.thumbs
+                .path()
+                .join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"))
+        }
+    }
+
+    fn all_slots() -> Vec<usize> {
+        (0..THUMBNAILS_PER_VIDEO).collect()
     }
 
     // --- parse_flat_thumbnail_file_name -----------------------------------
 
     #[test]
-    fn parses_a_well_formed_flat_thumbnail_file_name() {
-        assert_eq!(
-            parse_flat_thumbnail_file_name("abc-123_0.webp"),
-            Some(("abc-123".to_string(), 0))
-        );
-        assert_eq!(
-            parse_flat_thumbnail_file_name("abc-123_5.webp"),
-            Some(("abc-123".to_string(), 5))
-        );
-    }
-
-    #[test]
-    fn ignores_a_tmp_leftover_file() {
-        assert_eq!(parse_flat_thumbnail_file_name("abc-123_0.webp.tmp"), None);
-    }
-
-    #[test]
-    fn ignores_an_out_of_range_slot_number() {
-        assert_eq!(parse_flat_thumbnail_file_name("abc-123_6.webp"), None);
-    }
-
-    #[test]
-    fn ignores_an_unrelated_file_name() {
-        assert_eq!(parse_flat_thumbnail_file_name("readme.txt"), None);
-        assert_eq!(parse_flat_thumbnail_file_name("abc-123.webp"), None);
-        assert_eq!(parse_flat_thumbnail_file_name("_0.webp"), None);
+    fn flat_thumbnail_file_names_are_parsed_or_ignored() {
+        let cases: [(&str, Option<(&str, usize)>); 7] = [
+            ("abc-123_0.webp", Some(("abc-123", 0))),
+            ("abc-123_5.webp", Some(("abc-123", 5))),
+            // A tmp leftover, an out-of-range slot and unrelated names.
+            ("abc-123_0.webp.tmp", None),
+            ("abc-123_6.webp", None),
+            ("readme.txt", None),
+            ("abc-123.webp", None),
+            ("_0.webp", None),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(
+                parse_flat_thumbnail_file_name(name),
+                expected.map(|(id, slot)| (id.to_string(), slot)),
+                "{name}"
+            );
+        }
     }
 
     // --- migrate_flat_thumbnails_to_folder_subdirs ------------------------
 
     #[test]
     fn moves_a_fully_generated_videos_six_thumbnails_into_its_folder_subdir() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-1", r"C:\Videos\a.mp4");
-        {
-            let conn = db.writer.lock().unwrap();
-            db_queries::set_watch_folders(&conn, &[r"C:\Videos".to_string()]).unwrap();
-        }
-        for slot in 0..THUMBNAILS_PER_VIDEO {
-            write_flat_thumbnail(thumbs_root.path(), "vid-1", slot);
-        }
+        let fx = Fixture::new().with_video("vid-1", true);
+        fx.write_flat("vid-1", &all_slots());
 
-        let summary = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let summary = fx.migrate();
 
         assert_eq!(summary.videos_migrated, 1);
         assert_eq!(summary.videos_failed, 0);
-        let expected_dir = thumbs_root
-            .path()
-            .join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"));
         for slot in 0..THUMBNAILS_PER_VIDEO {
-            assert!(!thumbs_root
-                .path()
-                .join(format!("vid-1_{slot}.webp"))
-                .exists());
+            assert!(!fx.thumbs.path().join(format!("vid-1_{slot}.webp")).exists());
             assert_eq!(
-                std::fs::read_to_string(expected_dir.join(format!("vid-1_{slot}.webp"))).unwrap(),
+                std::fs::read_to_string(fx.watched_dir().join(format!("vid-1_{slot}.webp")))
+                    .unwrap(),
                 format!("slot-{slot}")
             );
         }
@@ -230,58 +255,45 @@ mod tests {
 
     #[test]
     fn moves_a_partially_generated_videos_thumbnails_best_effort() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-partial", r"C:\Videos\a.mp4");
-        {
-            let conn = db.writer.lock().unwrap();
-            db_queries::set_watch_folders(&conn, &[r"C:\Videos".to_string()]).unwrap();
-        }
-        write_flat_thumbnail(thumbs_root.path(), "vid-partial", 0);
-        write_flat_thumbnail(thumbs_root.path(), "vid-partial", 2);
+        let fx = Fixture::new().with_video("vid-partial", true);
+        fx.write_flat("vid-partial", &[0, 2]);
 
-        let summary = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let summary = fx.migrate();
 
         assert_eq!(summary.videos_migrated, 1);
         assert_eq!(summary.videos_failed, 0);
-        let expected_dir = thumbs_root
-            .path()
-            .join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"));
-        assert!(expected_dir.join("vid-partial_0.webp").exists());
-        assert!(expected_dir.join("vid-partial_2.webp").exists());
-        assert!(!expected_dir.join("vid-partial_1.webp").exists());
+        assert!(fx.watched_dir().join("vid-partial_0.webp").exists());
+        assert!(fx.watched_dir().join("vid-partial_2.webp").exists());
+        assert!(!fx.watched_dir().join("vid-partial_1.webp").exists());
     }
 
     #[test]
     fn skips_leftover_files_for_a_video_id_missing_from_the_db_without_erroring() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = tempfile::tempdir().unwrap();
-        // No insert_test_video call: this video_id was already deleted from
-        // the DB, but its thumbnail files were never cleaned up.
-        write_flat_thumbnail(thumbs_root.path(), "orphan-vid", 0);
+        // No video row: this video_id was already deleted from the DB, but its
+        // thumbnail files were never cleaned up.
+        let fx = Fixture::new();
+        fx.write_flat("orphan-vid", &[0]);
 
-        let summary = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let summary = fx.migrate();
 
         assert_eq!(summary.videos_migrated, 0);
         assert_eq!(summary.videos_failed, 1);
         // Left in place, not deleted -- migration is not responsible for
         // cleaning up orphaned thumbnail files, only for relocating known
         // ones.
-        assert!(thumbs_root.path().join("orphan-vid_0.webp").exists());
+        assert!(fx.thumbs.path().join("orphan-vid_0.webp").exists());
     }
 
     #[test]
     fn a_video_with_no_registered_watch_folder_lands_in_the_unassigned_subdir() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-unassigned", r"C:\Videos\a.mp4");
-        // No watch folders registered at all.
-        write_flat_thumbnail(thumbs_root.path(), "vid-unassigned", 0);
+        let fx = Fixture::new().with_video("vid-unassigned", false);
+        fx.write_flat("vid-unassigned", &[0]);
 
-        let summary = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let summary = fx.migrate();
 
         assert_eq!(summary.videos_migrated, 1);
-        let expected_dir = thumbs_root
+        let expected_dir = fx
+            .thumbs
             .path()
             .join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         assert!(expected_dir.join("vid-unassigned_0.webp").exists());
@@ -289,21 +301,13 @@ mod tests {
 
     #[test]
     fn a_second_run_after_a_full_migration_is_a_no_op() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_root = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-1", r"C:\Videos\a.mp4");
-        {
-            let conn = db.writer.lock().unwrap();
-            db_queries::set_watch_folders(&conn, &[r"C:\Videos".to_string()]).unwrap();
-        }
-        for slot in 0..THUMBNAILS_PER_VIDEO {
-            write_flat_thumbnail(thumbs_root.path(), "vid-1", slot);
-        }
+        let fx = Fixture::new().with_video("vid-1", true);
+        fx.write_flat("vid-1", &all_slots());
 
-        let first = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let first = fx.migrate();
         assert_eq!(first.videos_migrated, 1);
 
-        let second = migrate_flat_thumbnails_to_folder_subdirs(&db, thumbs_root.path()).unwrap();
+        let second = fx.migrate();
         assert_eq!(second.videos_migrated, 0);
         assert_eq!(second.videos_failed, 0);
     }

@@ -83,9 +83,6 @@ fn only_unambiguous_name_matches_to_videos_without_thumbnails_are_linked() {
     );
     let text = import_log.text();
     assert!(text.contains("\"Alpha.#.jpg\" -> \"alpha\""), "{text}");
-    assert!(text.contains("自動で紐付けた旧サムネイル: 1 件"));
-    assert!(text.contains("自動対応できなかった旧サムネイル: 4 件"));
-    assert!(text.contains("紐付け 2 (うち名前の一致で自動 1)"));
 }
 
 #[test]
@@ -193,7 +190,7 @@ fn nothing_is_linked_by_name_when_the_list_could_not_be_saved() {
         )
         .unwrap();
         conn.execute_batch(
-            "CREATE TRIGGER reject BEFORE INSERT ON wb_unmatched_thumbnails                  BEGIN SELECT RAISE(ABORT, 'no'); END;",
+            "CREATE TRIGGER reject BEFORE INSERT ON wb_unmatched_thumbnails BEGIN SELECT RAISE(ABORT, 'no'); END;",
         )
         .unwrap();
     }

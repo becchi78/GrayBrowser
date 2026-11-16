@@ -49,6 +49,7 @@ pub(crate) fn publish_slots(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::rename_onto_dir_error_text;
     use crate::thumbnail::worker::THUMBNAILS_PER_VIDEO;
 
     fn write_slot_tmps(dir: &Path, id: &str) -> Vec<PathBuf> {
@@ -59,16 +60,6 @@ mod tests {
                 tmp
             })
             .collect()
-    }
-
-    /// The `io::Error` text a rename of a plain file onto `blocker` (an
-    /// existing directory) produces on this machine, so the expectation
-    /// doesn't hard-code an OS- and locale-dependent string.
-    fn rename_onto_dir_error_text(blocker: &Path) -> String {
-        let probe_dir = tempfile::tempdir().unwrap();
-        let probe = probe_dir.path().join("probe.tmp");
-        std::fs::write(&probe, b"probe").unwrap();
-        std::fs::rename(&probe, blocker).unwrap_err().to_string()
     }
 
     #[test]

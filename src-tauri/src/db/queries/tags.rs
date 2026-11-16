@@ -320,3 +320,24 @@ pub fn delete_tag(conn: &mut Connection, tag_id: i64) -> rusqlite::Result<()> {
     tx.execute("DELETE FROM tags WHERE id = ?1", params![tag_id])?;
     tx.commit()
 }
+
+#[cfg(test)]
+mod delete_tag_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+
+    #[test]
+    fn deleting_an_unknown_tag_succeeds_and_changes_nothing() {
+        let (_dir, db) = init_temp_db();
+        let mut conn = db.writer.lock().unwrap();
+        conn.execute("INSERT INTO tags (id, name) VALUES (1, 'a')", [])
+            .unwrap();
+
+        delete_tag(&mut conn, 999).unwrap();
+
+        let tags: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tags, 1);
+    }
+}

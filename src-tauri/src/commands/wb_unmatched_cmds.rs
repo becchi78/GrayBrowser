@@ -357,8 +357,12 @@ mod tests {
         )));
     }
 
+    /// The inner failure handling (no slot or scratch file left behind) is
+    /// the import pipeline's; what is checked here is what the command adds:
+    /// the record stays, the error text reaches the caller, and the catalog is
+    /// announced as changed only when the failed attempt cleared a flag.
     #[test]
-    fn a_conversion_failure_keeps_the_record_and_leaves_no_files() {
+    fn a_failed_link_keeps_the_record_and_announces_only_a_cleared_flag() {
         let env = Env::new(None);
         env.add_video("vid", "offline", 0);
 
@@ -369,28 +373,23 @@ mod tests {
         assert!(env.files().is_empty(), "leftover: {:?}", env.files());
         assert!(!env.ready("vid"));
         assert_eq!(env.notifier.calls(), 0);
-    }
 
-    #[test]
-    fn a_split_failure_with_partial_writes_leaves_no_files() {
-        let env = Env::new(Some("100x50x3x2"));
-        env.add_video("vid", "offline", 0);
-        let ffmpeg = FakeFfmpegAdapter {
-            metadata: Ok(VideoMetadata {
-                width: Some(300),
-                height: Some(100),
-                ..Default::default()
-            }),
-            split_result: Box::new(|_, _| Err(FfmpegError::Spawn("boom".into()))),
-            split_partial_writes: 3,
-            ..Default::default()
-        };
+        // A video that had thumbnails loses them in the failed attempt, so
+        // its flag is cleared and the catalog view is stale.
+        let env = Env::new(None);
+        env.add_video("vid", "offline", 1);
+        let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..THUMBNAILS_PER_VIDEO {
+            std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
+        }
 
-        let err = env.link(&ffmpeg, FILE, "vid").unwrap_err();
+        env.link(&failing_ffmpeg(), FILE, "vid").unwrap_err();
 
-        assert!(err.contains("分割に失敗"));
+        assert!(env.files().is_empty());
+        assert!(!env.ready("vid"));
         assert_eq!(env.recorded(), 1);
-        assert!(env.files().is_empty(), "leftover: {:?}", env.files());
+        assert_eq!(env.notifier.calls(), 1);
     }
 
     #[test]
@@ -487,23 +486,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_overwrite_clears_the_flag_of_the_thumbnails_it_removed() {
-        let env = Env::new(None);
-        env.add_video("vid", "offline", 1);
-        let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
-        std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..THUMBNAILS_PER_VIDEO {
-            std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
-        }
-
-        env.link(&failing_ffmpeg(), FILE, "vid").unwrap_err();
-
-        assert!(env.files().is_empty());
-        assert!(!env.ready("vid"));
-        assert_eq!(env.recorded(), 1);
-    }
-
-    #[test]
     fn a_recorded_layout_that_fits_the_image_splits_it_into_frames() {
         let env = Env::new(Some("100x50x3x2"));
         env.add_video("vid", "offline", 0);
@@ -532,39 +514,6 @@ mod tests {
     }
 
     #[test]
-    fn without_a_layout_the_whole_image_is_converted() {
-        let env = Env::new(None);
-        env.add_video("vid", "offline", 0);
-        let ffmpeg = converting_ffmpeg();
-
-        env.link(&ffmpeg, FILE, "vid").unwrap();
-
-        let calls = ffmpeg.calls.lock().unwrap();
-        assert!(calls
-            .iter()
-            .any(|c| matches!(c, FakeCall::ConvertImageToWebp { .. })));
-        assert!(!calls
-            .iter()
-            .any(|c| matches!(c, FakeCall::SplitImageToWebp { .. })));
-    }
-
-    #[test]
-    fn an_unparsable_stored_layout_falls_back_to_the_whole_image() {
-        let env = Env::new(Some("garbage"));
-        env.add_video("vid", "offline", 0);
-        let ffmpeg = converting_ffmpeg();
-
-        env.link(&ffmpeg, FILE, "vid").unwrap();
-
-        assert!(!ffmpeg
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|c| matches!(c, FakeCall::SplitImageToWebp { .. })));
-    }
-
-    #[test]
     fn list_adds_the_default_search_term() {
         let env = Env::new(None);
         let rows = list_impl(&env.db).unwrap();
@@ -580,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_offline_videos_only_with_the_ready_flag_and_a_capped_limit() {
+    fn search_returns_offline_videos_only_with_the_ready_flag_and_honors_the_limit() {
         let env = Env::new(None);
         env.add_video("a", "offline", 1);
         env.add_video("b", "offline", 0);
@@ -593,6 +542,18 @@ mod tests {
             .collect();
         assert_eq!(ids, [("a", true), ("b", false)]);
         assert_eq!(search_impl(&env.db, "movie", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn search_never_returns_more_than_the_maximum_however_many_are_asked_for() {
+        let env = Env::new(None);
+        for i in 0..MAX_CANDIDATES + 5 {
+            env.add_video(&format!("v{i:03}"), "offline", 0);
+        }
+
+        let found = search_impl(&env.db, "movie", u32::MAX).unwrap();
+
+        assert_eq!(found.len(), MAX_CANDIDATES as usize);
     }
 
     #[test]

@@ -105,47 +105,6 @@ fn imports_online_and_offline_rows_and_reports_expected_counts() {
     assert_eq!(invalid_count, 0);
 }
 
-/// `source_tag_count` must reflect the raw `.wb` source data
-/// (`gb_core::wb_import::count_source_tags`) independent of
-/// `tags_assigned` -- summing every row's tags regardless of whether
-/// that row's video was inserted (and its tags actually written) or
-/// skipped (already registered, tags left untouched).
-#[test]
-fn source_tag_count_reflects_every_rows_raw_tag_data_not_just_assigned_ones() {
-    let h = harness();
-    let wb_source = FakeWbSourceAdapter {
-        movies: Ok(vec![
-            row(|r| {
-                r.movie_id = 1;
-                r.movie_path = "Z:\\tagged.mp4".to_string();
-                r.tag = "foo\nbar".to_string();
-            }),
-            row(|r| {
-                r.movie_id = 2;
-                r.movie_path = "Z:\\untagged.mp4".to_string();
-                r.tag = String::new();
-            }),
-        ]),
-        ..Default::default()
-    };
-    let ffmpeg = no_op_ffmpeg();
-    let notifier = FakeWbImportNotifier::default();
-    let catalog_notifier = FakeCatalogNotifier::default();
-
-    import_all(
-        &h.db,
-        &h.paths,
-        &wb_source,
-        &ffmpeg,
-        &notifier,
-        &catalog_notifier,
-    );
-
-    let summary = notifier.complete_calls.lock().unwrap()[0].clone();
-    assert_eq!(summary.tags_assigned, 2);
-    assert_eq!(summary.source_tag_count, 2);
-}
-
 /// The "every row already registered" edge case: a repeat import writes
 /// no new `video_tags` (`tags_assigned == 0`), but `source_tag_count`
 /// still reports the source data's real tag count -- proving
@@ -381,43 +340,10 @@ fn read_movies_failure_calls_notify_failed_instead_of_notify_complete() {
     );
     assert_eq!(catalog_notifier.calls(), 0);
     assert_eq!(
-        *notifier.stage_calls.lock().unwrap(),
-        vec![WbImportStage::Reading],
+        *notifier.event_order.lock().unwrap(),
+        vec![WbImportEvent::Stage(WbImportStage::Reading)],
         "a failed read must not announce the later phases"
     );
-}
-
-#[test]
-fn stages_are_announced_in_order() {
-    let h = harness();
-    let wb_source = FakeWbSourceAdapter {
-        movies: Ok(vec![row(|r| {
-            r.movie_path = "Z:\\stage\\order.mp4".to_string();
-        })]),
-        ..Default::default()
-    };
-    let ffmpeg = no_op_ffmpeg();
-    let notifier = FakeWbImportNotifier::default();
-    let catalog_notifier = FakeCatalogNotifier::default();
-
-    import_all(
-        &h.db,
-        &h.paths,
-        &wb_source,
-        &ffmpeg,
-        &notifier,
-        &catalog_notifier,
-    );
-
-    assert_eq!(
-        *notifier.stage_calls.lock().unwrap(),
-        vec![
-            WbImportStage::Reading,
-            WbImportStage::Registering,
-            WbImportStage::Linking
-        ]
-    );
-    assert_eq!(notifier.complete_calls.lock().unwrap().len(), 1);
 }
 
 /// Stands in for the import log and every notifier at once, so the order

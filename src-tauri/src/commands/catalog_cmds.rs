@@ -105,76 +105,26 @@ pub fn unregister_videos(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_support::init_temp_db;
+    use crate::test_support::LibraryEnv;
     use std::path::PathBuf;
 
-    struct Env {
-        // Kept alive so the temp directory (DB, files) outlives the test.
-        _dir: tempfile::TempDir,
-        db: Db,
-        folder: PathBuf,
-        thumbs: PathBuf,
+    struct Env(LibraryEnv);
+
+    impl std::ops::Deref for Env {
+        type Target = LibraryEnv;
+        fn deref(&self) -> &LibraryEnv {
+            &self.0
+        }
     }
 
     impl Env {
         fn new() -> Self {
-            let (dir, db) = init_temp_db();
-            let folder = dir.path().join("lib");
-            std::fs::create_dir_all(&folder).unwrap();
-            let thumbs = dir.path().join("thumbs");
-            {
-                let conn = db.writer.lock().unwrap();
-                crate::db::queries::set_watch_folders(
-                    &conn,
-                    &[folder.to_string_lossy().into_owned()],
-                )
-                .unwrap();
-            }
-            Self {
-                _dir: dir,
-                db,
-                folder,
-                thumbs,
-            }
+            Self(LibraryEnv::new())
         }
 
         /// A real file inside the registered folder plus its row.
         fn add_video(&self, id: &str) -> PathBuf {
-            let path = self.folder.join(format!("{id}.mp4"));
-            std::fs::write(&path, b"video bytes").unwrap();
-            let conn = self.db.writer.lock().unwrap();
-            conn.execute(
-                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
-                 VALUES (?1, ?2, ?3, 11, 'h', 'online')",
-                rusqlite::params![
-                    id,
-                    path.to_string_lossy(),
-                    path.file_name().unwrap().to_string_lossy(),
-                ],
-            )
-            .unwrap();
-            path
-        }
-
-        fn add_tag(&self, id: &str) {
-            let mut conn = self.db.writer.lock().unwrap();
-            crate::db::queries::assign_tag_to_video(&mut conn, id, "tag").unwrap();
-        }
-
-        fn row_exists(&self, id: &str) -> bool {
-            crate::db::queries::find_video_by_id(&self.db.read_pool, id)
-                .unwrap()
-                .is_some()
-        }
-
-        fn tag_count(&self, id: &str) -> i64 {
-            let conn = self.db.read_pool.get().unwrap();
-            conn.query_row(
-                "SELECT COUNT(*) FROM video_tags WHERE video_id = ?1",
-                [id],
-                |r| r.get(0),
-            )
-            .unwrap()
+            self.add_video_with(id, "online", b"video bytes")
         }
 
         fn add_thumbs(&self, id: &str, path: &Path) -> Vec<PathBuf> {

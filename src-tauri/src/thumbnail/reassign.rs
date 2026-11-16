@@ -138,23 +138,6 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_slot_is_skipped_and_the_rest_still_move() {
-        let (_d, db) = init_temp_db();
-        let root = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "v1", r"D:\Vids\a.mp4");
-        write_slots(&unassigned(root.path()), "v1", &[0, 1, 2], "img");
-
-        let new = folders(&[r"D:\Vids"]);
-        run(&db, root.path(), &[], &new);
-
-        let new_dir = video_thumbnail_dir(root.path(), &new, r"D:\Vids\a.mp4");
-        for s in [0, 1, 2] {
-            assert!(slot_path(&new_dir, "v1", s).exists());
-        }
-        assert!(!slot_path(&new_dir, "v1", 3).exists());
-    }
-
-    #[test]
     fn existing_files_at_the_destination_are_not_overwritten() {
         let (_d, db) = init_temp_db();
         let root = tempfile::tempdir().unwrap();

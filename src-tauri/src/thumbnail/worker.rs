@@ -284,6 +284,7 @@ pub fn list_all_videos_missing_thumbnails(
 mod tests {
     use super::*;
     use crate::db::test_support::{init_temp_db, insert_test_video};
+    use crate::test_support::{rename_onto_dir_error_text, thumbnail_attempts_of};
     use gb_core::ports::ffmpeg::FfmpegError;
     use gb_core::testing::fake_ffmpeg::FakeCall;
     use gb_core::testing::fake_ffmpeg::FakeFfmpegAdapter;
@@ -350,6 +351,16 @@ mod tests {
 
         assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-1"));
         assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-1"));
+        assert_eq!(
+            thumbnail_ready_flag(&db, "vid-1"),
+            1,
+            "a successful generation must set thumbnail_ready"
+        );
+        assert_eq!(
+            thumbnail_attempts_of(&db, "vid-1"),
+            0,
+            "a successful generation must never increment thumbnail_attempts"
+        );
 
         let conn = db.writer.lock().unwrap();
         let duration: Option<i64> = conn
@@ -548,6 +559,17 @@ mod tests {
             assert!(!thumbs_dir.path().join(format!("vid-3_{i}.webp")).exists());
         }
         assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-3"));
+        assert_eq!(
+            thumbnail_attempts_of(&db, "vid-3"),
+            1,
+            "exactly one attempt must be recorded per generate_thumbnail_for_video call, \
+             regardless of how many of the 6 slots were attempted before the fail-fast break"
+        );
+        assert_eq!(
+            thumbnail_ready_flag(&db, "vid-3"),
+            0,
+            "a failed generation must not set thumbnail_ready"
+        );
     }
 
     /// Fail-fast guard: once slot 0's primary and fallback seeks have both
@@ -677,82 +699,6 @@ mod tests {
         assert_eq!(ids, vec!["missing-thumb", "partial-thumb"]);
     }
 
-    #[test]
-    fn success_does_not_increment_thumbnail_attempts() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-6", "C:/videos/movie.mp4");
-
-        let ffmpeg = FakeFfmpegAdapter {
-            duration: Ok(Some(120.0)),
-            extract_result: Box::new(|_seek| Ok(())),
-            ..Default::default()
-        };
-
-        generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-6",
-            Path::new("C:/videos/movie.mp4"),
-        )
-        .expect("generation should succeed");
-
-        let conn = db.writer.lock().unwrap();
-        let attempts: i64 = conn
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-6'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            attempts, 0,
-            "a successful generation must never increment thumbnail_attempts"
-        );
-    }
-
-    #[test]
-    fn a_single_failure_increments_thumbnail_attempts_by_exactly_one() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-7", "C:/videos/movie.mp4");
-
-        let ffmpeg = FakeFfmpegAdapter {
-            duration: Ok(Some(120.0)),
-            extract_result: Box::new(|_seek| {
-                Err(FfmpegError::NonZeroExit {
-                    status: 1,
-                    stderr: "corrupt file".into(),
-                })
-            }),
-            ..Default::default()
-        };
-
-        let result = generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-7",
-            Path::new("C:/videos/movie.mp4"),
-        );
-        assert!(result.is_err());
-
-        let conn = db.writer.lock().unwrap();
-        let attempts: i64 = conn
-            .query_row(
-                "SELECT thumbnail_attempts FROM videos WHERE id = 'vid-7'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            attempts, 1,
-            "exactly one attempt must be recorded per generate_thumbnail_for_video call, \
-             regardless of how many of the 6 slots were attempted before the fail-fast break"
-        );
-    }
-
     /// The off-by-one guard: simulates the automatic queue's real usage
     /// pattern -- "list what's still eligible, attempt every one of
     /// those, repeat" -- across 4 enqueue rounds against a video whose
@@ -832,72 +778,6 @@ mod tests {
             |r| r.get(0),
         )
         .unwrap()
-    }
-
-    #[test]
-    fn success_marks_thumbnail_ready_in_the_db() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-ready", "C:/videos/movie.mp4");
-        assert_eq!(
-            thumbnail_ready_flag(&db, "vid-ready"),
-            0,
-            "must start out not-ready"
-        );
-
-        let ffmpeg = FakeFfmpegAdapter {
-            duration: Ok(Some(120.0)),
-            extract_result: Box::new(|_seek| Ok(())),
-            ..Default::default()
-        };
-
-        generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-ready",
-            Path::new("C:/videos/movie.mp4"),
-        )
-        .expect("generation should succeed");
-
-        assert_eq!(
-            thumbnail_ready_flag(&db, "vid-ready"),
-            1,
-            "a successful generation must set thumbnail_ready"
-        );
-    }
-
-    #[test]
-    fn failure_leaves_thumbnail_ready_at_zero() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-not-ready", "C:/videos/movie.mp4");
-
-        let ffmpeg = FakeFfmpegAdapter {
-            duration: Ok(Some(120.0)),
-            extract_result: Box::new(|_seek| {
-                Err(FfmpegError::NonZeroExit {
-                    status: 1,
-                    stderr: "corrupt file".into(),
-                })
-            }),
-            ..Default::default()
-        };
-
-        let result = generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-not-ready",
-            Path::new("C:/videos/movie.mp4"),
-        );
-        assert!(result.is_err());
-
-        assert_eq!(
-            thumbnail_ready_flag(&db, "vid-not-ready"),
-            0,
-            "a failed generation must not set thumbnail_ready"
-        );
     }
 
     /// Set by the `trace_v2` callback installed in the regression test below
@@ -1018,18 +898,8 @@ mod tests {
         assert!(all_six_final_files_exist(thumbs_dir.path(), "vid-5"));
     }
 
-    fn thumbnail_attempts_of(db: &Db, id: &str) -> i64 {
-        let conn = db.writer.lock().unwrap();
-        conn.query_row(
-            "SELECT thumbnail_attempts FROM videos WHERE id = ?1",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .unwrap()
-    }
-
     #[test]
-    fn rename_failure_returns_err_counts_one_attempt_and_leaves_no_files_behind() {
+    fn rename_failure_reports_the_slot_and_paths_counts_one_attempt_and_leaves_no_files_behind() {
         let (_db_dir, db) = init_temp_db();
         let thumbs_dir = tempfile::tempdir().unwrap();
         insert_test_video(&db, "vid-rename-fail", "C:/videos/movie.mp4");
@@ -1037,6 +907,7 @@ mod tests {
         // fail deterministically, after slots 0..2 were already renamed.
         let blocker = thumbs_dir.path().join("vid-rename-fail_3.webp");
         std::fs::create_dir(&blocker).unwrap();
+        let io_text = rename_onto_dir_error_text(&blocker);
 
         let ffmpeg = FakeFfmpegAdapter {
             duration: Ok(Some(120.0)),
@@ -1044,15 +915,36 @@ mod tests {
             ..Default::default()
         };
 
-        let result = generate_thumbnail_for_video(
+        let err = generate_thumbnail_for_video(
             &ffmpeg,
             &db,
             thumbs_dir.path(),
             "vid-rename-fail",
             Path::new("C:/videos/movie.mp4"),
-        );
+        )
+        .unwrap_err();
 
-        assert!(result.is_err());
+        let tmp_path = ffmpeg
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                FakeCall::ExtractThumbnail {
+                    output_tmp_path, ..
+                } => Some(output_tmp_path.clone()),
+                _ => None,
+            })
+            .nth(3)
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "slot 3: failed to rename {} -> {}: {io_text}",
+                tmp_path.display(),
+                blocker.display()
+            )
+        );
         assert_eq!(thumbnail_attempts_of(&db, "vid-rename-fail"), 1);
         assert_eq!(thumbnail_ready_flag(&db, "vid-rename-fail"), 0);
         assert!(!any_tmp_file_exists(thumbs_dir.path(), "vid-rename-fail"));
@@ -1110,63 +1002,6 @@ mod tests {
             unique.len(),
             tmp_paths.len(),
             "every call's tmp paths must be distinct from the other call's"
-        );
-    }
-
-    /// The `io::Error` text a rename of a plain file onto `blocker` (an
-    /// existing directory) produces on this machine, so the expected
-    /// messages don't hard-code an OS- and locale-dependent string.
-    fn rename_onto_dir_error_text(blocker: &Path) -> String {
-        let probe_dir = tempfile::tempdir().unwrap();
-        let probe = probe_dir.path().join("probe.tmp");
-        std::fs::write(&probe, b"probe").unwrap();
-        std::fs::rename(&probe, blocker).unwrap_err().to_string()
-    }
-
-    #[test]
-    fn a_rename_failure_reports_the_slot_and_both_paths_in_the_error_text() {
-        let (_db_dir, db) = init_temp_db();
-        let thumbs_dir = tempfile::tempdir().unwrap();
-        insert_test_video(&db, "vid-msg", "C:/videos/movie.mp4");
-        let blocker = thumbs_dir.path().join("vid-msg_3.webp");
-        std::fs::create_dir(&blocker).unwrap();
-        let io_text = rename_onto_dir_error_text(&blocker);
-
-        let ffmpeg = FakeFfmpegAdapter {
-            duration: Ok(Some(120.0)),
-            extract_result: Box::new(|_seek| Ok(())),
-            ..Default::default()
-        };
-
-        let err = generate_thumbnail_for_video(
-            &ffmpeg,
-            &db,
-            thumbs_dir.path(),
-            "vid-msg",
-            Path::new("C:/videos/movie.mp4"),
-        )
-        .unwrap_err();
-
-        let tmp_path = ffmpeg
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|c| match c {
-                FakeCall::ExtractThumbnail {
-                    output_tmp_path, ..
-                } => Some(output_tmp_path.clone()),
-                _ => None,
-            })
-            .nth(3)
-            .unwrap();
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "slot 3: failed to rename {} -> {}: {io_text}",
-                tmp_path.display(),
-                blocker.display()
-            )
         );
     }
 }
