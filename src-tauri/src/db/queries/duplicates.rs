@@ -4,11 +4,9 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection};
 
 pub struct PathCollisionRow {
-    pub id: i64,
     pub video_id: String,
     pub colliding_video_id: String,
     pub attempted_path: String,
-    pub detected_at: String,
 }
 
 /// Records a duplicate-candidate pair pending full_hash confirmation
@@ -50,17 +48,15 @@ pub fn list_path_collisions(
 ) -> anyhow::Result<Vec<PathCollisionRow>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT id, video_id, colliding_video_id, attempted_path, detected_at
+        "SELECT video_id, colliding_video_id, attempted_path
          FROM path_collisions ORDER BY detected_at DESC",
     )?;
     let rows = stmt
         .query_map([], |r| {
             Ok(PathCollisionRow {
-                id: r.get(0)?,
-                video_id: r.get(1)?,
-                colliding_video_id: r.get(2)?,
-                attempted_path: r.get(3)?,
-                detected_at: r.get(4)?,
+                video_id: r.get(0)?,
+                colliding_video_id: r.get(1)?,
+                attempted_path: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -222,6 +222,7 @@ const MIGRATION_SQL: &[&str] = &[
     include_str!("../../migrations/0009_add_skipped_files_dismissed.sql"),
     include_str!("../../migrations/0010_add_tags_sort_order.sql"),
     include_str!("../../migrations/0011_create_wb_unmatched_thumbnails.sql"),
+    include_str!("../../migrations/0012_drop_unused_indexes.sql"),
 ];
 
 /// The schema version a freshly created database ends at.
