@@ -3,7 +3,7 @@
 -- occupied by a different online video. The two files should be treated as
 -- duplicate candidates, so the collision is stored rather than lost the
 -- moment it's detected. (The same table also holds coincidental-rehash-match
--- collisions -- see src/scan/mod.rs's `reconcile_known_path`.)
+-- collisions -- see src/scan/process.rs's `reconcile_known_path`.)
 --
 -- video_id: the offline-side row that attempted (and failed) to follow the
 -- path. colliding_video_id: the online-side row that already owns

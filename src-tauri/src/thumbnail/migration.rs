@@ -201,7 +201,9 @@ mod tests {
         fn watched_dir(&self) -> std::path::PathBuf {
             self.thumbs
                 .path()
-                .join(gb_core::paths::thumbnail_folder_subdir(r"C:\Videos"))
+                .join(gb_core::thumbnail_paths::thumbnail_folder_subdir(
+                    r"C:\Videos",
+                ))
         }
     }
 
@@ -295,7 +297,7 @@ mod tests {
         let expected_dir = fx
             .thumbs
             .path()
-            .join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+            .join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         assert!(expected_dir.join("vid-unassigned_0.webp").exists());
     }
 

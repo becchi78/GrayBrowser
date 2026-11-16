@@ -95,7 +95,7 @@ mod tests {
     }
 
     fn unassigned(root: &Path) -> std::path::PathBuf {
-        root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR)
+        root.join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR)
     }
 
     fn run(db: &crate::db::Db, root: &Path, old: &[String], new: &[String]) -> u32 {

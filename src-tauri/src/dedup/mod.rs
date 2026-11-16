@@ -80,7 +80,7 @@ pub enum DuplicateGroupKind {
     /// `gb_core::dedup::confirm_duplicates_by_full_hash`.
     QuickHashConfirmed,
     /// A `path_collisions` pair -- recorded either when a path-follow target
-    /// is already taken (`register_new_path`'s `BlockedByCollision`) or when
+    /// is already taken (`scan::process::register_new_path`'s `BlockedByCollision`) or when
     /// a rehash coincidentally matches an offline row
     /// (`reconcile_known_path`) -- whose `full_hash` also matches.
     PathCollisionConfirmed,
@@ -137,7 +137,7 @@ pub struct DuplicateGroup {
 /// returns the computed hash. A hash that is already stored is returned even
 /// then, since it needs no access to the file. This mirrors this codebase's
 /// established "skip and continue" policy for per-file I/O trouble during
-/// background batch work (see `scan::register_new_path`'s `hash_file` failure
+/// background batch work (see `scan::process::register_new_path`'s `hash_file` failure
 /// handling) -- one member's I/O trouble must never abort the whole
 /// duplicate-detection pass.
 fn ensure_full_hash(

@@ -147,7 +147,7 @@ pub fn delete_videos_under_folder_cascade(
 /// individually, one video at a time -- never as a single whole-
 /// subdirectory rename of the old folder's thumbnail subdirectory to the
 /// new one. A collision-skipped row's `file_path` never actually changed,
-/// so its resolved thumbnail subdirectory (`gb_core::paths::
+/// so its resolved thumbnail subdirectory (`gb_core::thumbnail_paths::
 /// resolve_thumbnail_subdir`) hasn't changed either; a caller that moved
 /// the *whole* subdirectory instead would incorrectly drag a collision-
 /// skipped video's thumbnails along with it, leaving them physically

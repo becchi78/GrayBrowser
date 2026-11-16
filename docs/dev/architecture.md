@@ -98,7 +98,7 @@ OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → 
 
 ## 7. 動画取り込みパイプライン
 
-1. **スキャン**: `src-tauri/src/scan/mod.rs`が`walkdir`でフォルダを走査し、`gb_core::scan_pipeline`の`validate()`(機種依存文字チェック含む)→`build_new_video()`という純粋な判定フローに実ファイルI/Oを絡めて実行する。同じ`process_detected_file`エントリポイントを手動スキャン・ローカルリアルタイム監視(`watch/mod.rs`)・NASポーリング(`watch/nas_poll.rs`)が共有する。
+1. **スキャン**: `src-tauri/src/scan/mod.rs`が`walkdir`でフォルダを走査し、`gb_core::scan_pipeline`の`validate()`(機種依存文字チェック含む)→`build_new_video()`という純粋な判定フローに実ファイルI/Oを絡めて実行する。同じ`process_detected_file`エントリポイント(実体は`src-tauri/src/scan/process.rs`)を手動スキャン・ローカルリアルタイム監視(`watch/mod.rs`)・NASポーリング(`watch/nas_poll.rs`)が共有する。
 2. **ハッシュ**: まず`quick_hash`(xxHash64、先頭/末尾1MB+ファイルサイズ)を計算。重複候補として`(quick_hash, file_size)`が一致した組のみ、`dedup/mod.rs`が`full_hash`(BLAKE3、ファイル全体)を計算して確定判定する(全件に対して重いハッシュを回さない二段階方式)。
 3. **メタデータ**: `src-tauri/src/metadata/worker.rs`が`FfmpegAdapter::probe_metadata`を呼び、幅/高さ/コーデック/ビットレート/fps等をDBに書き戻す。
 4. **サムネイル**: シーク位置は`gb-core/src/thumbnail_policy.rs`の純粋ロジック(動画長の1/7〜6/7地点で6枚、長さ不明時は0秒にフォールバック)が決定し、`src-tauri/src/thumbnail/worker.rs`が`FfmpegAdapter::extract_thumbnail`を実行してWebP(低品質設定)で書き出す。6枚すべて成功して初めて`.tmp`から本番ファイルへアトミックにリネームする。

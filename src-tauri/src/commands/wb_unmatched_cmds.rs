@@ -378,7 +378,9 @@ mod tests {
         // its flag is cleared and the catalog view is stale.
         let env = Env::new(None);
         env.add_video("vid", "offline", 1);
-        let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+        let dir = env
+            .root
+            .join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         std::fs::create_dir_all(&dir).unwrap();
         for i in 0..THUMBNAILS_PER_VIDEO {
             std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
@@ -466,7 +468,9 @@ mod tests {
     fn linking_replaces_the_thumbnails_a_video_already_has() {
         let env = Env::new(None);
         env.add_video("vid", "offline", 1);
-        let dir = env.root.join(gb_core::paths::THUMBNAIL_UNASSIGNED_SUBDIR);
+        let dir = env
+            .root
+            .join(gb_core::thumbnail_paths::THUMBNAIL_UNASSIGNED_SUBDIR);
         std::fs::create_dir_all(&dir).unwrap();
         for i in 0..THUMBNAILS_PER_VIDEO {
             std::fs::write(slot_path(&dir, "vid", i), b"old").unwrap();
