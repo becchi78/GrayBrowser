@@ -46,12 +46,9 @@ fn creates_the_required_tables_and_indexes() {
     let indexes = object_names(&conn, "index");
     for required in [
         "idx_path_collisions_colliding",
-        "idx_path_collisions_video",
         "idx_video_tags_tag",
         "idx_videos_created_at",
-        "idx_videos_full_hash",
         "idx_videos_name",
-        "idx_videos_path",
         "idx_videos_quick_hash",
         "idx_videos_rating",
         "idx_videos_status",
@@ -551,3 +548,99 @@ fn migrating_from_a_real_v10_database_adds_wb_unmatched_thumbnails_and_keeps_dat
         "(folder_path, file_name) must be the primary key"
     );
 }
+
+/// Upgrading a real v11 database drops the three redundant indexes and leaves
+/// the data and both UNIQUE constraints (which the automatic indexes enforce)
+/// intact.
+#[test]
+fn migrating_from_a_real_v11_database_drops_unused_indexes_and_keeps_data_and_constraints() {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        apply_up_to(&conn, 11);
+        let before = object_names(&conn, "index");
+        for dropped in DROPPED_INDEXES {
+            assert!(
+                before.iter().any(|i| i == dropped),
+                "{dropped} should exist before the upgrade, got {before:?}"
+            );
+        }
+        for (id, path) in [("a", "D:/v/a.mp4"), ("b", "D:/v/b.mp4")] {
+            conn.execute(
+                "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, full_hash, status)
+                 VALUES (?1, ?2, 'n.mp4', 1024, 'qh', 'fh', 'online')",
+                [id, path],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO path_collisions (video_id, colliding_video_id, attempted_path)
+             VALUES ('a', 'b', 'D:/v/b.mp4')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let db = db::init(&db_path).expect("db::init should upgrade a v11 database");
+    let conn = db.writer.lock().unwrap();
+
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, latest_schema_version());
+
+    let indexes = object_names(&conn, "index");
+    for dropped in DROPPED_INDEXES {
+        assert!(
+            !indexes.iter().any(|i| i == dropped),
+            "{dropped} should be gone, got {indexes:?}"
+        );
+    }
+    for kept in ["idx_videos_status", "idx_videos_name"] {
+        assert!(
+            indexes.iter().any(|i| i == kept),
+            "{kept} should be kept, got {indexes:?}"
+        );
+    }
+
+    let videos: i64 = conn
+        .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(videos, 2);
+    let full_hash: String = conn
+        .query_row("SELECT full_hash FROM videos WHERE id = 'a'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(full_hash, "fh");
+    let collisions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM path_collisions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(collisions, 1);
+
+    let duplicate_path = conn.execute(
+        "INSERT INTO videos (id, file_path, file_name, file_size, quick_hash, status)
+         VALUES ('c', 'D:/v/a.mp4', 'n.mp4', 1, 'q', 'online')",
+        [],
+    );
+    assert!(
+        duplicate_path.is_err(),
+        "videos.file_path must stay UNIQUE without idx_videos_path"
+    );
+    let duplicate_pair = conn.execute(
+        "INSERT INTO path_collisions (video_id, colliding_video_id, attempted_path)
+         VALUES ('a', 'b', 'x')",
+        [],
+    );
+    assert!(
+        duplicate_pair.is_err(),
+        "(video_id, colliding_video_id) must stay UNIQUE without idx_path_collisions_video"
+    );
+}
+
+const DROPPED_INDEXES: [&str; 3] = [
+    "idx_path_collisions_video",
+    "idx_videos_full_hash",
+    "idx_videos_path",
+];

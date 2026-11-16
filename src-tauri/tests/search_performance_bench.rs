@@ -753,7 +753,7 @@ const FOLDER_FILTER_TARGET: &str = r"C:\Videos";
 
 /// Prints `EXPLAIN QUERY PLAN` for the exact `file_path LIKE ... ESCAPE '\'`
 /// query `list_videos_filtered` runs for a folder filter, so the benchmark
-/// output records whether `idx_videos_path` (migration 0001) is actually
+/// output records whether any index is actually
 /// being used for this query shape, without requiring a human to reproduce
 /// the query by hand afterward.
 fn print_folder_filter_query_plan(pool: &r2d2::Pool<SqliteConnectionManager>, folder_path: &str) {
@@ -766,7 +766,7 @@ fn print_folder_filter_query_plan(pool: &r2d2::Pool<SqliteConnectionManager>, fo
         .query_map(params![pattern], |r| {
             // EXPLAIN QUERY PLAN's columns are (id, parent, notused, detail);
             // `detail` (index 3) is the human-readable line ("SCAN videos
-            // USING INDEX idx_videos_path (file_path>? AND file_path<?)" or
+            // USING INDEX <name> (file_path>? AND file_path<?)" or
             // "SCAN videos" for a full table scan).
             r.get::<_, String>(3)
         })

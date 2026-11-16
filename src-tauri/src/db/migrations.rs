@@ -59,6 +59,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "add wb_unmatched_thumbnails: legacy thumbnail files a .wb import could not link, kept for manual linking",
         sql: include_str!("../../migrations/0011_create_wb_unmatched_thumbnails.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 12,
+        description: "drop idx_videos_path, idx_videos_full_hash and idx_path_collisions_video: unused or duplicating an automatic UNIQUE index",
+        sql: include_str!("../../migrations/0012_drop_unused_indexes.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.

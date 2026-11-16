@@ -146,3 +146,31 @@ fn sort_by_file_size_and_folder_have_no_index() {
         }
     }
 }
+
+#[test]
+fn online_listing_uses_the_status_index() {
+    let (_dir, db) = init_temp_db_with_rows();
+    let conn = db.writer.lock().unwrap();
+    let plan = query_plan(&conn, "SELECT id FROM videos WHERE status = 'online'");
+    assert!(
+        plan.contains("idx_videos_status"),
+        "expected idx_videos_status to serve the status filter, got plan:\n{plan}"
+    );
+}
+
+#[test]
+fn folder_filter_like_cannot_use_a_path_index() {
+    // LIKE is case-insensitive while the file_path indexes use BINARY
+    // collation, so no index narrows the scan; this is why no separate
+    // file_path index earns its keep beyond the one UNIQUE creates.
+    let (_dir, db) = init_temp_db_with_rows();
+    let conn = db.writer.lock().unwrap();
+    let plan = query_plan(
+        &conn,
+        "SELECT id FROM videos WHERE file_path LIKE 'D:/videos/%' ESCAPE '\\'",
+    );
+    assert!(
+        !plan.contains("SEARCH") && !plan.contains("file_path>"),
+        "LIKE must not be index-bounded, got plan:\n{plan}"
+    );
+}
