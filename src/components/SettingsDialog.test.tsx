@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.mocked(api.getNasPollIntervalMinutes).mockResolvedValue(5);
   vi.mocked(api.getUpdateCheckOnStartup).mockResolvedValue(false);
   vi.mocked(api.getRestoreViewStateEnabled).mockResolvedValue(false);
-  vi.mocked(api.setNasPollIntervalMinutes).mockResolvedValue(undefined);
+  vi.mocked(api.setNasPollIntervalMinutes).mockResolvedValue(5);
   vi.mocked(api.setUpdateCheckOnStartup).mockResolvedValue(undefined);
   vi.mocked(api.setRestoreViewStateEnabled).mockResolvedValue(undefined);
 });
@@ -64,7 +64,10 @@ test("設定を取得できないと、エラーを出す", async () => {
 
 test("保存すると、3つの設定を順に書き込み、書き込めたら閉じる", async () => {
   const order: string[] = [];
-  vi.mocked(api.setNasPollIntervalMinutes).mockImplementation(async () => void order.push("nas"));
+  vi.mocked(api.setNasPollIntervalMinutes).mockImplementation(async (m) => {
+    order.push("nas");
+    return m;
+  });
   vi.mocked(api.setUpdateCheckOnStartup).mockImplementation(async () => void order.push("update"));
   vi.mocked(api.setRestoreViewStateEnabled).mockImplementation(
     async () => void order.push("restore"),
@@ -112,7 +115,7 @@ test("書き込みが途中で失敗すると、後続は書き込まず、エ�
 });
 
 test("保存中は欄とボタンを無効にする", async () => {
-  const pending = deferred<void>();
+  const pending = deferred<number>();
   vi.mocked(api.setNasPollIntervalMinutes).mockReturnValue(pending.promise);
   const { user } = await renderDialog();
 
