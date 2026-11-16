@@ -84,13 +84,8 @@ struct Inner {
     next_token: AtomicU64,
     /// How long a probe may run before its folder is published as unreachable.
     provisional_after: Duration,
-    /// Watcher threads still running; lets a test prove they all exit.
     #[cfg(test)]
-    watchers_alive: std::sync::atomic::AtomicUsize,
-    /// Threads currently blocked waiting for someone else's probe; lets a test
-    /// know a waiter is really waiting before it acts.
-    #[cfg(test)]
-    waiters: std::sync::atomic::AtomicUsize,
+    observed: Observed,
     /// Serializes snapshot-then-emit so an older set cannot overtake a newer
     /// one on its way to the frontend.
     emit_gate: Mutex<()>,
@@ -242,6 +237,18 @@ impl Drop for ProbeGuard<'_> {
     }
 }
 
+/// Counters that only tests read, kept together so `Inner` carries a single
+/// test-only field.
+#[cfg(test)]
+#[derive(Default)]
+struct Observed {
+    /// Watcher threads still running; lets a test prove they all exit.
+    watchers_alive: std::sync::atomic::AtomicUsize,
+    /// Threads currently blocked waiting for someone else's probe; lets a test
+    /// know a waiter is really waiting before it acts.
+    waiters: std::sync::atomic::AtomicUsize,
+}
+
 /// Decrements the live-watcher count however the watcher thread ends.
 #[cfg(test)]
 struct WatcherCount<'a>(&'a Inner);
@@ -249,7 +256,10 @@ struct WatcherCount<'a>(&'a Inner);
 #[cfg(test)]
 impl Drop for WatcherCount<'_> {
     fn drop(&mut self) {
-        self.0.watchers_alive.fetch_sub(1, Ordering::SeqCst);
+        self.0
+            .observed
+            .watchers_alive
+            .fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -273,9 +283,7 @@ impl ReachabilityRegistry {
                 next_token: AtomicU64::new(0),
                 provisional_after,
                 #[cfg(test)]
-                watchers_alive: std::sync::atomic::AtomicUsize::new(0),
-                #[cfg(test)]
-                waiters: std::sync::atomic::AtomicUsize::new(0),
+                observed: Observed::default(),
                 emit_gate: Mutex::new(()),
                 on_recovered: Mutex::new(None),
                 on_unreachable: Mutex::new(None),
@@ -461,10 +469,10 @@ impl ReachabilityRegistry {
             match slots.get(folder).copied() {
                 Some(Slot::Probing { .. }) => {
                     #[cfg(test)]
-                    inner.waiters.fetch_add(1, Ordering::SeqCst);
+                    inner.observed.waiters.fetch_add(1, Ordering::SeqCst);
                     slots = inner.settled.wait(slots).unwrap_or_else(|e| e.into_inner());
                     #[cfg(test)]
-                    inner.waiters.fetch_sub(1, Ordering::SeqCst);
+                    inner.observed.waiters.fetch_sub(1, Ordering::SeqCst);
                     waited = true;
                 }
                 // A forced refresh that waited for someone else's probe takes
@@ -567,7 +575,10 @@ impl ReachabilityRegistry {
         let registry = self.clone();
         let folder = folder.to_string();
         #[cfg(test)]
-        self.inner.watchers_alive.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .observed
+            .watchers_alive
+            .fetch_add(1, Ordering::SeqCst);
         let spawned = thread::Builder::new()
             .name("reachability-watch".into())
             .spawn(move || {
@@ -579,7 +590,10 @@ impl ReachabilityRegistry {
             // Without a watcher the folder is just not flagged early; the
             // probe's answer still decides the final state.
             #[cfg(test)]
-            self.inner.watchers_alive.fetch_sub(1, Ordering::SeqCst);
+            self.inner
+                .observed
+                .watchers_alive
+                .fetch_sub(1, Ordering::SeqCst);
             log::warn!("could not start the reachability watcher");
         }
     }
@@ -1206,7 +1220,11 @@ mod tests {
     }
 
     fn watchers_alive(registry: &ReachabilityRegistry) -> usize {
-        registry.inner.watchers_alive.load(Ordering::SeqCst)
+        registry
+            .inner
+            .observed
+            .watchers_alive
+            .load(Ordering::SeqCst)
     }
 
     /// Starts a probe of `NAS` that stays in flight and waits until the
@@ -1292,9 +1310,12 @@ mod tests {
         let waiter = thread::spawn(move || r.is_reachable(NAS));
         // The counter is raised under the slot lock that showed it a probe in
         // flight, so seeing it means the waiter is committed to waiting.
-        assert!(wait_until(
-            || registry.inner.waiters.load(Ordering::SeqCst) == 1
-        ));
+        assert!(wait_until(|| registry
+            .inner
+            .observed
+            .waiters
+            .load(Ordering::SeqCst)
+            == 1));
         assert_eq!(registry.unreachable_folders(), vec![NAS.to_string()]);
         assert!(!waiter.is_finished(), "must not take the flag as an answer");
 
@@ -1825,7 +1846,8 @@ mod tests {
         // accounted for keeps the test independent of that timing.
         assert!(wait_until(|| {
             probe.entered.load(Ordering::SeqCst) == 1
-                && registry.inner.waiters.load(Ordering::SeqCst) + bowed_out.load(Ordering::SeqCst)
+                && registry.inner.observed.waiters.load(Ordering::SeqCst)
+                    + bowed_out.load(Ordering::SeqCst)
                     == CALLERS - 1
         }));
         probe.release();
