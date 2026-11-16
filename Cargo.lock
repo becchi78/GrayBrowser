@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "graybrowser"
-version = "0.13.3"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
