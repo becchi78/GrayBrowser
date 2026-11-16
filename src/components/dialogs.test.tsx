@@ -25,6 +25,7 @@ import { TagBarEditDialog } from "./TagBarEditDialog";
 import { UnmatchedThumbnailsDialog } from "./UnmatchedThumbnailsDialog";
 import { UpdateDialog } from "./UpdateDialog";
 import { WbImportDialog } from "./WbImportDialog";
+import { hasUndismissibleModal } from "../undismissibleModals";
 
 // 各ダイアログが開いた直後や、確かめる操作の途中で呼ぶ関数だけをフェイクにする。
 // api.ts 全体を差し替えるのは、未モックの関数が実 IPC に触れて例外になるのを避けるため。
@@ -843,4 +844,28 @@ test("ModalShell は dismissible が false なら、背景のクリックでも 
   await user.keyboard("{Escape}");
 
   expect(onDismiss).not.toHaveBeenCalled();
+});
+
+test("ModalShell は dismissible が false の間だけ「閉じられないモーダルがある」状態にし、アンマウントで戻す", () => {
+  expect(hasUndismissibleModal()).toBe(false);
+
+  const { rerender, unmount } = renderShell({ onDismiss: () => {}, dismissible: false });
+  expect(hasUndismissibleModal()).toBe(true);
+
+  rerender(
+    <ModalShell label="殻" className="shell" testId="shell" onDismiss={() => {}} dismissible>
+      <p>本文</p>
+    </ModalShell>,
+  );
+  expect(hasUndismissibleModal()).toBe(false);
+
+  rerender(
+    <ModalShell label="殻" className="shell" testId="shell" onDismiss={() => {}} dismissible={false}>
+      <p>本文</p>
+    </ModalShell>,
+  );
+  expect(hasUndismissibleModal()).toBe(true);
+
+  unmount();
+  expect(hasUndismissibleModal()).toBe(false);
 });

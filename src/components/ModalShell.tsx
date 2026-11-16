@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import type { FormEvent, MouseEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { registerUndismissibleModal } from "../undismissibleModals";
 import { useEscapeKey } from "../useEscapeKey";
 
 interface Props {
@@ -48,6 +50,8 @@ export function ModalShell({
 }: Props) {
   const dismiss = dismissible ? onDismiss : undefined;
   useEscapeKey(() => dismiss?.(), dismiss !== undefined);
+  // 閉じられない間だけ登録し、メニューからの別ダイアログの要求を無視させる。
+  useEffect(() => (dismissible ? undefined : registerUndismissibleModal()), [dismissible]);
 
   const dialogProps = {
     className: `dialog ${className}`,
