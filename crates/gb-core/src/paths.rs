@@ -188,26 +188,6 @@ pub fn replace_folder_prefix(path: &str, old_folder: &str, new_folder: &str) -> 
     }
 }
 
-/// Whether `path` falls under `folder` (including `path` being `folder`
-/// itself), using the same boundary-safe, case-insensitive comparison as
-/// `folder_paths_conflict`/`folder_like_prefix` -- `C:\Videos2` is not under
-/// `C:\Videos` even though it shares a string prefix.
-///
-/// Only for resolving where a thumbnail is stored. Do not use it to decide
-/// whether a file may be deleted: use `is_under_folder` there. This one
-/// counts the folder itself as inside and does not fold `/` into `\`, so a
-/// `/`-separated path under a registered folder is missed, which is wrong
-/// for a safety check but must stay as is for thumbnails already on disk.
-pub(crate) fn is_path_under_folder(path: &str, folder: &str) -> bool {
-    let folder_norm = normalize_folder_path(folder).to_lowercase();
-    let path_norm = normalize_folder_path(path).to_lowercase();
-    // The equality check handles `path == folder` (the "folder itself"
-    // case): normalizing both sides the same way means a plain
-    // `starts_with` alone would miss it, since `path_norm` in that case is
-    // exactly as long as `folder_norm`, not longer.
-    path_norm == folder_norm || path_norm.starts_with(&folder_norm)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,27 +358,16 @@ mod tests {
         );
     }
 
-    /// `(path, folder, is_under_folder, is_path_under_folder, why)`.
-    /// The two predicates differ on purpose: deletion must not treat the
-    /// folder itself as inside and must fold `/`, while thumbnail placement
-    /// keeps its historical behaviour.
+    /// `(path, folder, expected, why)`.
     #[test]
-    fn under_folder_predicates_agree_except_where_documented() {
-        const DIFF: &str = "削除判定は新に寄せる。サムネイルは旧を維持";
-        let cases: &[(&str, &str, bool, bool, &str)] = &[
-            (r"C:\Videos\a.mp4", r"C:\Videos", true, true, "direct child"),
-            (r"C:\Videos\Sub\a.mp4", r"C:\Videos", true, true, "nested"),
-            (
-                r"c:\videos\a.mp4",
-                r"C:\Videos",
-                true,
-                true,
-                "case-insensitive",
-            ),
+    fn is_under_folder_matches_only_strict_descendants() {
+        let cases: &[(&str, &str, bool, &str)] = &[
+            (r"C:\Videos\a.mp4", r"C:\Videos", true, "direct child"),
+            (r"C:\Videos\Sub\a.mp4", r"C:\Videos", true, "nested"),
+            (r"c:\videos\a.mp4", r"C:\Videos", true, "case-insensitive"),
             (
                 r"W:\video\a.mp4",
                 r"W:\video\",
-                true,
                 true,
                 "folder with trailing separator",
             ),
@@ -406,61 +375,41 @@ mod tests {
                 r"C:\Videos2\a.mp4",
                 r"C:\Videos",
                 false,
-                false,
                 "shared string prefix",
             ),
             (
                 r"W:\videos\a.mp4",
                 r"W:\video\",
                 false,
-                false,
                 "shared prefix, trailing separator",
             ),
-            (r"D:\Other\a.mp4", r"C:\Videos", false, false, "unrelated"),
-            (r"D:\v", r"D:\v", false, true, DIFF),
-            ("D:/v/a.mp4", r"D:\v", true, false, DIFF),
-            (r"D:\v\a.mp4", "D:/v/", true, false, DIFF),
-            (
-                "D:/v2/a.mp4",
-                "D:/v",
-                false,
-                false,
-                "forward-slash shared prefix",
-            ),
-            (r"W:\a.mp4", r"W:\", true, true, "drive root"),
-            (r"W:\x\a.mp4", "W:", true, true, "drive without separator"),
-            (r"V:\a.mp4", r"W:\", false, false, "other drive"),
+            (r"D:\Other\a.mp4", r"C:\Videos", false, "unrelated"),
+            (r"D:\v", r"D:\v", false, "the folder itself"),
+            ("D:/v/a.mp4", r"D:\v", true, "slash path, backslash folder"),
+            (r"D:\v\a.mp4", "D:/v/", true, "backslash path, slash folder"),
+            ("D:/v2/a.mp4", "D:/v", false, "forward-slash shared prefix"),
+            (r"W:\a.mp4", r"W:\", true, "drive root"),
+            (r"W:\x\a.mp4", "W:", true, "drive without separator"),
+            (r"V:\a.mp4", r"W:\", false, "other drive"),
             (
                 r"D:\",
                 r"D:\",
                 true,
-                true,
-                "drive root itself (quirk of both)",
+                "drive root itself (quirk: trailing separator counts as inside)",
             ),
-            ("D:", r"D:\", false, true, DIFF),
-            (r"\\nas\share\v\a.mp4", r"\\NAS\share", true, true, "UNC"),
-            (
-                r"\\nas\share2\a.mp4",
-                r"\\nas\share",
-                false,
-                false,
-                "UNC boundary",
-            ),
-            (r"\\nas\share\a.mp4", "", false, true, DIFF),
-            (r"C:\a.mp4", "  ", false, false, "blank folder"),
-            (r"C:\a.mp4", r"\", false, false, "separator-only folder"),
-            (r"\a.mp4", r"\", false, true, DIFF),
+            ("D:", r"D:\", false, "drive without separator itself"),
+            (r"\\nas\share\v\a.mp4", r"\\NAS\share", true, "UNC"),
+            (r"\\nas\share2\a.mp4", r"\\nas\share", false, "UNC boundary"),
+            (r"\\nas\share\a.mp4", "", false, "empty folder"),
+            (r"C:\a.mp4", "  ", false, "blank folder"),
+            (r"C:\a.mp4", r"\", false, "separator-only folder"),
+            (r"\a.mp4", r"\", false, "separator-only folder, rooted path"),
         ];
-        for (path, folder, new, old, why) in cases {
+        for (path, folder, expected, why) in cases {
             assert_eq!(
                 is_under_folder(path, folder),
-                *new,
-                "new: {path} / {folder}: {why}"
-            );
-            assert_eq!(
-                is_path_under_folder(path, folder),
-                *old,
-                "old: {path} / {folder}: {why}"
+                *expected,
+                "{path} / {folder}: {why}"
             );
         }
     }

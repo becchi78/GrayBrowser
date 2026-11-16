@@ -204,6 +204,22 @@ mod tests {
     }
 
     #[test]
+    fn a_slash_separated_file_path_moves_out_of_unassigned_into_the_added_folder() {
+        let (_d, db) = init_temp_db();
+        let root = tempfile::tempdir().unwrap();
+        insert_test_video(&db, "v1", "D:/Vids/a.mp4");
+        write_slots(&unassigned(root.path()), "v1", &all_slots(), "img");
+
+        let new = folders(&[r"D:\Vids"]);
+        assert_eq!(run(&db, root.path(), &[], &new), 1);
+
+        let new_dir = video_thumbnail_dir(root.path(), &new, "D:/Vids/a.mp4");
+        assert_ne!(new_dir, unassigned(root.path()));
+        assert!(all_present(&new_dir, "v1"));
+        assert!(!has_any_slot(&unassigned(root.path()), "v1"));
+    }
+
+    #[test]
     fn no_added_folder_is_a_no_op() {
         let (_d, db) = init_temp_db();
         let root = tempfile::tempdir().unwrap();
