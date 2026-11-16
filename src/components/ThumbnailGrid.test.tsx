@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
   listWatchFolders: vi.fn(),
   unregisterVideos: vi.fn(),
   assignTagToVideos: vi.fn(),
+  revealVideoInExplorer: vi.fn(),
   listAllTags: vi.fn(),
 }));
 
@@ -200,6 +201,7 @@ beforeEach(() => {
   vi.mocked(api.unregisterVideos).mockResolvedValue(0);
   vi.mocked(api.listAllTags).mockResolvedValue([]);
   vi.mocked(api.assignTagToVideos).mockResolvedValue(undefined);
+  vi.mocked(api.revealVideoInExplorer).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -264,7 +266,10 @@ const BASE: GridProps = {
   jumpRequest: null,
 };
 
-async function renderGrid(overrides: Partial<GridProps> = {}) {
+async function renderGrid(
+  overrides: Partial<GridProps> = {},
+  { unreachableFolders }: { unreachableFolders?: readonly string[] } = {},
+) {
   const onCountChange = vi.fn();
   const onSelectionCountChange = vi.fn();
   let current: GridProps = { ...BASE, ...overrides };
@@ -275,7 +280,7 @@ async function renderGrid(overrides: Partial<GridProps> = {}) {
       onSelectionCountChange={onSelectionCountChange}
     />
   );
-  const view = renderWithProviders(ui(current));
+  const view = renderWithProviders(ui(current), { unreachableFolders });
   await settle();
   const update = async (next: Partial<GridProps>) => {
     current = { ...current, ...next };
@@ -752,6 +757,13 @@ test.each(["row-input", "row-textarea", "row-select", "row-button", "row-link"])
   },
 );
 
+const MENU_ONE = ["タグを設定...", "パスをコピー", "エクスプローラーで開く", "登録から削除"];
+const MENU_TWO = [
+  "タグを設定...(2 件)",
+  "パスをコピー(2 件)",
+  "登録から削除(2 件)",
+];
+
 // ---- 右クリックのメニュー ----
 
 test("選択の外の行を右クリックすると、その行だけを選んでメニューを出す", async () => {
@@ -763,7 +775,7 @@ test("選択の外の行を右クリックすると、その行だけを選ん�
 
   expect(selectedIds()).toEqual(["c"]);
   expect(menu()).toHaveStyle({ left: "30px", top: "40px" });
-  expect(menuLabels()).toEqual(["タグを設定...", "登録から削除"]);
+  expect(menuLabels()).toEqual(MENU_ONE);
   expect(onSelectionCountChange).toHaveBeenLastCalledWith(1);
 });
 
@@ -775,7 +787,7 @@ test("選択の中の行を右クリックすると、選択はそのままで�
   expect(await openMenu("b")).toBe(false);
 
   expect(selectedIds()).toEqual(["a", "b"]);
-  expect(menuLabels()).toEqual(["タグを設定...(2 件)", "登録から削除(2 件)"]);
+  expect(menuLabels()).toEqual(MENU_TWO);
 });
 
 test("行の中の入力欄を右クリックしても、メニューを出さず既定動作も止めない", async () => {
@@ -797,7 +809,7 @@ test("メニューの対象は開いた時点の選択で固定する", async ()
   fireEvent.keyDown(list(), { key: "a", ctrlKey: true });
   await settle();
   expect(selectedIds()).toEqual(["a", "b", "c"]);
-  expect(menuLabels()).toEqual(["タグを設定...", "登録から削除"]);
+  expect(menuLabels()).toEqual(MENU_ONE);
 
   await user.click(menuItem(/^登録から削除/));
   expect(menu()).toBeNull();
@@ -1231,4 +1243,98 @@ test("全行が同じサムネイルのキャッシュ(Map)を受け取り、描
   const [first] = rowLog.caches;
   expect(first).toBeInstanceOf(Map);
   expect(rowLog.caches.every((c) => c === first)).toBe(true);
+});
+
+// ---- パスのコピーとエクスプローラーで開く ----
+
+test("「パスをコピー」で、選択した動画のパスを改行区切りでクリップボードへ入れる", async () => {
+  const { user } = await renderGrid();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+  fireEvent.click(row("a"));
+  fireEvent.click(row("c"), { ctrlKey: true });
+  await openMenu("a");
+
+  await user.click(menuItem(/^パスをコピー/));
+
+  expect(writeText).toHaveBeenCalledWith("C:\\videos\\a.mp4\nC:\\videos\\c.mp4");
+  expect(menu()).toBeNull();
+});
+
+test("クリップボードへの書き込みに失敗したら、理由を表示する", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const { user } = await renderGrid();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+  await openMenu("a");
+
+  await user.click(menuItem(/^パスをコピー/));
+
+  expect(screen.getByTestId("path-action-error")).toHaveTextContent(
+    "パスをコピーできませんでした: denied",
+  );
+});
+
+test("「エクスプローラーで開く」は、動画の id だけをバックエンドへ渡す", async () => {
+  const { user } = await renderGrid();
+  await openMenu("b");
+
+  await user.click(menuItem(/^エクスプローラーで開く/));
+
+  expect(api.revealVideoInExplorer).toHaveBeenCalledWith("b");
+});
+
+test("開くのに失敗したら、理由を表示する", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(api.revealVideoInExplorer).mockRejectedValue("file missing");
+  const { user } = await renderGrid();
+  await openMenu("b");
+
+  await user.click(menuItem(/^エクスプローラーで開く/));
+
+  expect(screen.getByTestId("path-action-error")).toHaveTextContent(
+    "エクスプローラーで開けませんでした: file missing",
+  );
+});
+
+const revealItem = () =>
+  within(screen.getByTestId("context-menu")).queryByRole("menuitem", {
+    name: /^エクスプローラーで開く/,
+  });
+
+test("複数選択では「エクスプローラーで開く」を出さない", async () => {
+  await renderGrid();
+  fireEvent.click(row("a"));
+  fireEvent.click(row("b"), { ctrlKey: true });
+  await openMenu("a");
+
+  expect(revealItem()).toBeNull();
+  expect(menuLabels()).toEqual(MENU_TWO);
+});
+
+test("オフラインの動画では「エクスプローラーで開く」を出さず、コピーは使える", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue([{ ...video("a"), status: "offline" }, video("b")]);
+  const { user } = await renderGrid();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+  await openMenu("a");
+
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
+  await user.click(menuItem(/^パスをコピー/));
+  expect(writeText).toHaveBeenCalledWith("C:\\videos\\a.mp4");
+});
+
+test("保存先フォルダに届かない動画では「エクスプローラーで開く」を出さない", async () => {
+  await renderGrid({}, { unreachableFolders: ["C:\\videos"] });
+  await openMenu("a");
+
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
+});
+
+test("パスを解決できない動画では「エクスプローラーで開く」を出さない", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue([{ ...video("a"), file_path: "::NAS\\a.mp4" }]);
+  await renderGrid();
+  await openMenu("a");
+
+  expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
+  expect(revealItem()).toBeNull();
 });

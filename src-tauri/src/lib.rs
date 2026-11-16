@@ -87,6 +87,7 @@ pub fn run() {
             commands::thumbnail_cmds::get_thumbnails,
             commands::thumbnail_cmds::get_thumbnail_progress,
             commands::player_cmds::play_video,
+            commands::reveal_cmds::reveal_video_in_explorer,
             commands::tag_cmds::assign_tag,
             commands::tag_cmds::assign_tag_to_videos,
             commands::tag_cmds::remove_tag,

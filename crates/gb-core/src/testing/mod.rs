@@ -8,6 +8,7 @@ pub mod fake_drive_type;
 pub mod fake_ffmpeg;
 pub mod fake_file_probe;
 pub mod fake_file_rename;
+pub mod fake_file_revealer;
 pub mod fake_folder_probe;
 pub mod fake_log_source;
 pub mod fake_path_existence;

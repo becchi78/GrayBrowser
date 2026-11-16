@@ -124,6 +124,8 @@ export const getThumbnails = (videoId: string) =>
   invoke<string[] | null>("get_thumbnails", { videoId });
 export const getThumbnailProgress = () => invoke<ThumbnailProgress>("get_thumbnail_progress");
 export const playVideo = (filePath: string) => invoke<void>("play_video", { filePath });
+export const revealVideoInExplorer = (videoId: string) =>
+  invoke<void>("reveal_video_in_explorer", { videoId });
 export const pickWbFile = () => invoke<string | null>("pick_wb_file");
 export const pickWbThumbnailFolder = () => invoke<string | null>("pick_wb_thumbnail_folder");
 export const startWbImport = (

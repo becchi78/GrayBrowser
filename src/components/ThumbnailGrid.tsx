@@ -141,6 +141,7 @@ export function ThumbnailGrid({
   const overlays = (
     <VideoListOverlays
       menu={menu}
+      videos={videos}
       onCloseMenu={closeMenu}
       onRequestBulkTag={setBulkTagIds}
       bulkTagIds={bulkTagIds}

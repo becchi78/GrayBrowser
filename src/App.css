@@ -1723,6 +1723,26 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* 右クリックメニューの操作(パスのコピーなど)の失敗を、画面の下に出す。 */
+.path-action-error {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 80vw;
+  padding: 8px 12px;
+  border: 1px solid var(--error-text);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--error-text);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
 .context-menu {
   position: fixed;
   z-index: 60;

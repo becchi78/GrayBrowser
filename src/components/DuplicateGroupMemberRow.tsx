@@ -1,4 +1,8 @@
+import { useCallback, useState, type MouseEvent } from "react";
 import type { DuplicateDiff } from "../lib/duplicateDiff";
+import { buildPathMenuItems } from "../lib/videoPathMenu";
+import { usePathActions } from "../usePathActions";
+import { ContextMenu } from "./ContextMenu";
 import { formatDuration, formatFileSize, formatResolution } from "../lib/format";
 import type { DuplicateGroupMember } from "../types";
 import { useIsPathUnreachable } from "../reachabilityContext";
@@ -37,6 +41,20 @@ export function DuplicateGroupMemberRow({
     isOffline || busy,
   );
 
+  const pathActions = usePathActions();
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const closeMenu = useCallback(() => setMenuPosition(null), []);
+  function handleContextMenu(e: MouseEvent) {
+    // メニューは portal で描くが、React のイベントは portal の親(この行)へも
+    // 伝わる。メニュー上の右クリックでメニューを開き直さない。
+    if (!(e.target instanceof Node) || !e.currentTarget.contains(e.target)) return;
+    e.preventDefault();
+    setMenuPosition({ x: e.clientX, y: e.clientY });
+  }
+
   return (
     <li
       className={
@@ -44,7 +62,24 @@ export function DuplicateGroupMemberRow({
           ? "duplicate-group-member duplicate-group-member--offline"
           : "duplicate-group-member"
       }
+      onContextMenu={handleContextMenu}
     >
+      {menuPosition && (
+        <ContextMenu
+          position={menuPosition}
+          items={buildPathMenuItems(
+            [
+              {
+                id: member.video_id,
+                file_path: member.file_path,
+                offline: isOffline,
+              },
+            ],
+            { onCopy: pathActions.copyPaths, onReveal: pathActions.reveal },
+          )}
+          onClose={closeMenu}
+        />
+      )}
       <div
         className="duplicate-group-member-thumb"
         onDoubleClick={isOffline || busy ? undefined : handlePlay}
@@ -95,6 +130,11 @@ export function DuplicateGroupMemberRow({
         {playError && <span className="duplicate-group-member-play-error">{playError}</span>}
         {fileDeleteDisabledReason && (
           <span className="duplicate-group-member-play-note">{fileDeleteDisabledReason}</span>
+        )}
+        {pathActions.error && (
+          <span className="duplicate-group-member-play-error" role="alert">
+            {pathActions.error}
+          </span>
         )}
         {deleteFileError && (
           <span className="duplicate-group-member-play-error">{deleteFileError}</span>
