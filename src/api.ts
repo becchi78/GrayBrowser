@@ -59,6 +59,11 @@ export const assignTagToVideos = (videoIds: string[], tagName: string) =>
   invoke<void>("assign_tag_to_videos", { videoIds, tagName });
 export const removeTag = (videoId: string, tagId: number) =>
   invoke<void>("remove_tag", { videoId, tagId });
+export const removeTagFromVideos = (videoIds: string[], tagId: number) =>
+  invoke<void>("remove_tag_from_videos", { videoIds, tagId });
+/** 選択した動画に付いているタグと、そのうち何件の動画に付いているか(video_count)。 */
+export const listTagUsageForVideos = (videoIds: string[]) =>
+  invoke<TagWithCountDto[]>("list_tag_usage_for_videos", { videoIds });
 export const listTagsForVideo = (videoId: string) =>
   invoke<TagDto[]>("list_tags_for_video", { videoId });
 export const listAllTags = () => invoke<TagDto[]>("list_all_tags");

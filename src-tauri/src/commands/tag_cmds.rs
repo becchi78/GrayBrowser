@@ -61,6 +61,37 @@ pub fn assign_tag_to_videos(
     Ok(())
 }
 
+/// Un-assigns one tag from many videos in one transaction. Does not delete the
+/// tag itself; a failure leaves every video as it was.
+// async: a large batch holds the writer lock for the whole transaction, so
+// keep it off the main thread.
+#[tauri::command(async)]
+pub fn remove_tag_from_videos(
+    app: tauri::AppHandle,
+    db: State<Db>,
+    video_ids: Vec<String>,
+    tag_id: i64,
+) -> Result<(), String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::remove_tag_from_videos(&mut conn, &video_ids, tag_id).map_err(|e| e.to_string())?;
+    drop(conn);
+    TauriCatalogNotifier::new(app).notify_changed();
+    Ok(())
+}
+
+/// The tags carried by the given videos, each with how many of those videos
+/// carry it (`video_count`), so the UI can tell a tag on every selected video
+/// from one on only some.
+#[tauri::command(async)]
+pub fn list_tag_usage_for_videos(
+    db: State<Db>,
+    video_ids: Vec<String>,
+) -> Result<Vec<TagWithCountDto>, String> {
+    queries::list_tag_usage_for_videos(&db.read_pool, &video_ids)
+        .map(|rows| rows.into_iter().map(TagWithCountDto::from).collect())
+        .map_err(|e| e.to_string())
+}
+
 /// Un-assigns a tag from a video. Does not delete the tag itself (see
 /// `queries::remove_tag_from_video`'s doc comment).
 #[tauri::command]

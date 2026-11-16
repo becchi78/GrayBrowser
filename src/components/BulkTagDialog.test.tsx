@@ -1,4 +1,4 @@
-// BulkTagDialog の候補の選択と、タグの付与の成否を確かめる。
+// BulkTagDialog の候補の選択と、タグの付与・解除の成否を確かめる。
 // 候補の絞り込み規則は lib/bulkTag のテストが持つので、ここでは画面への出方を見る。
 import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -10,6 +10,8 @@ import { BulkTagDialog } from "./BulkTagDialog";
 vi.mock("../api", () => ({
   listAllTags: vi.fn(),
   assignTagToVideos: vi.fn(),
+  listTagUsageForVideos: vi.fn(),
+  removeTagFromVideos: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -169,4 +171,170 @@ test("付与の実行中は、Escape でも背景のクリックでも閉じず�
 
   expect(onClose).not.toHaveBeenCalled();
   expect(api.assignTagToVideos).toHaveBeenCalledTimes(1);
+});
+
+// ---- 「外す」タブ ----
+
+const usage = [
+  { id: 1, name: "猫", video_count: 2 },
+  { id: 2, name: "犬", video_count: 1 },
+];
+
+async function renderRemoveTab() {
+  const onTagged = vi.fn();
+  const onClose = vi.fn();
+  const view = renderWithProviders(
+    <BulkTagDialog videoIds={["a", "b"]} onTagged={onTagged} onClose={onClose} />,
+  );
+  await view.user.click(screen.getByRole("tab", { name: "外す" }));
+  return { ...view, onTagged, onClose };
+}
+
+const removeBtn = () => screen.getByTestId("bulk-tag-remove-btn");
+
+beforeEach(() => {
+  vi.mocked(api.listTagUsageForVideos).mockResolvedValue(usage);
+  vi.mocked(api.removeTagFromVideos).mockResolvedValue(undefined as never);
+});
+
+test("タブは「付ける」が選ばれた状態で開き、切り替えると選択と表示が入れ替わる", async () => {
+  const { user } = await renderDialog();
+  expect(screen.getByRole("tablist")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "付ける" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "外す" })).toHaveAttribute("aria-selected", "false");
+  expect(api.listTagUsageForVideos).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("tab", { name: "外す" }));
+
+  expect(screen.getByRole("tab", { name: "外す" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "付ける" })).toHaveAttribute("aria-selected", "false");
+  expect(await screen.findByRole("tabpanel", { name: "外す" })).toBeInTheDocument();
+  expect(api.listTagUsageForVideos).toHaveBeenCalledWith(["a", "b"]);
+  expect(screen.getByRole("heading")).toHaveTextContent("2 件の動画にタグを付ける");
+});
+
+test("付けるに戻ると、入力していた内容が残っている", async () => {
+  const { user } = await renderDialog();
+  await user.type(input(), "猫");
+
+  await user.click(screen.getByRole("tab", { name: "外す" }));
+  await user.click(screen.getByRole("tab", { name: "付ける" }));
+
+  expect(input()).toHaveValue("猫");
+});
+
+test("外すタブは、付いているタグを「タグ名(n/N 件)」で並べ、選ぶまで外すを押せない", async () => {
+  const { user } = await renderRemoveTab();
+
+  expect(await screen.findByRole("radio", { name: "猫(2/2 件)" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "犬(1/2 件)" })).toBeInTheDocument();
+  expect(removeBtn()).toBeDisabled();
+
+  await user.click(screen.getByRole("radio", { name: "犬(1/2 件)" }));
+  expect(removeBtn()).toBeEnabled();
+});
+
+test("選んで外すを押すと確認を出し、キャンセルすれば何もしない", async () => {
+  const { user, onTagged, onClose } = await renderRemoveTab();
+  await user.click(await screen.findByRole("radio", { name: "犬(1/2 件)" }));
+
+  await user.click(removeBtn());
+
+  expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
+    "『犬』を 1 件の動画から外します。元に戻せません。",
+  );
+  expect(api.removeTagFromVideos).not.toHaveBeenCalled();
+
+  await user.click(screen.getByTestId("confirm-dialog-cancel-btn"));
+
+  expect(screen.queryByTestId("confirm-dialog")).toBeNull();
+  expect(api.removeTagFromVideos).not.toHaveBeenCalled();
+  expect(onTagged).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByTestId("bulk-tag-dialog")).toBeInTheDocument();
+});
+
+test("確認を受けると、対象の動画とタグの ID を渡し、通知してから閉じる", async () => {
+  const order: string[] = [];
+  const { user, onTagged, onClose } = await renderRemoveTab();
+  onTagged.mockImplementation(() => order.push("tagged"));
+  onClose.mockImplementation(() => order.push("close"));
+  await user.click(await screen.findByRole("radio", { name: "猫(2/2 件)" }));
+  await user.click(removeBtn());
+
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+
+  expect(api.removeTagFromVideos).toHaveBeenCalledWith(["a", "b"], 1);
+  expect(order).toEqual(["tagged", "close"]);
+});
+
+test("外すのに失敗すると、確認を閉じてエラーを出し、通知も閉じる操作もせず、やり直せる", async () => {
+  vi.mocked(api.removeTagFromVideos).mockRejectedValueOnce(new Error("書けません"));
+  const { user, onTagged, onClose } = await renderRemoveTab();
+  await user.click(await screen.findByRole("radio", { name: "猫(2/2 件)" }));
+  await user.click(removeBtn());
+
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+
+  expect(await screen.findByTestId("bulk-tag-remove-error")).toHaveTextContent("書けません");
+  expect(screen.queryByTestId("confirm-dialog")).toBeNull();
+  expect(onTagged).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(removeBtn()).toBeEnabled();
+
+  await user.click(removeBtn());
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+
+  expect(onTagged).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("外す処理中は、確認・タブ・選択・キャンセルを無効にし、Escape でも閉じない", async () => {
+  const pending = deferred<never>();
+  vi.mocked(api.removeTagFromVideos).mockReturnValue(pending.promise);
+  const { user, onClose } = await renderRemoveTab();
+  await user.click(await screen.findByRole("radio", { name: "猫(2/2 件)" }));
+  await user.click(removeBtn());
+
+  await user.click(screen.getByTestId("confirm-dialog-confirm-btn"));
+
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toBeDisabled();
+  expect(screen.getByTestId("confirm-dialog-confirm-btn")).toHaveTextContent("処理中...");
+  expect(screen.getByTestId("confirm-dialog-cancel-btn")).toBeDisabled();
+  expect(screen.getByRole("tab", { name: "付ける" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "犬(1/2 件)" })).toBeDisabled();
+  expect(screen.getByTestId("bulk-tag-remove-cancel-btn")).toBeDisabled();
+
+  await user.keyboard("{Escape}");
+  expect(onClose).not.toHaveBeenCalled();
+  expect(api.removeTagFromVideos).toHaveBeenCalledTimes(1);
+});
+
+test("確認が開いている間の Escape は確認だけを閉じ、ダイアログは残る", async () => {
+  const { user, onClose } = await renderRemoveTab();
+  await user.click(await screen.findByRole("radio", { name: "猫(2/2 件)" }));
+  await user.click(removeBtn());
+
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByTestId("confirm-dialog")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+test("付いているタグが無いときは、その旨を出し、外すを押せない", async () => {
+  vi.mocked(api.listTagUsageForVideos).mockResolvedValue([]);
+  await renderRemoveTab();
+
+  expect(await screen.findByTestId("bulk-tag-usage-empty")).toHaveTextContent(
+    "選択した動画にタグは付いていません。",
+  );
+  expect(removeBtn()).toBeDisabled();
+});
+
+test("付いているタグの取得に失敗すると、エラーを出し、外すを押せない", async () => {
+  vi.mocked(api.listTagUsageForVideos).mockRejectedValue(new Error("取れない"));
+  await renderRemoveTab();
+
+  expect(await screen.findByTestId("bulk-tag-usage-error")).toHaveTextContent("取れない");
+  expect(removeBtn()).toBeDisabled();
 });

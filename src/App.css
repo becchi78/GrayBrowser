@@ -2081,6 +2081,37 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.bulk-tag-tabs {
+  display: flex;
+  gap: 0.4em;
+  margin-bottom: 0.75em;
+}
+
+.bulk-tag-tab[aria-selected="true"] {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.bulk-tag-remove {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.bulk-tag-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  max-height: 14em;
+  overflow-y: auto;
+}
+
+.bulk-tag-usage-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
 .log-viewer-dialog {
   width: min(80em, 95vw);
   height: 85vh;

@@ -91,6 +91,8 @@ pub fn run() {
             commands::tag_cmds::assign_tag,
             commands::tag_cmds::assign_tag_to_videos,
             commands::tag_cmds::remove_tag,
+            commands::tag_cmds::remove_tag_from_videos,
+            commands::tag_cmds::list_tag_usage_for_videos,
             commands::tag_cmds::list_tags_for_video,
             commands::tag_cmds::list_all_tags,
             commands::info_pane_cmds::get_info_pane_collapsed,

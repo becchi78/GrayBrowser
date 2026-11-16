@@ -601,3 +601,152 @@ fn set_rating_round_trips_and_clears_to_zero() {
         .unwrap();
     assert_eq!(cleared, 0);
 }
+
+fn tag_pairs(conn: &Connection) -> Vec<(String, i64)> {
+    let mut stmt = conn
+        .prepare("SELECT video_id, tag_id FROM video_tags ORDER BY video_id, tag_id")
+        .unwrap();
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn bulk_remove_detaches_the_tag_from_every_listed_video_and_keeps_the_tags_row() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2"]);
+    let tag = queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2"]), "action")
+        .unwrap()
+        .tag;
+
+    queries::remove_tag_from_videos(&mut conn, &ids(&["v1", "v2"]), tag.id).unwrap();
+
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM tags"), 1);
+}
+
+#[test]
+fn bulk_remove_leaves_unlisted_videos_and_other_tags_alone() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    let all = ids(&["v1", "v2", "v3"]);
+    let action = queries::assign_tag_to_videos(&mut conn, &all, "action")
+        .unwrap()
+        .tag;
+    let other = queries::assign_tag_to_videos(&mut conn, &all, "other")
+        .unwrap()
+        .tag;
+
+    queries::remove_tag_from_videos(&mut conn, &ids(&["v1", "v2"]), action.id).unwrap();
+
+    assert_eq!(
+        tag_pairs(&conn),
+        vec![
+            ("v1".to_string(), other.id),
+            ("v2".to_string(), other.id),
+            ("v3".to_string(), action.id),
+            ("v3".to_string(), other.id),
+        ]
+    );
+}
+
+#[test]
+fn bulk_remove_only_detaches_from_videos_that_carry_the_tag() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    let tag = queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v3"]), "action")
+        .unwrap()
+        .tag;
+
+    queries::remove_tag_from_videos(&mut conn, &ids(&["v1", "v2"]), tag.id).unwrap();
+
+    assert_eq!(tag_pairs(&conn), vec![("v3".to_string(), tag.id)]);
+}
+
+#[test]
+fn bulk_remove_rolls_back_everything_on_a_mid_batch_failure() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2", "v3"]);
+    let all = ids(&["v1", "v2", "v3"]);
+    let tag = queries::assign_tag_to_videos(&mut conn, &all, "action")
+        .unwrap()
+        .tag;
+    conn.execute(
+        "CREATE TRIGGER fail_on_v3 BEFORE DELETE ON video_tags
+         WHEN OLD.video_id = 'v3'
+         BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;",
+        [],
+    )
+    .unwrap();
+
+    let result = queries::remove_tag_from_videos(&mut conn, &all, tag.id);
+
+    assert!(result.is_err());
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM video_tags"), 3);
+}
+
+#[test]
+fn bulk_remove_with_no_ids_or_unknown_ids_or_unknown_tag_changes_nothing() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1"]);
+    let tag = queries::assign_tag_to_video(&mut conn, "v1", "action").unwrap();
+
+    queries::remove_tag_from_videos(&mut conn, &[], tag.id).unwrap();
+    queries::remove_tag_from_videos(&mut conn, &ids(&["ghost"]), tag.id).unwrap();
+    queries::remove_tag_from_videos(&mut conn, &ids(&["v1"]), tag.id + 1000).unwrap();
+
+    assert_eq!(tag_pairs(&conn), vec![("v1".to_string(), tag.id)]);
+}
+
+#[test]
+fn bulk_remove_accepts_duplicate_ids() {
+    let (_dir, db) = init_temp_db();
+    let mut conn = db.writer.lock().unwrap();
+    seed_videos(&conn, &["v1", "v2"]);
+    let tag = queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2"]), "action")
+        .unwrap()
+        .tag;
+
+    queries::remove_tag_from_videos(&mut conn, &ids(&["v1", "v1", "v1"]), tag.id).unwrap();
+
+    assert_eq!(tag_pairs(&conn), vec![("v2".to_string(), tag.id)]);
+}
+
+#[test]
+fn tag_usage_counts_per_tag_within_the_selection_in_tag_order() {
+    let (_dir, db) = init_temp_db();
+    {
+        let mut conn = db.writer.lock().unwrap();
+        seed_videos(&conn, &["v1", "v2", "v3"]);
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1", "v2"]), "all").unwrap();
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v1"]), "some").unwrap();
+        queries::assign_tag_to_videos(&mut conn, &ids(&["v3"]), "unselected").unwrap();
+    }
+
+    let usage = queries::list_tag_usage_for_videos(&db.read_pool, &ids(&["v1", "v2", "v1"]))
+        .unwrap()
+        .into_iter()
+        .map(|t| (t.name, t.video_count))
+        .collect::<Vec<_>>();
+
+    assert_eq!(usage, vec![("all".to_string(), 2), ("some".to_string(), 1)]);
+}
+
+#[test]
+fn tag_usage_is_empty_for_no_ids_unknown_ids_or_untagged_videos() {
+    let (_dir, db) = init_temp_db();
+    {
+        let conn = db.writer.lock().unwrap();
+        seed_videos(&conn, &["v1"]);
+    }
+    let usage = |v: &[String]| queries::list_tag_usage_for_videos(&db.read_pool, v).unwrap();
+    assert!(usage(&[]).is_empty());
+    assert!(usage(&ids(&["ghost"])).is_empty());
+    assert!(usage(&ids(&["v1"])).is_empty());
+}

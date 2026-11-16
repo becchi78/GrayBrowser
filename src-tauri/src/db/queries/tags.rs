@@ -216,6 +216,119 @@ pub fn remove_tag_from_video(
     Ok(())
 }
 
+/// How many ids go into one `IN (...)` list. Kept well under SQLite's
+/// bound-variable limit (999 on older builds) so a large selection never
+/// fails on the statement size.
+const VIDEO_ID_CHUNK: usize = 500;
+
+/// The ids with duplicates dropped, first occurrence kept. A repeated id must
+/// not be counted twice in the per-tag usage.
+fn dedup_ids(video_ids: &[String]) -> Vec<&str> {
+    let mut seen = std::collections::HashSet::new();
+    video_ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| seen.insert(*id))
+        .collect()
+}
+
+fn placeholders(n: usize) -> String {
+    vec!["?"; n].join(",")
+}
+
+/// Un-assigns one tag from many videos in a single transaction, so a failure
+/// part-way leaves every video as it was. Only `video_tags` rows go: the
+/// `tags` row stays (as in `remove_tag_from_video`), videos outside the list
+/// are untouched, and an unknown video id or tag id simply matches nothing and
+/// is not an error. Duplicate ids are harmless.
+pub fn remove_tag_from_videos(
+    conn: &mut Connection,
+    video_ids: &[String],
+    tag_id: i64,
+) -> rusqlite::Result<()> {
+    remove_tag_from_videos_chunked(conn, video_ids, tag_id, VIDEO_ID_CHUNK)
+}
+
+fn remove_tag_from_videos_chunked(
+    conn: &mut Connection,
+    video_ids: &[String],
+    tag_id: i64,
+    chunk: usize,
+) -> rusqlite::Result<()> {
+    let ids = dedup_ids(video_ids);
+    let tx = conn.transaction()?;
+    for part in ids.chunks(chunk) {
+        let sql = format!(
+            "DELETE FROM video_tags WHERE tag_id = ? AND video_id IN ({})",
+            placeholders(part.len())
+        );
+        let params = std::iter::once(rusqlite::types::Value::Integer(tag_id)).chain(
+            part.iter()
+                .map(|id| rusqlite::types::Value::Text((*id).to_string())),
+        );
+        tx.execute(&sql, rusqlite::params_from_iter(params))?;
+    }
+    tx.commit()
+}
+
+/// The tags carried by at least one of the given videos, with how many of
+/// them carry each (`video_count`), in the user's tag order. Ids that match no
+/// video are not counted, and a repeated id counts once. The chunked counts are
+/// read in one transaction so they come from a single snapshot.
+pub fn list_tag_usage_for_videos(
+    pool: &r2d2::Pool<SqliteConnectionManager>,
+    video_ids: &[String],
+) -> anyhow::Result<Vec<TagWithCountRow>> {
+    list_tag_usage_for_videos_chunked(pool, video_ids, VIDEO_ID_CHUNK)
+}
+
+fn list_tag_usage_for_videos_chunked(
+    pool: &r2d2::Pool<SqliteConnectionManager>,
+    video_ids: &[String],
+    chunk: usize,
+) -> anyhow::Result<Vec<TagWithCountRow>> {
+    let ids = dedup_ids(video_ids);
+    let mut conn = pool.get()?;
+    let tx = conn.transaction()?;
+
+    let mut counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    for part in ids.chunks(chunk) {
+        let sql = format!(
+            "SELECT vt.tag_id, COUNT(*) FROM video_tags vt
+             JOIN videos v ON v.id = vt.video_id
+             WHERE vt.video_id IN ({}) GROUP BY vt.tag_id",
+            placeholders(part.len())
+        );
+        let mut stmt = tx.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(part.iter()), |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (tag_id, n) = row?;
+            *counts.entry(tag_id).or_insert(0) += n;
+        }
+    }
+    if counts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut stmt =
+        tx.prepare("SELECT id, name FROM tags ORDER BY (sort_order IS NULL), sort_order, name")?;
+    let tags = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(tags
+        .into_iter()
+        .filter_map(|(id, name)| {
+            counts.get(&id).map(|&video_count| TagWithCountRow {
+                id,
+                name,
+                video_count,
+            })
+        })
+        .collect())
+}
+
 pub fn list_tags_for_video(
     pool: &r2d2::Pool<SqliteConnectionManager>,
     video_id: &str,
@@ -339,5 +452,83 @@ mod delete_tag_tests {
             .query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))
             .unwrap();
         assert_eq!(tags, 1);
+    }
+}
+
+#[cfg(test)]
+mod chunked_bulk_tests {
+    use super::*;
+    use crate::db::test_support::{init_temp_db, insert_test_video};
+
+    fn seed(db: &crate::db::Db, n: usize) -> Vec<String> {
+        let names: Vec<String> = (0..n).map(|i| format!("v{i}")).collect();
+        for name in &names {
+            insert_test_video(db, name, &format!("D:\\v\\{name}.mp4"));
+        }
+        let conn = db.writer.lock().unwrap();
+        conn.execute("INSERT INTO tags (id, name) VALUES (1, 'a')", [])
+            .unwrap();
+        for name in &names {
+            conn.execute(
+                "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, 1)",
+                params![name],
+            )
+            .unwrap();
+        }
+        names
+    }
+
+    #[test]
+    fn usage_counts_are_merged_across_chunks() {
+        let (_dir, db) = init_temp_db();
+        let names = seed(&db, 7);
+        // Request a duplicate and an unknown id too; neither may be counted.
+        let mut request = names.clone();
+        request.push("v0".into());
+        request.push("ghost".into());
+
+        let usage = list_tag_usage_for_videos_chunked(&db.read_pool, &request, 2).unwrap();
+
+        assert_eq!(usage.len(), 1);
+        assert_eq!((usage[0].id, usage[0].video_count), (1, 7));
+    }
+
+    #[test]
+    fn removal_spans_chunks_and_spares_unlisted_videos() {
+        let (_dir, db) = init_temp_db();
+        let names = seed(&db, 7);
+        let mut conn = db.writer.lock().unwrap();
+
+        remove_tag_from_videos_chunked(&mut conn, &names[..6], 1, 2).unwrap();
+
+        let left: Vec<String> = conn
+            .prepare("SELECT video_id FROM video_tags")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, vec!["v6".to_string()]);
+    }
+
+    #[test]
+    fn failure_in_a_later_chunk_rolls_back_earlier_chunks() {
+        let (_dir, db) = init_temp_db();
+        let names = seed(&db, 6);
+        let mut conn = db.writer.lock().unwrap();
+        conn.execute(
+            "CREATE TRIGGER fail_on_v5 BEFORE DELETE ON video_tags
+             WHEN OLD.video_id = 'v5'
+             BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;",
+            [],
+        )
+        .unwrap();
+
+        assert!(remove_tag_from_videos_chunked(&mut conn, &names, 1, 2).is_err());
+
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM video_tags", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 6);
     }
 }
