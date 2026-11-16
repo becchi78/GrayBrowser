@@ -135,10 +135,42 @@ try {
         Write-Host "Removed stale exe: $staleExe"
     }
 
+    # Cargoの鮮度判定はソースのmtimeと成果物のmtimeの比較で、fingerprintは
+    # worktreeをまたいで共有される。別worktreeが作った古いワークスペース成果物が
+    # 「最新」と誤判定され、ソースが古いworktreeで再利用される（E0603等で失敗、
+    # 最悪は別の版のコードでビルドが通る）。ワークスペースメンバーだけを毎回
+    # cleanして防ぐ。依存クレートは残るため再ビルドは数十秒程度（debugの実測）で済む。
+    # cleanの失敗はビルドの成否に無関係なので警告のみで続行する。
+    $cleanArgs = @("clean", "-p", "gb-core", "-p", "graybrowser")
+    if ($Profile -eq "release") { $cleanArgs += "--release" }
+    Write-Host "Cleaning workspace members to avoid reusing stale artifacts (cargo $($cleanArgs -join ' '))..."
+    & cargo @cleanArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "cargo clean に失敗しました（終了コード $LASTEXITCODE）。ビルドは続行しますが、古い成果物が再利用される可能性があります。"
+    }
+
+    # ビルド出力をそのまま表示しつつ保持し、失敗時に原因の手がかり（errorの行）を
+    # 末尾へ再掲する。長いログの途中に埋もれたエラーを探させないため。
+    function Invoke-BuildStep([string]$Label, [scriptblock]$Command) {
+        $lines = [System.Collections.Generic.List[string]]::new()
+        & $Command 2>&1 | ForEach-Object {
+            $text = "$_"
+            $lines.Add($text)
+            Write-Host $text
+        }
+        if ($LASTEXITCODE -ne 0) {
+            $errorLines = @($lines | Where-Object { $_ -match '^\s*(error(\[E\d+\])?:|Error )' } | Select-Object -Last 15)
+            if ($errorLines.Count -gt 0) {
+                Write-Host "--- $Label のエラー抜粋（末尾15件まで） ---"
+                $errorLines | ForEach-Object { Write-Host $_ }
+            }
+            throw "$Label failed with exit code $LASTEXITCODE"
+        }
+    }
+
     if ($Profile -eq "release") {
         Write-Host "Building release (npm run tauri build -- --no-bundle; frontend build runs automatically via beforeBuildCommand)..."
-        npm run tauri build -- --no-bundle
-        if ($LASTEXITCODE -ne 0) { throw "npm run tauri build failed with exit code $LASTEXITCODE" }
+        Invoke-BuildStep "npm run tauri build" { npm run tauri build -- --no-bundle }
         $exePath = Join-Path $SandboxRoot "release\GrayBrowser.exe"
     }
     else {
@@ -153,8 +185,7 @@ try {
         # WebView2's ERR_CONNECTION_REFUSED instead of the app.
         # Passing the feature explicitly makes it load the `dist/` output
         # from `npm run build` above, the same as a real `cargo tauri build`.
-        cargo build -p graybrowser --features tauri/custom-protocol
-        if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+        Invoke-BuildStep "cargo build" { cargo build -p graybrowser --features tauri/custom-protocol }
         $exePath = Join-Path $SandboxRoot "debug\graybrowser.exe"
     }
 
