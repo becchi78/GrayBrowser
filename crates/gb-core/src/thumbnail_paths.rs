@@ -3,7 +3,7 @@
 
 use xxhash_rust::xxh64::xxh64;
 
-use crate::paths::{is_path_under_folder, normalize_folder_path};
+use crate::paths::{normalize_folder_path, owning_folder};
 
 /// Seed for `thumbnail_folder_subdir`'s `xxh64` hash. A fixed constant
 /// (rather than `0`-by-convention like `hash::quick_hash`'s
@@ -46,19 +46,16 @@ pub const THUMBNAIL_UNASSIGNED_SUBDIR: &str = "_unassigned";
 /// registered folder `file_path` falls under, or
 /// `THUMBNAIL_UNASSIGNED_SUBDIR` if none does.
 ///
-/// `folder_paths_conflict` is enforced at registration time to reject
-/// nested watch folders, so more than one match should not normally occur
-/// -- but a rename can transiently leave `file_path` matching more than one
-/// entry in `watch_folders` (e.g. mid-rename bookkeeping, or a future
-/// relaxation of that constraint), so this defensively picks the most
-/// specific (longest normalized path) match rather than an arbitrary one.
+/// The folder is chosen by `owning_folder`, the same rule that decides which
+/// videos a newly added folder takes over. If the two disagreed, moving
+/// thumbnails on folder registration would skip videos that the placement
+/// rule later files elsewhere. `owning_folder` also resolves transient nested
+/// registrations to the most specific folder.
 pub fn resolve_thumbnail_subdir(watch_folders: &[String], file_path: &str) -> String {
-    watch_folders
-        .iter()
-        .filter(|folder| is_path_under_folder(file_path, folder))
-        .max_by_key(|folder| normalize_folder_path(folder).len())
-        .map(|folder| thumbnail_folder_subdir(folder))
-        .unwrap_or_else(|| THUMBNAIL_UNASSIGNED_SUBDIR.to_string())
+    match owning_folder(file_path, watch_folders) {
+        Some(folder) => thumbnail_folder_subdir(folder),
+        None => THUMBNAIL_UNASSIGNED_SUBDIR.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -129,23 +126,58 @@ mod tests {
     }
 
     #[test]
-    fn resolve_thumbnail_subdir_resolves_the_folder_itself_to_its_own_subdir() {
+    fn resolve_thumbnail_subdir_does_not_assign_the_folder_itself() {
+        // A file cannot be the folder, and `owning_folder` only counts
+        // strict descendants, so the same rule must not file it anywhere.
         let folders = vec![r"C:\Videos".to_string()];
         assert_eq!(
             resolve_thumbnail_subdir(&folders, r"C:\Videos"),
+            THUMBNAIL_UNASSIGNED_SUBDIR
+        );
+    }
+
+    #[test]
+    fn resolve_thumbnail_subdir_folds_forward_slashes_like_owning_folder() {
+        // The path comparison treats `/` and `\` as the same separator, so a
+        // `/`-separated path under a registered folder is that folder's. The
+        // folder-name hash is unchanged, so existing thumbnails stay valid.
+        let folders = vec![r"C:\Videos".to_string()];
+        assert_eq!(
+            resolve_thumbnail_subdir(&folders, "C:/Videos/a.mp4"),
             thumbnail_folder_subdir(r"C:\Videos")
         );
     }
 
     #[test]
-    fn resolve_thumbnail_subdir_does_not_fold_forward_slashes() {
-        // Pins current behaviour: the subdirectory name hashes the folder
-        // string, and thumbnails already written under it must stay
-        // reachable, so a `/`-separated path is not re-homed here.
+    fn resolve_thumbnail_subdir_is_case_insensitive() {
         let folders = vec![r"C:\Videos".to_string()];
         assert_eq!(
-            resolve_thumbnail_subdir(&folders, "C:/Videos/a.mp4"),
-            THUMBNAIL_UNASSIGNED_SUBDIR
+            resolve_thumbnail_subdir(&folders, r"c:\VIDEOS\a.mp4"),
+            thumbnail_folder_subdir(r"C:\Videos")
+        );
+    }
+
+    #[test]
+    fn resolve_thumbnail_subdir_agrees_with_owning_folder_for_nested_slash_folders() {
+        let folders = vec!["D:/v/".to_string(), "D:/v/sub".to_string()];
+        for path in [
+            r"D:\v\a.mp4",
+            r"D:\v\sub\a.mp4",
+            "D:/v/sub/a.mp4",
+            r"D:\v2\a.mp4",
+        ] {
+            let expected = owning_folder(path, &folders)
+                .map(thumbnail_folder_subdir)
+                .unwrap_or_else(|| THUMBNAIL_UNASSIGNED_SUBDIR.to_string());
+            assert_eq!(resolve_thumbnail_subdir(&folders, path), expected, "{path}");
+        }
+        assert_eq!(
+            resolve_thumbnail_subdir(&folders, r"D:\v\sub\a.mp4"),
+            thumbnail_folder_subdir("D:/v/sub")
+        );
+        assert_eq!(
+            resolve_thumbnail_subdir(&folders, r"D:\v\a.mp4"),
+            thumbnail_folder_subdir("D:/v/")
         );
     }
 
