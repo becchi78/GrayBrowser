@@ -38,6 +38,7 @@ mod general;
 mod import_log;
 mod name_link;
 mod path_restore;
+mod path_separators;
 mod progress;
 mod thumbnail_link;
 mod thumbnail_split;

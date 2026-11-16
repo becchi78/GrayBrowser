@@ -417,6 +417,17 @@ pub struct ImportCandidate {
     pub last_date: String,
 }
 
+/// Folds every `/` in a `.wb` path to `\`.
+///
+/// `videos.file_path` is matched byte for byte (UNIQUE, registered-folder
+/// prefixes, duplicate checks) and the rest of the app writes `\` only, so a
+/// `/` form would be a different row and a different folder from the same
+/// file. Replacing every `/` also turns `//server/share` into the UNC form
+/// `\\server\share` and `//?/` into `\\?\`.
+pub fn normalize_wb_path_separators(path: &str) -> String {
+    path.replace('/', "\\")
+}
+
 /// Converts one `.wb` `movie` row into an import candidate.
 pub fn wb_row_to_import_candidate(row: &WbMovieRow) -> Result<ImportCandidate, WbImportError> {
     // A star tag wins over `score`: the user typed it deliberately, whereas
@@ -424,7 +435,7 @@ pub fn wb_row_to_import_candidate(row: &WbMovieRow) -> Result<ImportCandidate, W
     let (tags, star_rating) = split_tags_and_star_rating(&row.tag);
     Ok(ImportCandidate {
         movie_name: row.movie_name.clone(),
-        movie_path: row.movie_path.clone(),
+        movie_path: normalize_wb_path_separators(&row.movie_path),
         tags,
         rating: star_rating.unwrap_or_else(|| parse_score_to_rating(row.score)),
         rating_from_star_tags: star_rating.is_some(),
@@ -501,6 +512,42 @@ impl WbImportStage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_folds_forward_slashes_to_backslashes() {
+        assert_eq!(normalize_wb_path_separators(r"D:/v/a.mp4"), r"D:\v\a.mp4");
+        assert_eq!(normalize_wb_path_separators(r"D:\v/a.mp4"), r"D:\v\a.mp4");
+    }
+
+    #[test]
+    fn normalize_leaves_backslash_paths_and_empty_alone() {
+        assert_eq!(normalize_wb_path_separators(r"D:\v\a.mp4"), r"D:\v\a.mp4");
+        assert_eq!(normalize_wb_path_separators(""), "");
+    }
+
+    #[test]
+    fn normalize_handles_unc_and_verbatim_prefixes() {
+        assert_eq!(
+            normalize_wb_path_separators("//server/share/a.mp4"),
+            r"\\server\share\a.mp4"
+        );
+        assert_eq!(
+            normalize_wb_path_separators("//?/D:/a.mp4"),
+            r"\\?\D:\a.mp4"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_question_marks() {
+        assert_eq!(normalize_wb_path_separators("D:/v/a?.mp4"), r"D:\v\a?.mp4");
+    }
+
+    #[test]
+    fn candidate_movie_path_uses_backslashes() {
+        let c = wb_row_to_import_candidate(&row(|r| r.movie_path = "T:/videos/movie.mp4".into()))
+            .unwrap();
+        assert_eq!(c.movie_path, r"T:\videos\movie.mp4");
+    }
 
     #[test]
     fn stage_names_are_distinct_and_stable() {

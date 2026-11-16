@@ -16,7 +16,9 @@ use gb_core::ports::volume_label::VolumeLabelResolver;
 use gb_core::ports::wb_import_clock::{ClockReading, WbImportClock};
 use gb_core::ports::wb_import_log::WbImportLog;
 use gb_core::ports::wb_source::{WbMovieRow, WbSourceAdapter};
-use gb_core::wb_import::{count_clamped_scores, count_source_tags, WbImportStage};
+use gb_core::wb_import::{
+    count_clamped_scores, count_source_tags, normalize_wb_path_separators, WbImportStage,
+};
 use gb_core::wb_import_log as wb_log;
 use gb_core::wb_thumbnail_split::ThumbLayout;
 
@@ -245,9 +247,15 @@ fn import_all<S, F, N, C, W, D, P, V, K, L>(
         source_tag_count: count_source_tags(&rows) as u32,
     };
 
+    // The log keeps the path as the `.wb` wrote it (`wb_paths`); everything
+    // that judges or stores a path sees the `\` form, so the share probe and
+    // the stored `file_path` cannot disagree on which share a row lives on.
+    let wb_paths: Vec<String> = rows.iter().map(|r| r.movie_path.clone()).collect();
+    for row in &mut rows {
+        row.movie_path = normalize_wb_path_separators(&row.movie_path);
+    }
     // Before the share probe: a rewritten path names a real drive, which the
     // probe, the `?` restoration and the file checks below must all see.
-    let wb_paths: Vec<String> = rows.iter().map(|r| r.movie_path.clone()).collect();
     let label_report = resolve_volume_labels(&mut rows, volume_labels);
     import_log.append(&wb_log::format_volume_labels(&label_report.logs));
 
