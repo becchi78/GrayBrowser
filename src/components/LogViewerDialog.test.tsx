@@ -286,3 +286,18 @@ test("追従をオンに戻すと、末尾へ寄せる", async () => {
   expect(follow()).toBeChecked();
   expect(s.top()).toBe(1000);
 });
+
+test("追従を切っている間のスクロール位置も覚えており、追従を戻した後に同じ位置で届くスクロールでは切れない", async () => {
+  await renderDialog();
+  const s = stubScroll({ scrollHeight: 1000, clientHeight: 200 });
+  s.scrollTo(100);
+  expect(follow()).not.toBeChecked();
+  s.scrollTo(300);
+
+  fireEvent.click(follow());
+  expect(follow()).toBeChecked();
+  // 追従で末尾へ寄せた後、縦位置が最後に見た位置と同じまま届くスクロール(横だけの動き)。
+  s.scrollTo(300);
+
+  expect(follow()).toBeChecked();
+});

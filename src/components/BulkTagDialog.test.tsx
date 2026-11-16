@@ -1,6 +1,6 @@
 // BulkTagDialog の候補の選択と、タグの付与の成否を確かめる。
 // 候補の絞り込み規則は lib/bulkTag のテストが持つので、ここでは画面への出方を見る。
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import { deferred } from "../testing/async";
@@ -154,3 +154,19 @@ function renderWithProvidersWithoutTags() {
   );
   return { ...view, onClose };
 }
+
+test("付与の実行中は、Escape でも背景のクリックでも閉じず、再送信もされない", async () => {
+  const pending = deferred<never>();
+  vi.mocked(api.assignTagToVideos).mockReturnValue(pending.promise);
+  const { user, onClose } = await renderDialog();
+  await user.type(input(), "猫");
+  await user.click(submit());
+  expect(submit()).toBeDisabled();
+
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByTestId("bulk-tag-dialog").parentElement!);
+  fireEvent.submit(input().closest("form")!);
+
+  expect(onClose).not.toHaveBeenCalled();
+  expect(api.assignTagToVideos).toHaveBeenCalledTimes(1);
+});

@@ -174,3 +174,16 @@ test("動画が変わった後に、前の動画のタグの応答が遅れて�
   expect(chipNames()).toEqual(["犬"]);
   expect(within(editor()).queryByText("猫")).toBeNull();
 });
+
+test("外すのに成功すると、前の操作のエラーは消える", async () => {
+  vi.mocked(api.removeTag).mockRejectedValueOnce(new Error("外せない"));
+  const { user } = await renderEditor();
+  await user.click(screen.getByRole("button", { name: "猫を削除" }));
+  expect(editor()).toHaveTextContent("外せない");
+  vi.mocked(api.listTagsForVideo).mockResolvedValue([]);
+
+  await user.click(screen.getByRole("button", { name: "猫を削除" }));
+
+  expect(editor()).not.toHaveTextContent("外せない");
+  expect(chipNames()).toEqual([]);
+});

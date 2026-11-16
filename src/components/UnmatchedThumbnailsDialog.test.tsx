@@ -299,3 +299,21 @@ test("紐付けの開始から再描画までの間に重ねて押されても�
 
   expect(api.linkUnmatchedThumbnail).toHaveBeenCalledTimes(1);
 });
+
+test("失敗した後も操作のロックは残らず、続けて別の行を操作できる", async () => {
+  vi.mocked(api.dismissUnmatchedThumbnail).mockRejectedValueOnce(new Error("書き込めない"));
+  await renderDialog();
+  fireEvent.click(within(rows()[0]).getByTestId("unmatched-dismiss-btn"));
+  await settle();
+  expect(rows()).toHaveLength(2);
+
+  // 失敗した行の次に、別の行の操作が受け付けられること(ロックが残っていないこと)を確かめる。
+  act(() => {
+    within(rows()[1]).getByTestId("unmatched-dismiss-btn").click();
+  });
+  await settle();
+
+  expect(api.dismissUnmatchedThumbnail).toHaveBeenCalledTimes(2);
+  expect(api.dismissUnmatchedThumbnail).toHaveBeenLastCalledWith("C:\\old", "b.jpg");
+  expect(rows()).toHaveLength(1);
+});
