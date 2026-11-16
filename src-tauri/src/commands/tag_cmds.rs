@@ -42,16 +42,9 @@ pub fn assign_tag(
     Ok(tag)
 }
 
-#[derive(Serialize, Clone)]
-pub struct AssignTagResultDto {
-    pub tag: TagDto,
-    pub newly_tagged: u32,
-    pub already_tagged: u32,
-    pub missing: u32,
-}
-
 /// Assigns one tag to many videos at once. Videos that already have it or no
-/// longer exist are reported in the counts rather than failing the batch.
+/// longer exist are skipped rather than failing the batch; the per-case counts
+/// stay in the db layer's outcome, since the caller has no use for them.
 // async: a large batch holds the writer lock for the whole transaction, so
 // keep it off the main thread.
 #[tauri::command(async)]
@@ -60,18 +53,12 @@ pub fn assign_tag_to_videos(
     db: State<Db>,
     video_ids: Vec<String>,
     tag_name: String,
-) -> Result<AssignTagResultDto, String> {
+) -> Result<(), String> {
     let mut conn = db.writer.lock().unwrap();
-    let outcome = queries::assign_tag_to_videos(&mut conn, &video_ids, &tag_name)
-        .map_err(|e| e.to_string())?;
+    queries::assign_tag_to_videos(&mut conn, &video_ids, &tag_name).map_err(|e| e.to_string())?;
     drop(conn);
     TauriCatalogNotifier::new(app).notify_changed();
-    Ok(AssignTagResultDto {
-        tag: outcome.tag.into(),
-        newly_tagged: outcome.newly_tagged,
-        already_tagged: outcome.already_tagged,
-        missing: outcome.missing,
-    })
+    Ok(())
 }
 
 /// Un-assigns a tag from a video. Does not delete the tag itself (see

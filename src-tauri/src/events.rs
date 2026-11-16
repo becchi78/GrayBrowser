@@ -165,6 +165,9 @@ pub struct WbImportSummary {
     pub source_tag_count: u32,
     /// Newly registered videos whose rating came from a star-only tag
     /// instead of `score`. Skipped (already registered) rows are not counted.
+    /// Not sent to the frontend (the result screen does not show it); it feeds
+    /// the import log and the completion log line.
+    #[serde(skip_serializing)]
     pub ratings_from_star_tags: u32,
     /// **Offline rows only.** Legacy JPG thumbnails converted to WebP and
     /// linked to their video (`gb_core::wb_import::match_thumbnail_files`'s
@@ -195,7 +198,10 @@ pub struct WbImportSummary {
     pub thumbnails_unmatched_empty_hash: u32,
     /// Legacy JPG files whose hash belongs to an *online* row. Not migrated
     /// on purpose (the thumbnail is generated from the video itself), so
-    /// they are excluded from `thumbnails_unmatched`.
+    /// they are excluded from `thumbnails_unmatched`. Not sent to the
+    /// frontend (the result screen deliberately does not show it); it feeds
+    /// the import log and the completion log line.
+    #[serde(skip_serializing)]
     pub thumbnails_skipped_online: u32,
     /// Folders newly added to the watch-folder list by this import (empty when
     /// the user opted out, or every parent folder was already watched).

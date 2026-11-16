@@ -8,11 +8,8 @@ export interface VideoDto {
   file_name: string;
   file_size: number;
   duration: number | null;
-  quick_hash: string;
-  full_hash: string | null;
   status: "online" | "offline";
   rating: number;
-  created_at: string;
   thumbnail_ready: boolean;
   /** 自動の再試行を使い切っても、まだサムネイルがない状態。 */
   thumbnail_failed: boolean;
@@ -24,7 +21,6 @@ export interface SkippedFileDto {
   file_name: string;
   reason: string;
   detected_char: string | null;
-  detected_at: string;
   /** 元のファイルが確実にないと確認できた行。 */
   file_missing: boolean;
 }
@@ -36,8 +32,6 @@ export interface MissingRegistrationResult {
 
 export interface FfmpegStatusDto {
   available: boolean;
-  ffmpeg_version: string | null;
-  ffprobe_version: string | null;
 }
 
 export interface TagDto {
@@ -47,13 +41,6 @@ export interface TagDto {
 
 export interface TagWithCountDto extends TagDto {
   video_count: number;
-}
-
-export interface AssignTagResultDto {
-  tag: TagDto;
-  newly_tagged: number;
-  already_tagged: number;
-  missing: number;
 }
 
 // Mirrors src-tauri's SortFieldParam/SortDirectionParam (serde
@@ -104,8 +91,6 @@ export interface WbImportSummary {
    * import dialog can tell "tags_assigned === 0 because the source had
    * none" apart from "...because something went wrong". */
   source_tag_count: number;
-  /** Newly registered videos whose rating came from a ★-only tag. */
-  ratings_from_star_tags: number;
   thumbnails_linked: number;
   /** thumbnails_linked のうち、名前の一致で自動的に紐付けたもの。 */
   thumbnails_linked_by_name: number;
@@ -113,7 +98,6 @@ export interface WbImportSummary {
   thumbnails_unmatched: number;
   /** thumbnails_unmatched のうち、ファイル名のハッシュが空のもの。 */
   thumbnails_unmatched_empty_hash: number;
-  thumbnails_skipped_online: number;
   /** Folders this import newly added to the watch-folder list. */
   watch_folders_added: string[];
   watch_folders_skipped_roots: string[];
@@ -209,8 +193,6 @@ export interface ScanSummary {
   went_offline: number;
   /** An offline row matched by quick_hash+file_size at a new path and reactivated there. */
   reactivated: number;
-  /** A path-follow candidate existed but its target path collided with an online row; registered as a new row instead. */
-  collisions: number;
   /** Watch folders skipped because they could not be reached; they are neither scanned nor marked offline. */
   unreachable_folders: string[];
 }
@@ -222,7 +204,6 @@ export interface ThumbnailProgress {
 }
 
 export interface RenameSkippedFileResult {
-  new_file_name: string;
   registered: boolean;
 }
 

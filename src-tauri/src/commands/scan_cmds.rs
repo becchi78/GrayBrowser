@@ -22,11 +22,8 @@ pub struct VideoDto {
     pub file_name: String,
     pub file_size: i64,
     pub duration: Option<i64>,
-    pub quick_hash: String,
-    pub full_hash: Option<String>,
     pub status: String,
     pub rating: i64,
-    pub created_at: String,
     pub thumbnail_ready: bool,
     /// Automatic retries are used up and there is still no thumbnail, so the
     /// row should say it failed instead of "generating" forever.
@@ -57,11 +54,8 @@ impl VideoDto {
             file_name: row.file_name,
             file_size: row.file_size,
             duration: row.duration,
-            quick_hash: row.quick_hash,
-            full_hash: row.full_hash,
             status: row.status,
             rating: row.rating,
-            created_at: row.created_at,
             thumbnail_ready: row.thumbnail_ready,
             thumbnail_failed,
         }
@@ -120,7 +114,6 @@ pub struct SkippedFileDto {
     pub file_name: String,
     pub reason: String,
     pub detected_char: Option<String>,
-    pub detected_at: String,
     /// The file is verifiably gone (not merely unreachable), so the row can
     /// be dismissed but not renamed.
     pub file_missing: bool,
@@ -134,7 +127,6 @@ impl SkippedFileDto {
             file_name: row.file_name,
             reason: row.reason,
             detected_char: row.detected_char,
-            detected_at: row.detected_at,
             file_missing,
         }
     }

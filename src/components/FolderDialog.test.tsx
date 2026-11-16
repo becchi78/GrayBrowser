@@ -27,7 +27,6 @@ const SUMMARY: ScanSummary = {
   skipped: 1,
   went_offline: 0,
   reactivated: 0,
-  collisions: 0,
   unreachable_folders: [],
 };
 const SUMMARY_TEXT =

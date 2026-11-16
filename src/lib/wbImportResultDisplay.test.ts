@@ -100,19 +100,6 @@ test("ドライブ文字に直せなかったときだけ、ラベルと案内�
   assert.match(item.text, /登録から削除/);
 });
 
-test("オンライン動画の旧サムネイルは、件数も注記も一切出さない", () => {
-  const d = buildWbImportResultDisplay(
-    makeSummary({
-      total: 126,
-      registered: 126,
-      registered_online: 126,
-      thumbnails_skipped_online: 82,
-    }),
-  );
-  assert.deepEqual(d.attention, []);
-  assert.deepEqual(d.details, []);
-});
-
 test("登録済みのためスキップした行は情報として出し、0件なら出さない", () => {
   const d = buildWbImportResultDisplay(makeSummary({ total: 8, skipped: 8 }));
   assert.equal(d.skippedText, "登録済みのためスキップ: 8件");
@@ -191,13 +178,6 @@ test("全行が機種依存文字で未登録でも、タグの失敗とは表�
     makeSummary({ total: 3, skipped_invalid_name: 3, source_tag_count: 5 }),
   );
   assert.deepEqual(keys(d.attention), ["invalid-name"]);
-});
-
-test("★タグから評価にした件数は表示しない", () => {
-  const d = buildWbImportResultDisplay(
-    makeSummary({ total: 5, registered: 5, ratings_from_star_tags: 4 }),
-  );
-  assert.deepEqual(d.details, []);
 });
 
 test("詳細は0件の項目を出さず、非0なら決まった順で並ぶ", () => {
