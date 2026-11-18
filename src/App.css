@@ -2074,6 +2074,11 @@ button.link-button:focus-visible {
   font-size: 0.9em;
 }
 
+.bulk-tag-candidate[aria-pressed="true"] {
+  border-color: var(--accent);
+  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+}
+
 .bulk-tag-error {
   margin: 0;
   color: var(--error-text);
@@ -2096,20 +2101,6 @@ button.link-button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.75em;
-}
-
-.bulk-tag-usage {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3em;
-  max-height: 14em;
-  overflow-y: auto;
-}
-
-.bulk-tag-usage-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
 }
 
 .log-viewer-dialog {

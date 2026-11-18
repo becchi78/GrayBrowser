@@ -8,7 +8,7 @@ pub struct TagRow {
     pub name: String,
 }
 
-/// Errors from `assign_tag_to_video`. Deliberately hand-rolled (no
+/// Errors from `assign_tag_to_video` and `assign_tags_to_videos`. Deliberately hand-rolled (no
 /// `thiserror`) rather than pulling in a new `src-tauri` dependency for a
 /// single error enum -- `thiserror` is already a `gb-core`-only dependency,
 /// and adding it here would touch `Cargo.toml`/`Cargo.lock` for no real
@@ -130,70 +130,52 @@ pub fn assign_tag_to_video(
     Ok(tag)
 }
 
-/// Result of `assign_tag_to_videos`: how the requested videos split between
-/// newly tagged, already carrying the tag, and no longer in the catalog.
-pub struct AssignTagOutcome {
-    pub tag: TagRow,
-    pub newly_tagged: u32,
-    pub already_tagged: u32,
-    pub missing: u32,
-}
-
-/// Assigns one tag (by raw, user-typed name) to many videos in a single
-/// transaction. The name is normalized once up front so an invalid name
-/// changes nothing. Unlike the single-video variant, an unknown id is not an
-/// error: a video can be removed or moved between the selection and the
-/// action, and one stale id must not block tagging the rest, so it is counted
-/// in `missing` instead. Duplicate ids are counted once. The tag row is
-/// created even when no listed video exists, since the caller gets the tag
-/// back either way and the single-video path already leaves reusable tags.
-pub fn assign_tag_to_videos(
+/// Assigns several tags (by raw, user-typed names) to many videos in a single
+/// transaction, so a failure part-way leaves no tag created and no video
+/// tagged. Every name is normalized up front, so one invalid name changes
+/// nothing; names that normalize to the same string are applied once. Unlike
+/// the single-video variant, an unknown video id is not an error: a video can
+/// be removed or moved between the selection and the action, and one stale id
+/// must not block tagging the rest. Duplicate ids are applied once. The tag
+/// rows are created even when no listed video exists, since the single-video
+/// path already leaves reusable tags. Returns the tags in first-seen order.
+pub fn assign_tags_to_videos(
     conn: &mut Connection,
     video_ids: &[String],
-    raw_tag_name: &str,
-) -> Result<AssignTagOutcome, TagMutationError> {
-    let normalized_name = gb_core::tags::normalize_tag_name(raw_tag_name)?;
+    raw_tag_names: &[String],
+) -> Result<Vec<TagRow>, TagMutationError> {
+    let mut names = Vec::with_capacity(raw_tag_names.len());
+    for raw in raw_tag_names {
+        let normalized = gb_core::tags::normalize_tag_name(raw)?;
+        if !names.contains(&normalized) {
+            names.push(normalized);
+        }
+    }
 
     let tx = conn.transaction()?;
-    let tag = get_or_create_tag(&tx, &normalized_name)?;
+    let tags = names
+        .iter()
+        .map(|name| get_or_create_tag(&tx, name))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    let mut seen = std::collections::HashSet::new();
-    let (mut newly_tagged, mut already_tagged, mut missing) = (0u32, 0u32, 0u32);
-    for video_id in video_ids {
-        if !seen.insert(video_id.as_str()) {
-            continue;
-        }
-        let video_exists = tx
-            .query_row(
-                "SELECT 1 FROM videos WHERE id = ?1",
-                params![video_id],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if !video_exists {
-            missing += 1;
-            continue;
-        }
-        let inserted = tx.execute(
+    {
+        let mut exists = tx.prepare("SELECT 1 FROM videos WHERE id = ?1")?;
+        let mut insert = tx.prepare(
             "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, ?2)
              ON CONFLICT(video_id, tag_id) DO NOTHING",
-            params![video_id, tag.id],
         )?;
-        if inserted > 0 {
-            newly_tagged += 1;
-        } else {
-            already_tagged += 1;
+        for video_id in dedup_ids(video_ids) {
+            if !exists.exists(params![video_id])? {
+                continue;
+            }
+            for tag in &tags {
+                insert.execute(params![video_id, tag.id])?;
+            }
         }
     }
 
     tx.commit()?;
-    Ok(AssignTagOutcome {
-        tag,
-        newly_tagged,
-        already_tagged,
-        missing,
-    })
+    Ok(tags)
 }
 
 /// Un-assigns a tag from a video. Deletes only the `video_tags` row --
@@ -236,37 +218,41 @@ fn placeholders(n: usize) -> String {
     vec!["?"; n].join(",")
 }
 
-/// Un-assigns one tag from many videos in a single transaction, so a failure
-/// part-way leaves every video as it was. Only `video_tags` rows go: the
-/// `tags` row stays (as in `remove_tag_from_video`), videos outside the list
-/// are untouched, and an unknown video id or tag id simply matches nothing and
-/// is not an error. Duplicate ids are harmless.
-pub fn remove_tag_from_videos(
+/// Un-assigns several tags from many videos in a single transaction, so a
+/// failure part-way leaves every video as it was. Only `video_tags` rows go:
+/// the `tags` rows stay (as in `remove_tag_from_video`), videos outside the
+/// list and tags outside `tag_ids` are untouched, and an unknown video id or
+/// tag id simply matches nothing and is not an error. Duplicate ids on either
+/// side are harmless.
+pub fn remove_tags_from_videos(
     conn: &mut Connection,
     video_ids: &[String],
-    tag_id: i64,
+    tag_ids: &[i64],
 ) -> rusqlite::Result<()> {
-    remove_tag_from_videos_chunked(conn, video_ids, tag_id, VIDEO_ID_CHUNK)
+    remove_tags_from_videos_chunked(conn, video_ids, tag_ids, VIDEO_ID_CHUNK)
 }
 
-fn remove_tag_from_videos_chunked(
+fn remove_tags_from_videos_chunked(
     conn: &mut Connection,
     video_ids: &[String],
-    tag_id: i64,
+    tag_ids: &[i64],
     chunk: usize,
 ) -> rusqlite::Result<()> {
     let ids = dedup_ids(video_ids);
+    let tag_ids = gb_core::tags::dedup_keep_first(tag_ids);
     let tx = conn.transaction()?;
-    for part in ids.chunks(chunk) {
-        let sql = format!(
-            "DELETE FROM video_tags WHERE tag_id = ? AND video_id IN ({})",
-            placeholders(part.len())
-        );
-        let params = std::iter::once(rusqlite::types::Value::Integer(tag_id)).chain(
-            part.iter()
-                .map(|id| rusqlite::types::Value::Text((*id).to_string())),
-        );
-        tx.execute(&sql, rusqlite::params_from_iter(params))?;
+    for tag_id in tag_ids {
+        for part in ids.chunks(chunk) {
+            let sql = format!(
+                "DELETE FROM video_tags WHERE tag_id = ? AND video_id IN ({})",
+                placeholders(part.len())
+            );
+            let params = std::iter::once(rusqlite::types::Value::Integer(tag_id)).chain(
+                part.iter()
+                    .map(|id| rusqlite::types::Value::Text((*id).to_string())),
+            );
+            tx.execute(&sql, rusqlite::params_from_iter(params))?;
+        }
     }
     tx.commit()
 }
@@ -499,7 +485,7 @@ mod chunked_bulk_tests {
         let names = seed(&db, 7);
         let mut conn = db.writer.lock().unwrap();
 
-        remove_tag_from_videos_chunked(&mut conn, &names[..6], 1, 2).unwrap();
+        remove_tags_from_videos_chunked(&mut conn, &names[..6], &[1], 2).unwrap();
 
         let left: Vec<String> = conn
             .prepare("SELECT video_id FROM video_tags")
@@ -509,6 +495,54 @@ mod chunked_bulk_tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(left, vec!["v6".to_string()]);
+    }
+
+    #[test]
+    fn multi_tag_removal_spans_chunks_and_keeps_unselected_tags() {
+        let (_dir, db) = init_temp_db();
+        let names = seed(&db, 7);
+        let mut conn = db.writer.lock().unwrap();
+        conn.execute("INSERT INTO tags (id, name) VALUES (2, 'b')", [])
+            .unwrap();
+        conn.execute("INSERT INTO tags (id, name) VALUES (3, 'c')", [])
+            .unwrap();
+        for name in &names {
+            for tag in [2, 3] {
+                conn.execute(
+                    "INSERT INTO video_tags (video_id, tag_id) VALUES (?1, ?2)",
+                    params![name, tag],
+                )
+                .unwrap();
+            }
+        }
+
+        // Tag 1 is listed twice; tag 3 is not listed at all.
+        remove_tags_from_videos_chunked(&mut conn, &names[..5], &[1, 2, 1], 2).unwrap();
+
+        let left: Vec<(String, i64)> = conn
+            .prepare("SELECT video_id, tag_id FROM video_tags WHERE tag_id IN (1, 2) ORDER BY video_id, tag_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            left,
+            vec![
+                ("v5".to_string(), 1),
+                ("v5".to_string(), 2),
+                ("v6".to_string(), 1),
+                ("v6".to_string(), 2),
+            ]
+        );
+        let kept: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM video_tags WHERE tag_id = 3",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 7);
     }
 
     #[test]
@@ -524,7 +558,7 @@ mod chunked_bulk_tests {
         )
         .unwrap();
 
-        assert!(remove_tag_from_videos_chunked(&mut conn, &names, 1, 2).is_err());
+        assert!(remove_tags_from_videos_chunked(&mut conn, &names, &[1], 2).is_err());
 
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM video_tags", [], |r| r.get(0))

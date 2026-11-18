@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { assignTagToVideos, listAllTags, listTagUsageForVideos, removeTagFromVideos } from "../api";
-import { filterTagCandidates } from "../lib/bulkTag";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  assignTagsToVideos,
+  listAllTags,
+  listTagUsageForVideos,
+  removeTagsFromVideos,
+} from "../api";
 import type { TagDto, TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell } from "./ModalShell";
@@ -16,9 +20,65 @@ interface Props {
 
 type Mode = "add" | "remove";
 
+// 確認文にタグ名をそのまま並べる上限。これを超えると件数にして、文が長くなりすぎないようにする。
+const MAX_NAMES_IN_CONFIRM = 3;
+
+interface ToggleItem {
+  id: number;
+  label: string;
+}
+
+// 複数選択のタグ一覧。選択状態はボタンの aria-pressed で伝える(押すたびに切り替わる)。
+function TagToggleList({
+  items,
+  selected,
+  disabled,
+  ariaLabel,
+  testId,
+  onToggle,
+}: {
+  items: ToggleItem[];
+  selected: ReadonlySet<number>;
+  disabled: boolean;
+  ariaLabel: string;
+  testId: string;
+  onToggle: (id: number) => void;
+}) {
+  return (
+    <div className="bulk-tag-list" role="group" aria-label={ariaLabel} data-testid={testId}>
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className="bulk-tag-candidate"
+          aria-pressed={selected.has(item.id)}
+          disabled={disabled}
+          onClick={() => onToggle(item.id)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function toggled(set: ReadonlySet<number>, id: number): Set<number> {
+  const next = new Set(set);
+  if (!next.delete(id)) next.add(id);
+  return next;
+}
+
+function removeConfirmText(names: string[]): string {
+  const target =
+    names.length <= MAX_NAMES_IN_CONFIRM
+      ? names.map((n) => `『${n}』`).join("")
+      : `選んだ ${names.length} 個のタグ`;
+  return `${target}を、付いている動画から外します。元に戻せません。`;
+}
+
 // 成功したら結果を出さずに閉じる(件数の内訳は利用者に不要)。タグ名の正規化・検証は
-// バックエンドだけが持ち、ここでは生の入力を渡して、返ったエラーを表示する。空入力は
-// エラーにせず、OKボタンを押せなくして防ぐ。
+// バックエンドだけが持ち、ここでは生の入力を渡して、返ったエラーを表示する。何も
+// 選ばず入力も空のときはエラーにせず、OKボタンを押せなくして防ぐ。
 export function BulkTagDialog({ videoIds, onTagged, onClose }: Props) {
   // 開くたびに本体を作り直すことで、入力・エラー・結果の状態を初期化する。
   if (videoIds === null) return null;
@@ -35,8 +95,10 @@ function BulkTagDialogBody({
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("add");
+  // 入力欄は新しいタグ名だけを受け持ち、既存タグは一覧で選ぶ。
   const [input, setInput] = useState("");
   const [allTags, setAllTags] = useState<TagDto[]>([]);
+  const [addSelected, setAddSelected] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,7 +107,7 @@ function BulkTagDialogBody({
   // やり直しも、タブを切り替えれば足りる)。
   const [usage, setUsage] = useState<TagWithCountDto[] | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
-  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
+  const [removeSelected, setRemoveSelected] = useState<ReadonlySet<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
@@ -77,10 +139,8 @@ function BulkTagDialogBody({
     };
   }, [mode, videoIds]);
 
-  const candidates = useMemo(() => filterTagCandidates(allTags, input), [allTags, input]);
-
-  const canSubmit = input.trim() !== "";
-  const selectedTag = usage?.find((t) => t.id === selectedTagId) ?? null;
+  const canSubmit = addSelected.size > 0 || input.trim() !== "";
+  const selectedUsage = usage?.filter((t) => removeSelected.has(t.id)) ?? [];
 
   function switchMode(next: Mode) {
     if (busy || next === mode) return;
@@ -88,7 +148,7 @@ function BulkTagDialogBody({
     setError(null);
     setUsage(null);
     setUsageError(null);
-    setSelectedTagId(null);
+    setRemoveSelected(new Set());
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -97,7 +157,11 @@ function BulkTagDialogBody({
     setBusy(true);
     setError(null);
     try {
-      await assignTagToVideos(videoIds, input);
+      // 一覧で選んだ既存タグ(一覧の並び順)に、入力欄の新しい名前を足す。選んだタグと
+      // 同じ名前を入力した場合の重複はバックエンドが取り除く。
+      const names = allTags.filter((t) => addSelected.has(t.id)).map((t) => t.name);
+      if (input.trim() !== "") names.push(input);
+      await assignTagsToVideos(videoIds, names);
       onTagged();
       onClose();
     } catch (err) {
@@ -109,11 +173,14 @@ function BulkTagDialogBody({
   }
 
   async function confirmRemove() {
-    if (busy || !selectedTag) return;
+    if (busy || selectedUsage.length === 0) return;
     setBusy(true);
     setError(null);
     try {
-      await removeTagFromVideos(videoIds, selectedTag.id);
+      await removeTagsFromVideos(
+        videoIds,
+        selectedUsage.map((t) => t.id),
+      );
       setConfirming(false);
       onTagged();
       onClose();
@@ -180,32 +247,19 @@ function BulkTagDialogBody({
               data-testid="bulk-tag-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="タグ名(新しい名前も入力できます)"
-              list="bulk-tag-suggestions"
+              placeholder="タグ名"
+              aria-label="タグ名"
               disabled={busy}
             />
-            <datalist id="bulk-tag-suggestions">
-              {allTags.map((tag) => (
-                <option key={tag.id} value={tag.name} />
-              ))}
-            </datalist>
-            {candidates.length > 0 && (
-              <div className="bulk-tag-list" data-testid="bulk-tag-list">
-                {candidates.map((tag) => (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    className="bulk-tag-candidate"
-                    disabled={busy}
-                    onClick={() => {
-                      setInput(tag.name);
-                      inputRef.current?.focus();
-                    }}
-                  >
-                    {tag.name}
-                  </button>
-                ))}
-              </div>
+            {allTags.length > 0 && (
+              <TagToggleList
+                items={allTags.map((t) => ({ id: t.id, label: t.name }))}
+                selected={addSelected}
+                disabled={busy}
+                ariaLabel="付ける既存のタグ"
+                testId="bulk-tag-list"
+                onToggle={(id) => setAddSelected((prev) => toggled(prev, id))}
+              />
             )}
             {mode === "add" && error && (
               <p className="bulk-tag-error" role="alert" data-testid="bulk-tag-error">
@@ -247,27 +301,17 @@ function BulkTagDialogBody({
             ) : usage.length === 0 ? (
               <p data-testid="bulk-tag-usage-empty">選択した動画にタグは付いていません。</p>
             ) : (
-              <div
-                className="bulk-tag-usage"
-                role="radiogroup"
-                aria-label="外すタグ"
-                data-testid="bulk-tag-usage-list"
-              >
-                {usage.map((tag) => (
-                  <label key={tag.id} className="bulk-tag-usage-item">
-                    <input
-                      type="radio"
-                      name="bulk-tag-remove-target"
-                      checked={tag.id === selectedTagId}
-                      disabled={busy}
-                      onChange={() => setSelectedTagId(tag.id)}
-                    />
-                    <span>
-                      {tag.name}({tag.video_count}/{videoIds.length} 件)
-                    </span>
-                  </label>
-                ))}
-              </div>
+              <TagToggleList
+                items={usage.map((t) => ({
+                  id: t.id,
+                  label: `${t.name}(${t.video_count}/${videoIds.length} 件)`,
+                }))}
+                selected={removeSelected}
+                disabled={busy}
+                ariaLabel="外すタグ"
+                testId="bulk-tag-usage-list"
+                onToggle={(id) => setRemoveSelected((prev) => toggled(prev, id))}
+              />
             )}
             {error && (
               <p className="bulk-tag-error" role="alert" data-testid="bulk-tag-remove-error">
@@ -286,7 +330,7 @@ function BulkTagDialogBody({
               <button
                 type="button"
                 data-testid="bulk-tag-remove-btn"
-                disabled={busy || selectedTag === null}
+                disabled={busy || selectedUsage.length === 0}
                 onClick={() => setConfirming(true)}
               >
                 外す
@@ -298,7 +342,7 @@ function BulkTagDialogBody({
 
       {/* A sibling of the ModalShell, not a child; see ModalShell for why. */}
       <ConfirmDialog
-        open={confirming && selectedTag !== null}
+        open={confirming && selectedUsage.length > 0}
         title="タグを外す"
         confirmLabel="外す"
         danger
@@ -306,9 +350,7 @@ function BulkTagDialogBody({
         onConfirm={confirmRemove}
         onCancel={() => setConfirming(false)}
       >
-        {selectedTag && (
-          <p>{`『${selectedTag.name}』を ${selectedTag.video_count} 件の動画から外します。元に戻せません。`}</p>
-        )}
+        {selectedUsage.length > 0 && <p>{removeConfirmText(selectedUsage.map((t) => t.name))}</p>}
       </ConfirmDialog>
     </>
   );

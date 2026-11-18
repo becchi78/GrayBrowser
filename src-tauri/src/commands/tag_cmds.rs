@@ -42,38 +42,38 @@ pub fn assign_tag(
     Ok(tag)
 }
 
-/// Assigns one tag to many videos at once. Videos that already have it or no
-/// longer exist are skipped rather than failing the batch; the per-case counts
-/// stay in the db layer's outcome, since the caller has no use for them.
+/// Assigns several tags to many videos at once, all or nothing. Videos that
+/// already have a tag or no longer exist are skipped rather than failing the
+/// batch; an invalid name fails the whole call before anything is written.
 // async: a large batch holds the writer lock for the whole transaction, so
 // keep it off the main thread.
 #[tauri::command(async)]
-pub fn assign_tag_to_videos(
+pub fn assign_tags_to_videos(
     app: tauri::AppHandle,
     db: State<Db>,
     video_ids: Vec<String>,
-    tag_name: String,
+    tag_names: Vec<String>,
 ) -> Result<(), String> {
     let mut conn = db.writer.lock().unwrap();
-    queries::assign_tag_to_videos(&mut conn, &video_ids, &tag_name).map_err(|e| e.to_string())?;
+    queries::assign_tags_to_videos(&mut conn, &video_ids, &tag_names).map_err(|e| e.to_string())?;
     drop(conn);
     TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
 }
 
-/// Un-assigns one tag from many videos in one transaction. Does not delete the
-/// tag itself; a failure leaves every video as it was.
+/// Un-assigns several tags from many videos in one transaction. Does not
+/// delete the tags themselves; a failure leaves every video as it was.
 // async: a large batch holds the writer lock for the whole transaction, so
 // keep it off the main thread.
 #[tauri::command(async)]
-pub fn remove_tag_from_videos(
+pub fn remove_tags_from_videos(
     app: tauri::AppHandle,
     db: State<Db>,
     video_ids: Vec<String>,
-    tag_id: i64,
+    tag_ids: Vec<i64>,
 ) -> Result<(), String> {
     let mut conn = db.writer.lock().unwrap();
-    queries::remove_tag_from_videos(&mut conn, &video_ids, tag_id).map_err(|e| e.to_string())?;
+    queries::remove_tags_from_videos(&mut conn, &video_ids, &tag_ids).map_err(|e| e.to_string())?;
     drop(conn);
     TauriCatalogNotifier::new(app).notify_changed();
     Ok(())
