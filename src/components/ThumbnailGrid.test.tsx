@@ -14,7 +14,7 @@ vi.mock("../api", () => ({
   listVideos: vi.fn(),
   listWatchFolders: vi.fn(),
   unregisterVideos: vi.fn(),
-  assignTagToVideos: vi.fn(),
+  assignTagsToVideos: vi.fn(),
   revealVideoInExplorer: vi.fn(),
   listAllTags: vi.fn(),
 }));
@@ -200,7 +200,7 @@ beforeEach(() => {
   vi.mocked(api.listWatchFolders).mockResolvedValue(["C:\\videos"]);
   vi.mocked(api.unregisterVideos).mockResolvedValue(0);
   vi.mocked(api.listAllTags).mockResolvedValue([]);
-  vi.mocked(api.assignTagToVideos).mockResolvedValue(undefined);
+  vi.mocked(api.assignTagsToVideos).mockResolvedValue(undefined);
   vi.mocked(api.revealVideoInExplorer).mockResolvedValue(undefined);
 });
 
@@ -827,7 +827,7 @@ test("一括付与の対象も、メニューを開いた時点の選択で固�
   expect(dialog).toHaveAccessibleName("1 件の動画にタグを付ける");
   await user.type(within(dialog).getByTestId("bulk-tag-input"), "猫");
   await user.click(within(dialog).getByTestId("bulk-tag-submit-btn"));
-  expect(api.assignTagToVideos).toHaveBeenCalledWith(["a"], "猫");
+  expect(api.assignTagsToVideos).toHaveBeenCalledWith(["a"], ["猫"]);
 });
 
 test("「タグを設定...」で一括付与のダイアログが開き、付与が終わると tagsVersion が増える", async () => {
@@ -845,7 +845,7 @@ test("「タグを設定...」で一括付与のダイアログが開き、付�
   await user.type(within(dialog).getByTestId("bulk-tag-input"), "猫");
   await user.click(within(dialog).getByTestId("bulk-tag-submit-btn"));
 
-  expect(api.assignTagToVideos).toHaveBeenCalledWith(["a", "c"], "猫");
+  expect(api.assignTagsToVideos).toHaveBeenCalledWith(["a", "c"], ["猫"]);
   expect(screen.queryByTestId("bulk-tag-dialog")).toBeNull();
   expect(tagsVersions()).toEqual(["1", "1", "1"]);
   // タグの付与は一覧を取り直さない。

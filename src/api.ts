@@ -55,10 +55,15 @@ export const listVideos = (opts?: ListVideosOptions) =>
   });
 export const assignTag = (videoId: string, tagName: string) =>
   invoke<TagDto>("assign_tag", { videoId, tagName });
-export const assignTagToVideos = (videoIds: string[], tagName: string) =>
-  invoke<void>("assign_tag_to_videos", { videoIds, tagName });
+export const assignTagsToVideos = (videoIds: string[], tagNames: string[]) =>
+  invoke<void>("assign_tags_to_videos", { videoIds, tagNames });
 export const removeTag = (videoId: string, tagId: number) =>
   invoke<void>("remove_tag", { videoId, tagId });
+export const removeTagsFromVideos = (videoIds: string[], tagIds: number[]) =>
+  invoke<void>("remove_tags_from_videos", { videoIds, tagIds });
+/** 選択した動画に付いているタグと、そのうち何件の動画に付いているか(video_count)。 */
+export const listTagUsageForVideos = (videoIds: string[]) =>
+  invoke<TagWithCountDto[]>("list_tag_usage_for_videos", { videoIds });
 export const listTagsForVideo = (videoId: string) =>
   invoke<TagDto[]>("list_tags_for_video", { videoId });
 export const listAllTags = () => invoke<TagDto[]>("list_all_tags");
