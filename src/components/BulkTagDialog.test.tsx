@@ -60,14 +60,64 @@ test("入力欄は新しいタグ名用で、表示は「タグ名」だけに�
   expect(input()).toHaveAccessibleName("タグ名");
 });
 
-test("入力しても、既存のタグの一覧は絞り込まず全件を出し続ける", async () => {
+test("入力した文字に部分一致するタグだけに、一覧が絞り込まれる", async () => {
   const { user } = await renderDialog();
 
   await user.type(input(), "猫");
-  expect(candidateNames()).toEqual(["猫", "犬", "子猫"]);
+  expect(candidateNames()).toEqual(["猫", "子猫"]);
 
-  await user.type(input(), "ABC");
+  await user.clear(input());
   expect(candidateNames()).toEqual(["猫", "犬", "子猫"]);
+});
+
+test("絞り込みは大文字小文字を区別しない", async () => {
+  vi.mocked(api.listAllTags).mockResolvedValue([
+    { id: 1, name: "Action" },
+    { id: 2, name: "drama" },
+  ]);
+  const { user } = renderWithProviders(
+    <BulkTagDialog videoIds={["a"]} onTagged={vi.fn()} onClose={vi.fn()} />,
+  );
+  await screen.findByRole("button", { name: "drama" });
+
+  await user.type(input(), "ACTION");
+  expect(candidateNames()).toEqual(["Action"]);
+});
+
+test("選んだタグは、絞り込みで外れても一覧に残り、並びも元のまま", async () => {
+  const { user } = await renderDialog();
+  await user.click(tagButton("犬"));
+
+  await user.type(input(), "猫");
+  expect(candidateNames()).toEqual(["猫", "犬", "子猫"]);
+  expect(pressedNames()).toEqual(["犬"]);
+});
+
+test("入力を変えても選択は保たれ、送信に含まれる", async () => {
+  const { user, onTagged } = await renderDialog();
+  await user.click(tagButton("犬"));
+  await user.type(input(), "子");
+  expect(candidateNames()).toEqual(["犬", "子猫"]);
+  await user.click(tagButton("子猫"));
+  expect(input()).toHaveValue("子");
+
+  await user.clear(input());
+  expect(pressedNames()).toEqual(["犬", "子猫"]);
+
+  await user.click(submit());
+  expect(api.assignTagsToVideos).toHaveBeenCalledWith(["a", "b"], ["犬", "子猫"]);
+  expect(onTagged).toHaveBeenCalled();
+});
+
+test("絞り込みが0件でも、入力した名前を新しいタグとして付けられる", async () => {
+  const { user } = await renderDialog();
+
+  await user.type(input(), "新規");
+  expect(candidateNames()).toEqual([]);
+  expect(submit()).toBeEnabled();
+
+  await user.click(submit());
+  expect(api.assignTagsToVideos).toHaveBeenCalledWith(["a", "b"], ["新規"]);
 });
 
 test("候補を押すと選択を切り替え、選んだものは aria-pressed で伝わり、入力は変わらない", async () => {
@@ -166,8 +216,8 @@ test("付与中は「処理中...」を出し、入力・候補・ボタンを�
   const pending = deferred<never>();
   vi.mocked(api.assignTagsToVideos).mockReturnValue(pending.promise);
   const { user } = await renderDialog();
-  await user.type(input(), "猫");
   await user.click(tagButton("犬"));
+  await user.type(input(), "猫");
 
   await user.click(submit());
 
@@ -309,7 +359,7 @@ test("選んで外すを押すと、選んだタグ名を並べた確認を出�
   await user.click(removeBtn());
 
   expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
-    "『猫』『犬』を、付いている動画から外します。元に戻せません。",
+    "『猫』『犬』を、付いている動画から外します。",
   );
   expect(api.removeTagsFromVideos).not.toHaveBeenCalled();
 
@@ -329,7 +379,7 @@ test("1つだけ選んだときの確認は、そのタグ名だけを出す", a
   await user.click(removeBtn());
 
   expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
-    "『犬』を、付いている動画から外します。元に戻せません。",
+    "『犬』を、付いている動画から外します。",
   );
 });
 
@@ -346,7 +396,7 @@ test("選んだタグが多いときの確認は、タグ名を並べず個数�
   }
   await user.click(removeBtn());
   expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
-    "『あ』『い』『う』を、付いている動画から外します。元に戻せません。",
+    "『あ』『い』『う』を、付いている動画から外します。",
   );
   await user.click(screen.getByTestId("confirm-dialog-cancel-btn"));
 
@@ -354,7 +404,7 @@ test("選んだタグが多いときの確認は、タグ名を並べず個数�
   await user.click(removeBtn());
 
   expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
-    "選んだ 4 個のタグを、付いている動画から外します。元に戻せません。",
+    "選んだ 4 個のタグを、付いている動画から外します。",
   );
 });
 

@@ -9,6 +9,7 @@ import type { TagDto, TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell } from "./ModalShell";
 import { errorText } from "../lib/errorText";
+import { filterTagCandidates } from "../lib/bulkTag";
 
 interface Props {
   /** 対象。null のとき閉じている。 */
@@ -73,7 +74,7 @@ function removeConfirmText(names: string[]): string {
     names.length <= MAX_NAMES_IN_CONFIRM
       ? names.map((n) => `『${n}』`).join("")
       : `選んだ ${names.length} 個のタグ`;
-  return `${target}を、付いている動画から外します。元に戻せません。`;
+  return `${target}を、付いている動画から外します。`;
 }
 
 // 成功したら結果を出さずに閉じる(件数の内訳は利用者に不要)。タグ名の正規化・検証は
@@ -95,7 +96,7 @@ function BulkTagDialogBody({
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("add");
-  // 入力欄は新しいタグ名だけを受け持ち、既存タグは一覧で選ぶ。
+  // 入力欄は新しいタグ名であり、「付ける」の一覧の絞り込みにも使う。選択状態は入力と独立。
   const [input, setInput] = useState("");
   const [allTags, setAllTags] = useState<TagDto[]>([]);
   const [addSelected, setAddSelected] = useState<ReadonlySet<number>>(new Set());
@@ -138,6 +139,12 @@ function BulkTagDialogBody({
       cancelled = true;
     };
   }, [mode, videoIds]);
+
+  // 絞り込みで外れても、選んだタグは一覧に残す。見えない選択が送られるのを防ぐため。
+  const addCandidates = (() => {
+    const matched = new Set(filterTagCandidates(allTags, input).map((t) => t.id));
+    return allTags.filter((t) => matched.has(t.id) || addSelected.has(t.id));
+  })();
 
   const canSubmit = addSelected.size > 0 || input.trim() !== "";
   const selectedUsage = usage?.filter((t) => removeSelected.has(t.id)) ?? [];
@@ -253,7 +260,7 @@ function BulkTagDialogBody({
             />
             {allTags.length > 0 && (
               <TagToggleList
-                items={allTags.map((t) => ({ id: t.id, label: t.name }))}
+                items={addCandidates.map((t) => ({ id: t.id, label: t.name }))}
                 selected={addSelected}
                 disabled={busy}
                 ariaLabel="付ける既存のタグ"
