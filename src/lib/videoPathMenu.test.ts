@@ -15,13 +15,13 @@ const target = (id: string, over: Partial<PathMenuTarget> = {}): PathMenuTarget 
 });
 
 function recorder() {
-  const copied: string[][] = [];
+  const copied: string[] = [];
   const revealed: string[] = [];
   return {
     copied,
     revealed,
     actions: {
-      onCopy: (paths: string[]) => copied.push(paths),
+      onCopy: (path: string) => copied.push(path),
       onReveal: (id: string) => revealed.push(id),
     },
   };
@@ -58,19 +58,13 @@ test("1件のとき、コピーと開くの2項目が出て、押すと対応す
   );
   items[0].onSelect();
   items[1].onSelect();
-  assert.deepEqual(r.copied, [["C:\\videos\\a.mp4"]]);
+  assert.deepEqual(r.copied, ["C:\\videos\\a.mp4"]);
   assert.deepEqual(r.revealed, ["a"]);
 });
 
-test("複数選択では、コピーは全パスを渡し、開くは出さない", () => {
-  const r = recorder();
-  const items = buildPathMenuItems([target("a"), target("b")], r.actions);
-  assert.deepEqual(
-    items.map((i) => i.label),
-    ["パスをコピー(2 件)"],
-  );
-  items[0].onSelect();
-  assert.deepEqual(r.copied, [["C:\\videos\\a.mp4", "C:\\videos\\b.mp4"]]);
+test("複数選択では、コピーも開くも出さない", () => {
+  const items = buildPathMenuItems([target("a"), target("b")], recorder().actions);
+  assert.deepEqual(items, []);
 });
 
 test("オフラインでも、コピーだけが出る", () => {

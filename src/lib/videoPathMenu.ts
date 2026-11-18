@@ -8,7 +8,7 @@ export interface PathMenuTarget {
 }
 
 export interface PathMenuActions {
-  onCopy: (paths: string[]) => void;
+  onCopy: (path: string) => void;
   onReveal: (id: string) => void;
 }
 
@@ -26,18 +26,19 @@ export function canReveal(targets: readonly PathMenuTarget[]): boolean {
 
 /**
  * 右クリックメニューの「パスをコピー」「エクスプローラーで開く」。一覧と重複
- * パネルで共通。コピーはオフラインでも使えるよう常に出す。開けない対象では
- * 「エクスプローラーで開く」を出さない。
+ * パネルで共通。対象が1件のときだけ出す(複数選択では別フォルダの動画が混ざり、
+ * 連結したパスの使い道が無いため、何も出さない)。コピーはオフラインでも使える
+ * よう常に出す。開けない対象では「エクスプローラーで開く」を出さない。
  */
 export function buildPathMenuItems(
   targets: readonly PathMenuTarget[],
   actions: PathMenuActions,
 ): ContextMenuItem[] {
-  if (targets.length === 0) return [];
+  if (targets.length !== 1) return [];
   const items: ContextMenuItem[] = [
     {
-      label: targets.length >= 2 ? `パスをコピー(${targets.length} 件)` : "パスをコピー",
-      onSelect: () => actions.onCopy(targets.map((t) => t.file_path)),
+      label: "パスをコピー",
+      onSelect: () => actions.onCopy(targets[0].file_path),
     },
   ];
   if (canReveal(targets)) {

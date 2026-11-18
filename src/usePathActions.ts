@@ -7,10 +7,10 @@ import { errorText } from "./lib/errorText";
 export function usePathActions() {
   const [error, setError] = useState<string | null>(null);
 
-  async function copyPaths(paths: string[]) {
+  async function copyPath(path: string) {
     setError(null);
     try {
-      await navigator.clipboard.writeText(paths.join("\n"));
+      await navigator.clipboard.writeText(path);
     } catch (e) {
       console.error(e);
       setError(`パスをコピーできませんでした: ${errorText(e)}`);
@@ -27,5 +27,5 @@ export function usePathActions() {
     }
   }
 
-  return { error, copyPaths, reveal, clearError: () => setError(null) };
+  return { error, copyPath, reveal, clearError: () => setError(null) };
 }

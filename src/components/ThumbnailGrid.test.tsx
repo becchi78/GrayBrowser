@@ -758,11 +758,7 @@ test.each(["row-input", "row-textarea", "row-select", "row-button", "row-link"])
 );
 
 const MENU_ONE = ["タグを設定...", "パスをコピー", "エクスプローラーで開く", "登録から削除"];
-const MENU_TWO = [
-  "タグを設定...(2 件)",
-  "パスをコピー(2 件)",
-  "登録から削除(2 件)",
-];
+const MENU_TWO = ["タグを設定...(2 件)", "登録から削除(2 件)"];
 
 // ---- 右クリックのメニュー ----
 
@@ -1247,16 +1243,14 @@ test("全行が同じサムネイルのキャッシュ(Map)を受け取り、描
 
 // ---- パスのコピーとエクスプローラーで開く ----
 
-test("「パスをコピー」で、選択した動画のパスを改行区切りでクリップボードへ入れる", async () => {
+test("「パスをコピー」で、右クリックした動画のパスをクリップボードへ入れる", async () => {
   const { user } = await renderGrid();
   const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-  fireEvent.click(row("a"));
-  fireEvent.click(row("c"), { ctrlKey: true });
   await openMenu("a");
 
   await user.click(menuItem(/^パスをコピー/));
 
-  expect(writeText).toHaveBeenCalledWith("C:\\videos\\a.mp4\nC:\\videos\\c.mp4");
+  expect(writeText).toHaveBeenCalledWith("C:\\videos\\a.mp4");
   expect(menu()).toBeNull();
 });
 
@@ -1300,13 +1294,16 @@ const revealItem = () =>
     name: /^エクスプローラーで開く/,
   });
 
-test("複数選択では「エクスプローラーで開く」を出さない", async () => {
+test("複数選択では「パスをコピー」も「エクスプローラーで開く」も出さない", async () => {
   await renderGrid();
   fireEvent.click(row("a"));
   fireEvent.click(row("b"), { ctrlKey: true });
   await openMenu("a");
 
   expect(revealItem()).toBeNull();
+  expect(
+    within(screen.getByTestId("context-menu")).queryByRole("menuitem", { name: /^パスをコピー/ }),
+  ).toBeNull();
   expect(menuLabels()).toEqual(MENU_TWO);
 });
 
