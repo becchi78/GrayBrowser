@@ -37,7 +37,7 @@ vi.mock("../api", () => ({
   setRestoreViewStateEnabled: vi.fn(),
   checkForUpdate: vi.fn(),
   listAllTags: vi.fn(),
-  assignTagToVideos: vi.fn(),
+  assignTagsToVideos: vi.fn(),
   readLog: vi.fn(),
   getLogDir: vi.fn(),
   listUnmatchedThumbnails: vi.fn(),
@@ -369,7 +369,7 @@ const BUSY: BusyCase[] = [
   {
     name: "BulkTagDialog(付与の処理中)",
     enter: async () => {
-      vi.mocked(api.assignTagToVideos).mockReturnValue(never());
+      vi.mocked(api.assignTagsToVideos).mockReturnValue(never());
       const { user, dialog, closed } = await openBulkTag();
       await user.type(screen.getByTestId("bulk-tag-input"), "タグ");
       await user.click(screen.getByTestId("bulk-tag-submit-btn"));

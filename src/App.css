@@ -2074,11 +2074,33 @@ button.link-button:focus-visible {
   font-size: 0.9em;
 }
 
+.bulk-tag-candidate[aria-pressed="true"] {
+  border-color: var(--accent);
+  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+}
+
 .bulk-tag-error {
   margin: 0;
   color: var(--error-text);
   font-size: 0.9em;
   overflow-wrap: anywhere;
+}
+
+.bulk-tag-tabs {
+  display: flex;
+  gap: 0.4em;
+  margin-bottom: 0.75em;
+}
+
+.bulk-tag-tab[aria-selected="true"] {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.bulk-tag-remove {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
 }
 
 .log-viewer-dialog {
