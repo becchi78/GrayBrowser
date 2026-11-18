@@ -75,7 +75,7 @@ export function DuplicateGroupMemberRow({
                 offline: isOffline,
               },
             ],
-            { onCopy: pathActions.copyPaths, onReveal: pathActions.reveal },
+            { onCopy: pathActions.copyPath, onReveal: pathActions.reveal },
           )}
           onClose={closeMenu}
         />

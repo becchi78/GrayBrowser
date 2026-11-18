@@ -71,7 +71,7 @@ export function VideoListOverlays({
     ];
   });
   const pathItems = buildPathMenuItems(targets, {
-    onCopy: pathActions.copyPaths,
+    onCopy: pathActions.copyPath,
     onReveal: pathActions.reveal,
   });
 
