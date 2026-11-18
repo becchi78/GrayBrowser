@@ -33,7 +33,7 @@ import {
 import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
 import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
-import { useMenuOpen } from "./useMenuOpen";
+import { useActiveDialog, useMenuOpen } from "./useActiveDialog";
 import { INITIAL_VIEW_STATE, fromSaved, isSameViewState, toSaved, type ViewState } from "./lib/viewState";
 
 // Only "default" exists today. New styles (e.g. "grid") get added here as
@@ -79,19 +79,12 @@ function AppContent({ initialView }: { initialView: ViewState }) {
   // Empty = "ALL" (no rating filter). Independent filter axis from
   // tagIds -- see RatingBar's own comment.
   const [ratings, setRatings] = useState(initialView.ratings);
-  // FolderDialog/WbImportDialog are reached only via the native menu
-  // ("ファイル > フォルダ管理.../.wbインポート...").
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
-  const [wbImportDialogOpen, setWbImportDialogOpen] = useState(false);
-  // TagBarEditDialog is reached only via the native menu ("タグ > タグの編集...").
+  // The menu-opened dialogs are mutually exclusive: opening one closes the
+  // previous one (unless that one cannot be dismissed, e.g. mid-import).
   // tagBarRefreshKey is `refreshKey` scoped to just TagBar: bumped when the
-  // dialog saves a new tag order or deletes a tag, so TagBar re-fetches
-  // without a full remount.
-  const [tagBarDialogOpen, setTagBarDialogOpen] = useState(false);
-  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
-  const [logDialogOpen, setLogDialogOpen] = useState(false);
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  // TagBarEditDialog saves a new tag order or deletes a tag, so TagBar
+  // re-fetches without a full remount.
+  const { active: activeDialog, open: openDialog, close: closeDialog } = useActiveDialog();
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
@@ -158,13 +151,13 @@ function AppContent({ initialView }: { initialView: ViewState }) {
     saveInfoPaneCollapsed(next).catch((e) => console.error(e));
   };
 
-  useMenuOpen(onMenuOpenFolderDialog, setFolderDialogOpen);
-  useMenuOpen(onMenuOpenWbImportDialog, setWbImportDialogOpen);
-  useMenuOpen(onMenuOpenTagBarDialog, setTagBarDialogOpen);
-  useMenuOpen(onMenuOpenSettingsDialog, setSettingsDialogOpen);
-  useMenuOpen(onMenuCheckUpdate, setUpdateDialogOpen);
-  useMenuOpen(onMenuAbout, setAboutDialogOpen);
-  useMenuOpen(onMenuOpenLogDialog, setLogDialogOpen);
+  useMenuOpen(onMenuOpenFolderDialog, "folder", openDialog);
+  useMenuOpen(onMenuOpenWbImportDialog, "wbImport", openDialog);
+  useMenuOpen(onMenuOpenTagBarDialog, "tagBar", openDialog);
+  useMenuOpen(onMenuOpenSettingsDialog, "settings", openDialog);
+  useMenuOpen(onMenuCheckUpdate, "update", openDialog);
+  useMenuOpen(onMenuAbout, "about", openDialog);
+  useMenuOpen(onMenuOpenLogDialog, "log", openDialog);
 
   useEffect(() => {
     const unlistenStyle = onMenuStyleSelected((style) => {
@@ -249,21 +242,21 @@ function AppContent({ initialView }: { initialView: ViewState }) {
 
       {/* FfmpegNotice is a top-level, always-visible notice, not a dialog. */}
       <FfmpegNotice />
-      <UpdateNotice onOpenDetails={() => setUpdateDialogOpen(true)} />
+      <UpdateNotice onOpenDetails={() => openDialog("update")} />
 
       {/* FolderDialog/WbImportDialog are modals reachable only via the menu,
           not always-visible. */}
       <FolderDialog
-        open={folderDialogOpen}
-        onClose={() => setFolderDialogOpen(false)}
+        open={activeDialog === "folder"}
+        onClose={() => closeDialog("folder")}
         onChanged={() => setRefreshKey((k) => k + 1)}
       />
       {/* Mounted only while open: unmounting on close is what discards the
           previous selection/result so each open starts at file selection.
           Always rendering it with an open flag would keep that state. */}
-      {wbImportDialogOpen && (
+      {activeDialog === "wbImport" && (
         <WbImportDialog
-          onClose={() => setWbImportDialogOpen(false)}
+          onClose={() => closeDialog("wbImport")}
           onImportComplete={() => setRefreshKey((k) => k + 1)}
           onThumbnailsReplaced={(videoId) =>
             setThumbnailVersions((prev) => ({ ...prev, [videoId]: (prev[videoId] ?? 0) + 1 }))
@@ -271,15 +264,15 @@ function AppContent({ initialView }: { initialView: ViewState }) {
         />
       )}
       <TagBarEditDialog
-        open={tagBarDialogOpen}
-        onClose={() => setTagBarDialogOpen(false)}
+        open={activeDialog === "tagBar"}
+        onClose={() => closeDialog("tagBar")}
         onChanged={() => setTagBarRefreshKey((k) => k + 1)}
         onTagDeleted={(tagId) => setTagIds((ids) => ids.filter((id) => id !== tagId))}
       />
-      <SettingsDialog open={settingsDialogOpen} onClose={() => setSettingsDialogOpen(false)} />
-      <LogViewerDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />
-      <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
-      <AboutDialog open={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
+      <SettingsDialog open={activeDialog === "settings"} onClose={() => closeDialog("settings")} />
+      <LogViewerDialog open={activeDialog === "log"} onClose={() => closeDialog("log")} />
+      <UpdateDialog open={activeDialog === "update"} onClose={() => closeDialog("update")} />
+      <AboutDialog open={activeDialog === "about"} onClose={() => closeDialog("about")} />
       {editMenu && (
         <EditContextMenu
           target={editMenu.target}
