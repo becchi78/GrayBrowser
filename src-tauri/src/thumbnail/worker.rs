@@ -819,11 +819,12 @@ mod tests {
 
         SAW_UPDATE_STATEMENT.store(false, std::sync::atomic::Ordering::SeqCst);
         {
-            let conn = db.writer.lock().unwrap();
+            let mut conn = db.writer.lock().unwrap();
             conn.trace_v2(
                 rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
                 Some(record_if_update),
-            );
+            )
+            .unwrap();
         }
 
         let missing = list_videos_missing_thumbnails(&db, thumbs_dir.path(), &[]).unwrap();
@@ -838,8 +839,12 @@ mod tests {
         // Disarm the trace before the connection is reused by later tests
         // in the same process (a `fn` pointer trace callback has no way to
         // know which test installed it).
-        let conn = db.writer.lock().unwrap();
-        conn.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+        let mut conn = db.writer.lock().unwrap();
+        conn.trace_v2(
+            rusqlite::trace::TraceEventCodes::empty(),
+            None::<fn(rusqlite::trace::TraceEvent<'_>)>,
+        )
+        .unwrap();
     }
 
     /// The backfill guard: a row whose thumbnail files are
