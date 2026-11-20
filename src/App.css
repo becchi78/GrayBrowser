@@ -40,6 +40,7 @@
   /* ボタン・入力欄の文字と背景、押下中の背景。ダークでは暗い半透明の面に白文字。 */
   --control-text: #0f0f0f;
   --control-bg: #ffffff;
+  --control-hover-bg: #f3f3f3;
   --control-active-bg: #e8e8e8;
   /* 押下状態(aria-pressed)のボタンに重ねる半透明の青。下地の明暗どちらでも
      読めるので、ダークでも上書きしない。 */
@@ -148,10 +149,14 @@
 
   /* 影はボタン、画面下端から上へ開く面、ふつうに下へ開く面(通知・メニュー)、
      最前面のダイアログ・コンテキストメニューで、浮き上がりの大きさを変える。 */
-  --shadow-control: 0 2px 2px rgba(0, 0, 0, 0.2);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.12);
   --shadow-popover-up: 0 -4px 12px rgba(0, 0, 0, 0.2);
   --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.2);
   --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.3);
+
+  /* 等幅はパスやログなど桁を揃えたい箇所で共通に使う。Consolas は Windows に
+     標準で入っており、日本語は後続のフォールバックに任せる。 */
+  --font-mono: Consolas, "Cascadia Mono", monospace;
 
   /* キーボード操作の現在位置。リンク色に合わせ、全ての操作要素で同じ見た目にする。
      スクロール領域の端にある項目は、外側に出ると切れるので -2px で内側に描く。 */
@@ -179,6 +184,7 @@
     --notice-bg: #5a3d00;
     --control-text: #ffffff;
     --control-bg: #0f0f0f98;
+    --control-hover-bg: #1f1f1f98;
     --control-active-bg: #0f0f0f69;
     --offline-text: #f8d7a3;
     --offline-bg: #5a3d00;
@@ -216,7 +222,11 @@
 }
 
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  /* Windows 11 の UI フォントを先頭に置く。Segoe UI Variable は日本語の字形を
+     持たないので、欠落字形は Yu Gothic UI → Meiryo UI の順に補う。 */
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", Inter,
+    Avenir, Helvetica, Arial, system-ui, sans-serif;
   font-size: 16px;
   line-height: 24px;
   font-weight: var(--weight-regular);
@@ -289,8 +299,40 @@ button {
 button:hover {
   border-color: var(--accent);
 }
+/* ホバーで背景をわずかに変え、押下(下の`button:active`)でさらに変える。
+   自前の背景を持つボタン(バッジ・メニュー項目・サイドバー項目など)は、
+   この詳細度の高い指定で背景が上書きされてしまうので対象から外す。 */
+button:not(
+    :disabled,
+    .status-badge,
+    .status-jump-item,
+    .search-box-clear,
+    .rating-bar-item,
+    .sidebar-section-toggle,
+    .folder-sidebar-item,
+    .context-menu-item,
+    .link-button,
+    .confirm-dialog-confirm--danger,
+    .tag-chip button
+  ):hover {
+  background-color: var(--control-hover-bg);
+}
 button:active {
   border-color: var(--accent);
+}
+button:not(
+    :disabled,
+    .status-badge,
+    .status-jump-item,
+    .search-box-clear,
+    .rating-bar-item,
+    .sidebar-section-toggle,
+    .folder-sidebar-item,
+    .context-menu-item,
+    .link-button,
+    .confirm-dialog-confirm--danger,
+    .tag-chip button
+  ):active {
   background-color: var(--control-active-bg);
 }
 /* 行・リストの中に並べる小さなボタンと入力欄。詳細度は `.header-row-primary
@@ -1648,7 +1690,7 @@ button.search-box-clear {
 .folder-row-path {
   flex: 1;
   min-width: 0;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
   white-space: nowrap;
   overflow: hidden;
@@ -1672,7 +1714,7 @@ button.search-box-clear {
 .folder-row-path-input {
   flex: 1;
   min-width: 0;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
 }
 
@@ -1704,7 +1746,7 @@ button.search-box-clear {
 
 /* 解除するフォルダのパスを、タグの削除の確認での強調と揃えて目立たせる。 */
 .confirm-dialog-body .folder-delete-confirm-path {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-lg);
   font-weight: var(--weight-strong);
   color: var(--danger);
@@ -1835,7 +1877,7 @@ button.link-button:active {
 }
 
 .confirm-dialog-path {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
   opacity: 0.85;
   overflow-wrap: anywhere;
@@ -2282,7 +2324,7 @@ button.link-button:active {
   overflow-x: scroll;
   border: 1px solid var(--log-list-border);
   border-radius: var(--radius-sm);
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
 }
 
