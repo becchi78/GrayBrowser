@@ -36,6 +36,118 @@
      ダーク側での上書きはしない。未選択は同じ青を薄くして、色相は揃えたまま
      選択状態だけ区別する。 */
   --star-color: #3b82f6;
+
+  /* ボタン・入力欄の文字と背景、押下中の背景。ダークでは暗い半透明の面に白文字。 */
+  --control-text: #0f0f0f;
+  --control-bg: #ffffff;
+  --control-active-bg: #e8e8e8;
+  /* 押下状態(aria-pressed)のボタンに重ねる半透明の青。下地の明暗どちらでも
+     読めるので、ダークでも上書きしない。 */
+  --pressed-tint: rgba(57, 108, 216, 0.25);
+  /* 左ペインの見出しアイコン。テーマに依存させない固定色。 */
+  --icon-folder: #d9a010;
+  --icon-rating: #3b82f6;
+  --icon-tag: #ef4444;
+  /* 到達できない(オフライン)ことを示すバッジ。エラーではないので琥珀色。 */
+  --offline-text: #7a3b00;
+  --offline-bg: #ffe0b2;
+  /* ステータスバーのサムネイル生成の進捗表示の文字。 */
+  --status-progress-text: #555;
+  /* 生成失敗パネルの補足文の文字。 */
+  --failures-notice-text: #555;
+  /* 一覧の行の区切り線、選択中・複数選択中の行の背景と左端の帯。 */
+  --row-border: #e5e5e5;
+  --row-selected-bg: #e8f0fe;
+  --row-multi-selected-bg: #d6e4fd;
+  --row-multi-selected-accent: #3b78e7;
+  /* サムネイルが無いときのプレースホルダ(通常・生成失敗・オフライン)。 */
+  --thumbnail-text: #666;
+  --thumbnail-failed-bg: #f3d6d6;
+  --thumbnail-failed-text: #8a2a2a;
+  --thumbnail-offline-bg: #e4e4e8;
+  --thumbnail-offline-text: #6b6b75;
+  /* サムネイル画像の上に重ねる文字・帯。画像の明暗に左右されないよう、
+     テーマに関係なく同じ値を使う。 */
+  --overlay-text: #ffffff;
+  --overlay-text-shadow: rgba(0, 0, 0, 0.9);
+  --overlay-scrim: rgba(0, 0, 0, 0.65);
+  --overlay-error-scrim: rgba(120, 0, 0, 0.8);
+  /* ダイアログの背後を覆う幕。 */
+  --backdrop: rgba(0, 0, 0, 0.45);
+  /* 重複パネルで、グループ内の値が揃っていない項目の強調。 */
+  --diff-bg: #fff1c2;
+  --diff-text: #5a3d00;
+  /* 削除などの危険な操作を確定するボタン。 */
+  --danger-bg: #b00020;
+  --on-danger: #ffffff;
+  /* 成功を伝える文字と背景(取り込み結果・紐付け済みの印・スキップ解消の通知)。 */
+  --success-text: #1f6d2c;
+  --success-bg: #dff0e3;
+  --success-notice-text: #1f6b2e;
+  /* 要確認(エラーではない)の結果ブロックの背景、失敗の結果ブロック・失敗バッジの背景。 */
+  --warn-bg: #fff3cd;
+  --result-failed-bg: #fbe3e3;
+  --failure-badge-bg: #f3caca;
+  /* 画面下部の更新通知と、更新内容(リリースノート)の背景。 */
+  --update-notice-bg: #e8eefc;
+  --update-notice-border: #b9c8ee;
+  --notes-bg: #f1f1f1;
+  /* コンテキストメニュー・紐付け行・ログ一覧の枠線。 */
+  --menu-border: #d0d0d0;
+  --unmatched-row-border: #d0d0d0;
+  --log-list-border: #c8c8c8;
+  /* ログのレベル別の文字色(チェックボックスのラベルと行で共有)。 */
+  --log-error: #b3261e;
+  --log-warn: #9a5b00;
+  --log-info: #1d5fa8;
+  --log-debug: #5f6368;
+  --log-trace: #8a8f94;
+
+  /* 文字サイズは em で持つ。em は使う側の親の文字サイズを基準に解決されるので、
+     情報パネル(.video-row-info)のように全体を縮小している領域の中でも、
+     同じトークンが縮小後の大きさに追従する。px にすると縮小が効かなくなる。
+     段階を増やすと近い値が乱立するので、補足(xs)・本文より小さめ(sm)・本文(base)・
+     強調(lg)の4段階に絞る。 */
+  --font-xs: 0.75em;
+  --font-sm: 0.85em;
+  --font-base: 1em;
+  --font-lg: 1.15em;
+
+  /* 余白は4px刻み。em だと使う場所の文字サイズで実寸が変わり、同じ値でも
+     見た目の間隔が揃わないため、余白だけは px で持つ。 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  /* ボタン・入力欄の縦padding。4px刻みの 8px だと標準のボタンが細く見え、
+     12px だと大きすぎるため、見た目を決める値としてここだけ 10px にする。 */
+  --control-padding-y: 10px;
+
+  /* 角丸は小さい部品(バッジ・メニュー項目)、面(ダイアログ・ボタン・枠)、
+     丸薬型(タグのチップ)の3種に限る。 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  /* 太さは通常と強調の2段階。中間(500)は 400 との差が小さく、日本語フォントでは
+     見分けにくいので使わない。 */
+  --weight-regular: 400;
+  --weight-strong: 600;
+
+  /* 影はボタン、画面下端から上へ開く面、ふつうに下へ開く面(通知・メニュー)、
+     最前面のダイアログ・コンテキストメニューで、浮き上がりの大きさを変える。 */
+  --shadow-control: 0 2px 2px rgba(0, 0, 0, 0.2);
+  --shadow-popover-up: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.3);
+
+  /* キーボード操作の現在位置。リンク色に合わせ、全ての操作要素で同じ見た目にする。
+     スクロール領域の端にある項目は、外側に出ると切れるので -2px で内側に描く。 */
+  --focus-ring: 2px solid var(--link);
+  --focus-ring-offset: 2px;
+  --focus-ring-offset-inset: -2px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -55,6 +167,41 @@
     --warn-text: #f0c674;
     --notice-text: #f8d7a3;
     --notice-bg: #5a3d00;
+    --control-text: #ffffff;
+    --control-bg: #0f0f0f98;
+    --control-active-bg: #0f0f0f69;
+    --offline-text: #f8d7a3;
+    --offline-bg: #5a3d00;
+    --status-progress-text: #bbb;
+    --failures-notice-text: #cfcfcf;
+    --row-border: #444;
+    --row-selected-bg: #2a3a5c;
+    --row-multi-selected-bg: #34497a;
+    --row-multi-selected-accent: #7aa7ff;
+    --thumbnail-text: #ccc;
+    --thumbnail-failed-bg: #5a2f2f;
+    --thumbnail-failed-text: #f0b4b4;
+    --thumbnail-offline-bg: #3a3a40;
+    --thumbnail-offline-text: #a0a0aa;
+    --diff-bg: #5a4a14;
+    --diff-text: #ffe9a8;
+    --danger-bg: #c0392b;
+    --success-text: #7ed494;
+    --success-bg: #1f4a2b;
+    --success-notice-text: #b7e4c0;
+    --warn-bg: #5a4600;
+    --result-failed-bg: #5a1f1f;
+    --failure-badge-bg: #5a1f1f;
+    --update-notice-bg: #2a3a5c;
+    --update-notice-border: #4a5f8f;
+    --notes-bg: #3a3a3a;
+    --menu-border: #555;
+    --unmatched-row-border: #555;
+    --log-list-border: #555;
+    --log-error: #ff8a80;
+    --log-warn: #ffcc66;
+    --log-info: #8ab4f8;
+    --log-debug: #b0b4b9;
   }
 }
 
@@ -62,7 +209,7 @@
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 24px;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
 
   color: var(--text);
   background-color: var(--page-bg);
@@ -84,17 +231,46 @@ body {
 
 input,
 button {
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
+  padding: var(--control-padding-y) var(--space-5);
+  font-size: var(--font-base);
+  font-weight: var(--weight-regular);
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
+  color: var(--control-text);
+  background-color: var(--control-bg);
   transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-control);
   outline: none;
+}
+
+/* 上の `outline: none` は既定の枠を消すためのもので、キーボードで移動したときの
+   現在位置は代わりにここで示す。マウス操作では出ない(:focus-visible)。 */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* テキスト入力は、マウスでクリックしただけでも`:focus-visible`に一致する。
+   ボタンはクリックでは外側のリングが出ず、ホバー時の1pxの枠線(上の`button:hover`)
+   だけが見えるため、入力欄だけ外側のリングが出ると太さが食い違って見える。
+   入力欄は同じ太さ・同じ色の枠線で強調し、リングはチェックボックスなど
+   枠線で示しにくい入力と、ボタンのキーボード操作に限る。 */
+input:not([type="checkbox"], [type="radio"]):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 行幅いっぱいに並ぶ項目やメニューは、外側に出た枠が親のスクロール領域・
+   角丸で切れるので、内側に描く。 */
+.sidebar-section-toggle:focus-visible,
+.folder-sidebar-item:focus-visible,
+.rating-bar-item:focus-visible,
+.context-menu-item:focus-visible {
+  outline-offset: var(--focus-ring-offset-inset);
 }
 
 button {
@@ -106,7 +282,7 @@ button:hover {
 }
 button:active {
   border-color: var(--accent);
-  background-color: #e8e8e8;
+  background-color: var(--control-active-bg);
 }
 button:disabled {
   cursor: not-allowed;
@@ -116,8 +292,8 @@ button:disabled {
 .app {
   display: flex;
   flex-direction: column;
-  gap: 1em;
-  padding: 1em;
+  gap: var(--space-4);
+  padding: var(--space-4);
   height: 100vh;
   /* Defense in depth, not the primary fix: tauri.conf.json's window/
      minWidth/minHeight are sized so the sibling sections above/below
@@ -135,17 +311,17 @@ button:disabled {
 .ffmpeg-notice {
   background-color: var(--notice-bg);
   color: var(--notice-text);
-  border-radius: 8px;
-  padding: 0.75em 1em;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
 }
 
 .scan-summary {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   opacity: 0.8;
 }
 
 .wb-import-path {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   opacity: 0.8;
   flex: 1;
   min-width: 0;
@@ -158,7 +334,7 @@ button:disabled {
    併せて付け、一回り小さくする。 */
 .dialog-error {
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -173,8 +349,8 @@ button:disabled {
   flex-shrink: 0;
 }
 
-/* この行の高さはグローバルな`input, button`ルール(padding 0.6em 1.2em・
-   font-size 1em)がそのまま効いていたため、`.video-row-info button,
+/* この行の高さはグローバルな`input, button`ルール(padding
+   var(--control-padding-y) var(--space-5)・font-size 1em)がそのまま効いていたため、`.video-row-info button,
    .video-row-info input`と同じスコープ付きオーバーライドを適用する。
    グローバルな`input, button`ルール自体は他のダイアログ等に影響するため
    変更しない。 */
@@ -182,7 +358,7 @@ button:disabled {
 .header-row-primary input,
 .header-row-primary select {
   padding: 0.35em 0.8em;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
 }
 
 /* 入力欄の右端に✕を重ねるための相対配置。行内での伸縮(flex)は
@@ -212,7 +388,7 @@ button.search-box-clear {
   border: none;
   box-shadow: none;
   background: transparent;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   line-height: 1.5;
   cursor: pointer;
   opacity: 0.6;
@@ -225,7 +401,7 @@ button.search-box-clear {
 .sort-control {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 /* 行の右端に置く。押下状態は枠線色と薄い背景で示し、ライト/ダークどちらでも読めるよう
@@ -237,7 +413,7 @@ button.search-box-clear {
 
 .info-pane-toggle[aria-pressed="true"] {
   border-color: var(--accent);
-  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+  background-image: linear-gradient(var(--pressed-tint), var(--pressed-tint));
 }
 
 /* 左ペインのタグ一覧。項目の見た目は .folder-sidebar-item(と active)を共用し、
@@ -263,7 +439,7 @@ button.search-box-clear {
   box-shadow: none;
   background: none;
   padding: 0.5em 0.75em 0.5em var(--sidebar-item-indent);
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .folder-sidebar-item--active,
@@ -275,7 +451,7 @@ button.search-box-clear {
 .tag-bar-edit-empty {
   opacity: 0.7;
   margin: 0;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .tag-bar-edit-list {
@@ -284,7 +460,7 @@ button.search-box-clear {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3em;
+  gap: var(--space-1);
   /* Same self-contained scroll budget as `.folder-dialog-list`'s own
      `max-height`/`overflow: auto` -- so a long tag library doesn't grow the
      dialog itself past `.dialog`'s own `max-height: 85vh`. */
@@ -295,14 +471,14 @@ button.search-box-clear {
 .tag-bar-edit-row {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  padding: 0.3em 0;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 
 .tag-bar-edit-row-name {
   flex: 1;
   min-width: 0;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -311,17 +487,17 @@ button.search-box-clear {
 .tag-bar-edit-row-actions {
   display: flex;
   flex-shrink: 0;
-  gap: 0.25em;
+  gap: var(--space-1);
 }
 
 .tag-bar-edit-row-actions button {
-  padding: 0.15em 0.5em;
-  font-size: 0.85em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .tag-bar-edit-error {
   color: var(--error-text);
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -388,8 +564,8 @@ button.search-box-clear {
   box-shadow: none;
   background: none;
   padding: 0.5em 0.75em;
-  font-size: 0.85em;
-  font-weight: 600;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-strong);
 }
 
 .sidebar-section-icon {
@@ -401,15 +577,15 @@ button.search-box-clear {
 /* 色はテーマに依存させない固定色。ライト/ダークどちらの背景でも沈まない
    中間の明度(アンバー600・青500・赤500相当)を選ぶ。 */
 .sidebar-section-icon--folder {
-  color: #d9a010;
+  color: var(--icon-folder);
 }
 
 .sidebar-section-icon--rating {
-  color: #3b82f6;
+  color: var(--icon-rating);
 }
 
 .sidebar-section-icon--tag {
-  color: #ef4444;
+  color: var(--icon-tag);
 }
 
 .sidebar-section-body {
@@ -430,7 +606,7 @@ button.search-box-clear {
   box-shadow: none;
   background: none;
   padding: 0.5em 0.75em 0.5em var(--sidebar-item-indent);
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -440,9 +616,9 @@ button.search-box-clear {
    されても見える。色は .thumbnail-offline-badge に揃えた琥珀色。 */
 .folder-sidebar-badge {
   margin-right: 0.4em;
-  color: #7a3b00;
-  background-color: #ffe0b2;
-  border-radius: 4px;
+  color: var(--offline-text);
+  background-color: var(--offline-bg);
+  border-radius: var(--radius-sm);
   padding: 0.05em 0.35em;
 }
 
@@ -475,7 +651,7 @@ button.search-box-clear {
 .status-badge {
   height: 20px;
   padding: 0 0.6em;
-  font-size: 0.75em;
+  font-size: var(--font-xs);
   box-shadow: none;
   background-color: var(--chip-bg);
 }
@@ -501,9 +677,9 @@ button.search-box-clear {
   flex-direction: column;
   background-color: var(--surface);
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
-  padding: 0.25em;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover-up);
+  padding: var(--space-1);
   z-index: 20;
 }
 
@@ -511,8 +687,8 @@ button.search-box-clear {
   box-shadow: none;
   background-color: transparent;
   text-align: right;
-  padding: 0.25em 0.75em;
-  font-size: 0.8em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-xs);
 }
 
 .status-jump-item:hover {
@@ -520,9 +696,9 @@ button.search-box-clear {
 }
 
 .status-thumbnail-progress {
-  font-size: 0.75em;
+  font-size: var(--font-xs);
   white-space: nowrap;
-  color: #555;
+  color: var(--status-progress-text);
 }
 
 .status-badge[aria-pressed="true"] {
@@ -556,9 +732,9 @@ button.search-box-clear {
   width: min(56em, 90vw);
   background-color: var(--surface);
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
-  padding: 0.75em 1em;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover-up);
+  padding: var(--space-3) var(--space-4);
   z-index: 20;
 }
 
@@ -630,17 +806,17 @@ button.search-box-clear {
   padding: 0.5em 8px 0.5em 1em;
   box-sizing: border-box;
   overflow: hidden;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--row-border);
 }
 
 .video-row--selected {
-  background-color: #e8f0fe;
+  background-color: var(--row-selected-bg);
 }
 
 /* Only applied with 2+ rows selected, so a lone selection keeps the plain selected look. */
 .video-row--multi-selected {
-  background-color: #d6e4fd;
-  box-shadow: inset 4px 0 0 #3b78e7;
+  background-color: var(--row-multi-selected-bg);
+  box-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
 }
 
 /* The list takes focus (tabIndex=-1) only to receive Ctrl+A/Esc; a focus
@@ -650,9 +826,9 @@ button.search-box-clear {
 }
 
 .status-selection-count {
-  font-size: 0.75em;
+  font-size: var(--font-xs);
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 /* This wrap sits one level up from `.video-row-thumbnails`, as the
@@ -725,7 +901,7 @@ button.search-box-clear {
      mismatch -- `cover` would silently crop in that case, `contain` never
      does (worst case: a hairline letterbox instead of a crop). */
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--thumbnail-bg);
 }
 
@@ -735,20 +911,20 @@ button.search-box-clear {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--thumbnail-bg);
-  color: #666;
-  font-size: 0.85em;
+  color: var(--thumbnail-text);
+  font-size: var(--font-sm);
 }
 
 .thumbnail-placeholder--failed {
-  background-color: #f3d6d6;
-  color: #8a2a2a;
+  background-color: var(--thumbnail-failed-bg);
+  color: var(--thumbnail-failed-text);
 }
 
 .thumbnail-placeholder--offline {
-  background-color: #e4e4e8;
-  color: #6b6b75;
+  background-color: var(--thumbnail-offline-bg);
+  color: var(--thumbnail-offline-text);
 }
 
 .video-row--offline .video-row-thumbnail-wrap img,
@@ -790,7 +966,7 @@ button.search-box-clear {
      with it. `.video-list`'s own `min-width` and `sidebarResize.ts`'s
      `VIDEO_LIST_MIN_WIDTH_PX` must match this column's width -- see those
      rules' own comments. */
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 /* 情報列を全行まとめて隠す。`.video-row`はflexなので、消えた300px分は
@@ -801,7 +977,7 @@ button.search-box-clear {
 }
 
 /* Real-data measurement: `StarRating`/`TagEditor` reuse the global
-   `input`/`button` rules (padding 0.6em 1.2em, ~40px tall each) sized for
+   `input`/`button` rules (padding var(--control-padding-y) var(--space-5), ~40px tall each) sized for
    full-width dialogs elsewhere in the app -- inside a fixed-height list row
    that also has to fit the properties grid below, that's too tall to leave
    room for the tag-add form without scrolling. This scoped override only
@@ -811,7 +987,7 @@ button.search-box-clear {
 .video-row-info button,
 .video-row-info input {
   padding: 0.25em 0.6em;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 /* 2 label/value pairs per line (4 grid columns, `dt`/`dd` alternating in
@@ -823,7 +999,7 @@ button.search-box-clear {
   grid-template-columns: auto 1fr auto 1fr;
   gap: 0.1em 1em;
   margin: 0;
-  font-size: 0.78em;
+  font-size: var(--font-xs);
 }
 
 .video-row-properties dt {
@@ -856,11 +1032,11 @@ button.search-box-clear {
      DuplicateGroupsPanel's `DuplicateGroupMemberRow` (inline, next to the
      "登録日時" text, not overlaid on anything). Only text/color styling
      belongs here; positioning is caller-specific. */
-  font-size: 0.75em;
-  font-weight: 500;
-  color: #7a3b00;
-  background-color: #ffe0b2;
-  border-radius: 4px;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-strong);
+  color: var(--offline-text);
+  background-color: var(--offline-bg);
+  border-radius: var(--radius-sm);
   padding: 0.1em 0.5em;
 }
 
@@ -904,16 +1080,16 @@ button.search-box-clear {
      なるため、背景の代わりにtext-shadow(黒の縁取り)で最低限の視認性を
      確保する。 */
   background-color: transparent;
-  color: #ffffff;
+  color: var(--overlay-text);
   text-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.9),
-    0 0 2px rgba(0, 0, 0, 0.9);
-  font-size: 0.85em;
+    0 1px 3px var(--overlay-text-shadow),
+    0 0 2px var(--overlay-text-shadow);
+  font-size: var(--font-sm);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   pointer-events: auto;
   user-select: text;
   cursor: text;
@@ -933,9 +1109,9 @@ button.search-box-clear {
   right: 0;
   box-sizing: border-box;
   padding: 0.2em 8em 0.2em 0.4em;
-  background-color: rgba(0, 0, 0, 0.65);
-  color: #ffffff;
-  font-size: 0.8em;
+  background-color: var(--overlay-scrim);
+  color: var(--overlay-text);
+  font-size: var(--font-xs);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
@@ -944,7 +1120,7 @@ button.search-box-clear {
 }
 
 .video-row-play-status--error {
-  background-color: rgba(120, 0, 0, 0.8);
+  background-color: var(--overlay-error-scrim);
   /* pointer-events: none のためtitleで全文を見せられない。エラー文は折り返して
      全文を出す(下端固定なので、伸びても情報パネルの高さには影響しない)。 */
   white-space: normal;
@@ -953,7 +1129,7 @@ button.search-box-clear {
 .skipped-files-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--space-2);
   /* Rendered inside `.status-panel` (a popover anchored to the status
      bar, see that rule), not as a flex child of `.app` -- the
      `.status-panel` rule above already caps the popover's own
@@ -965,20 +1141,20 @@ button.search-box-clear {
 }
 
 .skipped-files-guidance {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   opacity: 0.8;
   margin: 0;
 }
 
 .skipped-files-list {
   margin: 0;
-  padding-left: 1.2em;
+  padding-left: var(--space-5);
   max-height: 20vh;
   overflow: auto;
 }
 
 .skipped-file-name {
-  font-weight: 500;
+  font-weight: var(--weight-strong);
   margin-right: 0.5em;
   overflow-wrap: anywhere;
 }
@@ -989,53 +1165,53 @@ button.search-box-clear {
 }
 
 .skipped-file-reason {
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   opacity: 0.8;
 }
 
 .skipped-file-rename,
 .skipped-file-dismiss {
   margin-left: 0.5em;
-  padding: 0.1em 0.6em;
-  font-size: 0.85em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .skipped-files-notice {
   margin: 0;
-  font-size: 0.9em;
-  color: #1f6b2e;
+  font-size: var(--font-sm);
+  color: var(--success-notice-text);
 }
 
 .skipped-file-edit {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .skipped-file-edit-input {
   flex: 1;
   min-width: 10em;
-  padding: 0.2em 0.5em;
-  font-size: 0.9em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .skipped-file-edit button {
-  padding: 0.1em 0.6em;
-  font-size: 0.85em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .skipped-file-edit-error {
   flex-basis: 100%;
   margin: 0;
-  font-size: 0.85em;
-  color: #b00020;
+  font-size: var(--font-sm);
+  color: var(--danger);
 }
 
 .duplicate-groups-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--space-2);
   /* Same reasoning as `.skipped-files-panel` above -- inside the
      `.status-panel` popover, not a flex child of `.app`. Sized a little
      above `.duplicate-groups-list`'s own `max-height: 40vh` so this outer
@@ -1047,12 +1223,12 @@ button.search-box-clear {
 .duplicate-groups-panel-row {
   display: flex;
   align-items: center;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .duplicate-groups-error {
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -1062,15 +1238,15 @@ button.search-box-clear {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
+  gap: var(--space-3);
   max-height: 40vh;
   overflow: auto;
 }
 
 .duplicate-group {
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  padding: 0.5em 0.75em;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
 }
 
 .duplicate-group-header {
@@ -1078,8 +1254,8 @@ button.search-box-clear {
 }
 
 .duplicate-group-kind {
-  font-weight: 600;
-  font-size: 0.9em;
+  font-weight: var(--weight-strong);
+  font-size: var(--font-sm);
 }
 
 .duplicate-group-members {
@@ -1088,14 +1264,14 @@ button.search-box-clear {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .duplicate-group-member {
   display: flex;
   align-items: center;
-  gap: 0.75em;
-  padding: 0.3em 0;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
 }
 
 .duplicate-group-member-thumb img,
@@ -1103,7 +1279,7 @@ button.search-box-clear {
   width: 96px;
   height: 72px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--thumbnail-bg);
 }
 
@@ -1116,7 +1292,7 @@ button.search-box-clear {
 .duplicate-group-member-info {
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
@@ -1138,14 +1314,14 @@ button.search-box-clear {
   white-space: nowrap;
   min-width: 0;
   flex: 1 1 auto;
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.75;
 }
 
 .file-path-file {
   flex-shrink: 0;
   white-space: nowrap;
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.75;
 }
 
@@ -1153,7 +1329,7 @@ button.search-box-clear {
    表示する。分けると残り幅の配分でファイル名との間に空きが出るため。
    ファイル名が唯一の識別情報なので省略記号では切らず、長いパスは折り返す。 */
 .duplicate-group-member-path {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.75;
   overflow-wrap: anywhere;
 }
@@ -1161,8 +1337,8 @@ button.search-box-clear {
 .duplicate-group-member-meta {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  font-size: 0.8em;
+  gap: var(--space-1);
+  font-size: var(--font-xs);
   opacity: 0.8;
 }
 
@@ -1172,14 +1348,14 @@ button.search-box-clear {
 .duplicate-group-member-props {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.1em 1em;
+  gap: var(--space-1) var(--space-3);
   margin: 0.2em 0 0;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .duplicate-group-member-props > div {
   display: flex;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .duplicate-group-member-props dt {
@@ -1195,11 +1371,11 @@ button.search-box-clear {
 /* グループ内で値が揃っていない項目。色だけに頼らず太字にもして、
    配色が見分けにくい環境でも違いが分かるようにする。 */
 .duplicate-group-member-diff {
-  font-weight: 700;
-  background-color: #fff1c2;
-  color: #5a3d00;
-  border-radius: 3px;
-  padding: 0 0.3em;
+  font-weight: var(--weight-strong);
+  background-color: var(--diff-bg);
+  color: var(--diff-text);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
 }
 
 .duplicate-group-member-delete,
@@ -1211,39 +1387,39 @@ button.search-box-clear {
    赤系の見た目にして左に余白を取り、離して置く。 */
 .duplicate-group-member-delete-file {
   margin-left: 1em;
-  color: #b00020;
-  border-color: #b00020;
-  font-weight: bold;
+  color: var(--danger);
+  border-color: var(--danger);
+  font-weight: var(--weight-strong);
 }
 
 .duplicate-group-member-delete-file:disabled {
   color: inherit;
   border-color: transparent;
-  font-weight: normal;
+  font-weight: var(--weight-regular);
   opacity: 0.5;
 }
 
 .duplicate-group-member-play-note {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.8;
 }
 
 /* 見出しの隣の説明文。メンバー行の注記と同じ大きさ・不透明度で、見出しとの間だけ空ける。 */
 .duplicate-group-kind-note {
   margin-left: 0.75em;
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.8;
 }
 
 .duplicate-group-member-play-error {
-  font-size: 0.85em;
-  color: #b00020;
+  font-size: var(--font-sm);
+  color: var(--danger);
 }
 
 .generation-failures-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--space-2);
   /* Same reasoning as `.skipped-files-panel`/`.duplicate-groups-panel`
      above -- inside the `.status-panel` popover, not a flex child of
      `.app`. */
@@ -1253,7 +1429,7 @@ button.search-box-clear {
 
 .generation-failures-error {
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -1261,12 +1437,12 @@ button.search-box-clear {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .generation-failures-notice {
-  color: #555;
-  font-size: 0.9em;
+  color: var(--failures-notice-text);
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -1276,7 +1452,7 @@ button.search-box-clear {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
   max-height: 40vh;
   overflow: auto;
 }
@@ -1284,32 +1460,32 @@ button.search-box-clear {
 .generation-failure-item {
   display: flex;
   align-items: center;
-  gap: 0.75em;
-  padding: 0.3em 0.5em;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-muted);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .generation-failure-badge {
   flex-shrink: 0;
-  font-size: 0.8em;
-  font-weight: 600;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-strong);
   color: var(--error-text);
-  background-color: #f3caca;
-  border-radius: 4px;
-  padding: 0.1em 0.5em;
+  background-color: var(--failure-badge-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-1);
 }
 
 .generation-failure-info {
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
 
 .generation-failure-name {
-  font-weight: 500;
+  font-weight: var(--weight-strong);
   /* The file name is the core piece of information this row exists to
      show, so it is not truncated; it wraps instead. */
 }
@@ -1319,7 +1495,7 @@ button.search-box-clear {
    instead of a `.generation-failure-path` rule of its own. */
 
 .generation-failure-attempts {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.8;
 }
 
@@ -1331,7 +1507,7 @@ button.search-box-clear {
 
 .star {
   padding: 0.1em 0.3em;
-  font-size: 1.2em;
+  font-size: var(--font-lg);
   color: var(--star-color);
   opacity: 0.4;
 }
@@ -1341,7 +1517,7 @@ button.search-box-clear {
 }
 
 .star-clear {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   margin-left: 0.5em;
 }
 
@@ -1362,9 +1538,9 @@ button.search-box-clear {
   align-items: center;
   gap: 0.3em;
   background-color: var(--chip-bg);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.2em 0.6em;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 /* .video-row-info全体の0.85em縮小の影響でこのボタンのクリック領域が
@@ -1380,7 +1556,7 @@ button.search-box-clear {
   box-shadow: none;
   padding: 0.3em 0.35em;
   margin: -0.3em -0.35em -0.3em 0;
-  font-size: 1em;
+  font-size: var(--font-base);
   line-height: 1;
 }
 
@@ -1391,7 +1567,7 @@ button.search-box-clear {
 
 .tag-editor-error {
   color: var(--error-text);
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   margin: 0;
 }
 
@@ -1406,7 +1582,7 @@ button.search-box-clear {
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.45);
+  background-color: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1416,26 +1592,26 @@ button.search-box-clear {
 .dialog {
   background-color: var(--surface);
   color: var(--text);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  padding: 1.5em;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
+  padding: var(--space-6);
   width: min(32em, 90vw);
   max-height: 85vh;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .dialog h2 {
   margin: 0;
-  font-size: 1.1em;
+  font-size: var(--font-lg);
 }
 
 .dialog-footer {
   display: flex;
   justify-content: space-between;
-  gap: 0.75em;
+  gap: var(--space-3);
   margin-top: 0.5em;
 }
 
@@ -1456,7 +1632,7 @@ button.search-box-clear {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
   /* This dialog's own scroll budget for a long folder list -- `.dialog`'s
      own `max-height`/`overflow: auto` above still caps the dialog as a
      whole (footer/note always stay visible), same layering `.status-panel`'s
@@ -1468,15 +1644,15 @@ button.search-box-clear {
 .folder-row {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  padding: 0.3em 0;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 
 .folder-row-path {
   flex: 1;
   min-width: 0;
   font-family: monospace;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1487,76 +1663,76 @@ button.search-box-clear {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.2em;
+  gap: var(--space-1);
 }
 
 .folder-row-edit-controls {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .folder-row-path-input {
   flex: 1;
   min-width: 0;
   font-family: monospace;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
 }
 
 .folder-row-edit-error {
   color: var(--error-text);
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   margin: 0;
 }
 
 .folder-dialog-rename-summary {
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   opacity: 0.85;
   margin: 0;
 }
 
 .folder-row-move-btn {
-  padding: 0.2em 0.5em;
-  font-size: 0.85em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .folder-row-check {
   display: flex;
   align-items: center;
-  gap: 0.25em;
-  font-size: 0.8em;
+  gap: var(--space-1);
+  font-size: var(--font-xs);
   white-space: nowrap;
 }
 
 .folder-dialog-order-check-error {
   color: var(--error-text);
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   margin: 0;
 }
 
 .folder-row-edit-btn,
 .folder-row-delete-btn {
-  padding: 0.2em 0.5em;
-  font-size: 0.85em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
 }
 
 .folder-dialog-scan-row {
   display: flex;
   align-items: center;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .folder-dialog-scan-note {
   margin: 0.25em 0 0;
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.75;
 }
 
 /* 解除するフォルダのパスを、タグの削除の確認での強調と揃えて目立たせる。 */
 .confirm-dialog-body .folder-delete-confirm-path {
   font-family: monospace;
-  font-size: 1.15em;
-  font-weight: bold;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-strong);
   color: var(--danger);
   overflow-wrap: anywhere;
 }
@@ -1582,9 +1758,9 @@ button.search-box-clear {
 
 /* テキストリンク風。ボタン共通の枠・影・背景は打ち消す。 */
 button.link-button {
-  padding: 0.15em 0.3em;
+  padding: var(--space-1) var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   box-shadow: none;
   background: transparent;
   color: var(--link);
@@ -1596,7 +1772,7 @@ button.link-button:active {
   text-decoration: none;
 }
 button.link-button:focus-visible {
-  outline: 2px solid var(--link);
+  outline: var(--focus-ring);
 }
 
 .about-dialog-footer {
@@ -1606,13 +1782,13 @@ button.link-button:focus-visible {
 .settings-dialog-field {
   display: flex;
   flex-direction: column;
-  gap: 0.35em;
+  gap: var(--space-1);
 }
 
 .settings-dialog-input-row {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .settings-dialog-input {
@@ -1621,19 +1797,19 @@ button.link-button:focus-visible {
 
 .dialog-hint {
   margin: 0;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   opacity: 0.75;
 }
 
 /* `.dialog-error` と同じ詳細度なので、それより後ろに置いて font-size を上書きする。 */
 .dialog-error--compact {
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .settings-dialog-check {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .update-dialog p {
@@ -1652,15 +1828,15 @@ button.link-button:focus-visible {
    スクロールし、ボタンを押し出さない。 */
 .update-dialog-notes {
   margin: 0;
-  padding: 0.6em 0.8em;
+  padding: var(--space-2) var(--space-3);
   max-height: 30vh;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
-  font-size: 0.9em;
-  background-color: #f1f1f1;
-  border-radius: 6px;
+  font-size: var(--font-sm);
+  background-color: var(--notes-bg);
+  border-radius: var(--radius-md);
 }
 
 /* 画面下部に出す控えめな通知。FFmpeg の警告のような目立つ色にはしない。
@@ -1673,19 +1849,19 @@ button.link-button:focus-visible {
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 0.75em;
-  padding: 0.5em 0.9em;
-  font-size: 0.9em;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-sm);
   color: var(--text);
-  background-color: #e8eefc;
-  border: 1px solid #b9c8ee;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  background-color: var(--update-notice-bg);
+  border: 1px solid var(--update-notice-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
 }
 
 .settings-dialog-actions {
   display: flex;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .confirm-dialog-body p {
@@ -1694,23 +1870,23 @@ button.link-button:focus-visible {
 
 .confirm-dialog-path {
   font-family: monospace;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   opacity: 0.85;
   overflow-wrap: anywhere;
 }
 
 /* 削除するタグの名前を、文中で目立たせる。 */
 .confirm-dialog-body .tag-delete-target {
-  font-size: 1.15em;
-  font-weight: bold;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-strong);
   color: var(--danger);
   overflow-wrap: anywhere;
 }
 
 .confirm-dialog-confirm--danger {
-  color: #ffffff;
-  background-color: #b00020;
-  border-color: #b00020;
+  color: var(--on-danger);
+  background-color: var(--danger-bg);
+  border-color: var(--danger-bg);
 }
 
 .confirm-dialog-confirm--danger:disabled {
@@ -1719,7 +1895,7 @@ button.link-button:focus-visible {
 
 .confirm-dialog-error {
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -1732,14 +1908,14 @@ button.link-button:focus-visible {
   z-index: 70;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   max-width: 80vw;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--error-text);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -1747,24 +1923,24 @@ button.link-button:focus-visible {
   position: fixed;
   z-index: 60;
   min-width: 12em;
-  padding: 4px;
+  padding: var(--space-1);
   background-color: var(--surface);
   color: var(--text);
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
 }
 
 .context-menu-item {
   display: block;
   width: 100%;
-  padding: 0.4em 0.8em;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   box-shadow: none;
   background-color: transparent;
   color: inherit;
-  font-size: 0.95em;
+  font-size: var(--font-base);
   text-align: left;
   cursor: pointer;
 }
@@ -1796,7 +1972,7 @@ button.link-button:focus-visible {
 .wb-import-dialog-row {
   display: flex;
   align-items: center;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .wb-import-dialog-row button {
@@ -1807,16 +1983,16 @@ button.link-button:focus-visible {
 .wb-import-steps {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .wb-import-steps-list {
   display: flex;
-  gap: 1em;
+  gap: var(--space-3);
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .wb-import-step {
@@ -1826,7 +2002,7 @@ button.link-button:focus-visible {
 /* 実行中は太字+先頭の▶で、完了(取り消し線)・未着手(薄い)と色に頼らず区別する。 */
 .wb-import-step--active {
   opacity: 1;
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 }
 
 .wb-import-step--active::before {
@@ -1842,7 +2018,7 @@ button.link-button:focus-visible {
 .wb-import-step-count {
   display: inline-block;
   margin-left: 0.5em;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1860,41 +2036,41 @@ button.link-button:focus-visible {
 .wb-import-result {
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .dialog-result-line {
   margin: 0;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
 }
 
 .wb-import-result-success {
-  color: #1f6d2c;
-  font-weight: 600;
+  color: var(--success-text);
+  font-weight: var(--weight-strong);
 }
 
 .wb-import-result-attention {
-  border-radius: 6px;
-  padding: 0.5em 0.75em;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .wb-import-result-attention--amber {
-  background-color: #fff3cd;
+  background-color: var(--warn-bg);
   color: var(--warn-text);
 }
 
 .wb-import-result-attention--failed {
-  background-color: #fbe3e3;
+  background-color: var(--result-failed-bg);
   color: var(--error-text);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .wb-import-result-details {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
 }
 
 .wb-import-result-details summary {
@@ -1904,21 +2080,21 @@ button.link-button:focus-visible {
 
 .wb-import-result-details-list {
   margin: 0.4em 0;
-  padding-left: 1.4em;
+  padding-left: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 0.25em;
+  gap: var(--space-1);
 }
 
 .wb-import-result-watch-folder-list {
   margin: 0.2em 0 0;
-  padding-left: 1.2em;
+  padding-left: var(--space-5);
   overflow-wrap: anywhere;
 }
 
 .dialog-result-detail {
   margin: 0;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   opacity: 0.85;
 }
 
@@ -1934,41 +2110,41 @@ button.link-button:focus-visible {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .unmatched-row {
-  border: 1px solid #d0d0d0;
-  border-radius: 6px;
-  padding: 0.5em 0.75em;
+  border: 1px solid var(--unmatched-row-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .unmatched-row-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .unmatched-row-info {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
+  gap: var(--space-1);
 }
 
 .unmatched-row-name,
 .unmatched-candidate-name {
   overflow-wrap: anywhere;
-  font-size: 0.9em;
+  font-size: var(--font-sm);
 }
 
 .unmatched-row-folder,
 .unmatched-candidate-path {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.7;
   overflow-wrap: anywhere;
 }
@@ -1976,25 +2152,25 @@ button.link-button:focus-visible {
 .unmatched-kind,
 .unmatched-badge {
   align-self: flex-start;
-  border-radius: 4px;
-  padding: 0 0.4em;
-  font-size: 0.75em;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  font-size: var(--font-xs);
 }
 
 .unmatched-kind {
-  background-color: #fff3cd;
+  background-color: var(--warn-bg);
   color: var(--warn-text);
 }
 
 .unmatched-badge {
-  background-color: #dff0e3;
-  color: #1f6d2c;
+  background-color: var(--success-bg);
+  color: var(--success-text);
 }
 
 .unmatched-row-actions {
   flex: none;
   display: flex;
-  gap: 0.5em;
+  gap: var(--space-2);
 }
 
 .unmatched-row-actions button {
@@ -2004,7 +2180,7 @@ button.link-button:focus-visible {
 .unmatched-picker {
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .unmatched-picker-search {
@@ -2020,7 +2196,7 @@ button.link-button:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.25em;
+  gap: var(--space-1);
 }
 
 .unmatched-candidate {
@@ -2029,30 +2205,30 @@ button.link-button:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.1em;
+  gap: var(--space-1);
 }
 
 .unmatched-candidate--selected {
-  outline: 2px solid var(--link);
-  outline-offset: -2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset-inset);
 }
 
 .unmatched-confirm {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.4em;
+  gap: var(--space-2);
 }
 
 .unmatched-overwrite {
   color: var(--warn-text);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .bulk-tag-dialog form {
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .bulk-tag-input {
@@ -2063,44 +2239,44 @@ button.link-button:focus-visible {
 .bulk-tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4em;
+  gap: var(--space-2);
   max-height: 12em;
   overflow-y: auto;
 }
 
 .bulk-tag-candidate {
-  padding: 0.2em 0.7em;
-  border-radius: 999px;
-  font-size: 0.9em;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
 }
 
 .bulk-tag-candidate[aria-pressed="true"] {
   border-color: var(--accent);
-  background-image: linear-gradient(rgba(57, 108, 216, 0.25), rgba(57, 108, 216, 0.25));
+  background-image: linear-gradient(var(--pressed-tint), var(--pressed-tint));
 }
 
 .bulk-tag-error {
   margin: 0;
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
 .bulk-tag-tabs {
   display: flex;
-  gap: 0.4em;
+  gap: var(--space-2);
   margin-bottom: 0.75em;
 }
 
 .bulk-tag-tab[aria-selected="true"] {
   border-color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .bulk-tag-remove {
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
+  gap: var(--space-3);
 }
 
 .log-viewer-dialog {
@@ -2113,15 +2289,15 @@ button.link-button:focus-visible {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5em 1em;
+  gap: var(--space-2) var(--space-4);
 }
 
 .log-viewer-level,
 .log-viewer-follow {
   display: inline-flex;
   align-items: center;
-  gap: 0.3em;
-  font-size: 0.9em;
+  gap: var(--space-1);
+  font-size: var(--font-sm);
 }
 
 .log-viewer-search {
@@ -2130,7 +2306,7 @@ button.link-button:focus-visible {
 }
 
 .log-viewer-count {
-  font-size: 0.85em;
+  font-size: var(--font-sm);
   opacity: 0.75;
   white-space: nowrap;
 }
@@ -2138,7 +2314,7 @@ button.link-button:focus-visible {
 .log-viewer-error {
   margin: 0;
   color: var(--error-text);
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -2150,19 +2326,19 @@ button.link-button:focus-visible {
      長い行の出入りでバーが現れたり消えたりすると下端との距離が変わり、
      「最新に追従」の自動オフ判定に影響しうるため。 */
   overflow-x: scroll;
-  border: 1px solid #c8c8c8;
-  border-radius: 4px;
+  border: 1px solid var(--log-list-border);
+  border-radius: var(--radius-sm);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 0.85em;
+  font-size: var(--font-sm);
 }
 
 .log-viewer-row {
   display: flex;
   align-items: center;
-  gap: 0.6em;
+  gap: var(--space-2);
   min-width: 100%;
   width: max-content;
-  padding: 0 0.5em;
+  padding: 0 var(--space-2);
   line-height: 22px;
   white-space: pre;
 }
@@ -2170,7 +2346,7 @@ button.link-button:focus-visible {
 .log-viewer-row-level {
   flex: none;
   width: 5.5em;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .log-viewer-row-target {
@@ -2184,19 +2360,19 @@ button.link-button:focus-visible {
 
 /* ライトテーマの文字色。チェックボックスのラベルと行のレベル表示で共有する。 */
 .log-level-error {
-  color: #b3261e;
+  color: var(--log-error);
 }
 .log-level-warn {
-  color: #9a5b00;
+  color: var(--log-warn);
 }
 .log-level-info {
-  color: #1d5fa8;
+  color: var(--log-info);
 }
 .log-level-debug {
-  color: #5f6368;
+  color: var(--log-debug);
 }
 .log-level-trace {
-  color: #8a8f94;
+  color: var(--log-trace);
 }
 .log-level-unknown {
   color: inherit;
@@ -2207,20 +2383,16 @@ button.link-button:focus-visible {
 }
 
 .log-viewer-dir {
-  font-size: 0.8em;
+  font-size: var(--font-xs);
   opacity: 0.75;
   overflow-wrap: anywhere;
 }
 
 @media (prefers-color-scheme: dark) {
-  input,
-  button,
+  /* ライトでは素の `select` に指定が無いので、ダークでだけ入力欄・ボタンと揃える。 */
   select {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
+    color: var(--control-text);
+    background-color: var(--control-bg);
   }
 
   button.link-button,
@@ -2234,47 +2406,11 @@ button.link-button:focus-visible {
     background: transparent;
   }
 
-  .update-notice {
-    background-color: #2a3a5c;
-    border-color: #4a5f8f;
-  }
-
-  .update-dialog-notes {
-    background-color: #3a3a3a;
-  }
-
+  /* ライトの `img` には文字色の指定が無く(代替テキストは本文色)、ダークだけ
+     プレースホルダと同じ薄い灰色にする。 */
   .video-row-thumbnail-wrap img,
-  .thumbnail-placeholder {
-    color: #ccc;
-  }
-
-  .thumbnail-placeholder--failed {
-    background-color: #5a2f2f;
-    color: #f0b4b4;
-  }
-
-  .thumbnail-placeholder--offline {
-    background-color: #3a3a40;
-    color: #a0a0aa;
-  }
-
-  .video-row {
-    border-bottom-color: #444;
-  }
-
-  .video-row--selected {
-    background-color: #2a3a5c;
-  }
-
-  .video-row--multi-selected {
-    background-color: #34497a;
-    box-shadow: inset 4px 0 0 #7aa7ff;
-  }
-
-  .thumbnail-offline-badge,
-  .folder-sidebar-badge {
-    color: #f8d7a3;
-    background-color: #5a3d00;
+  .duplicate-group-member-thumb img {
+    color: var(--thumbnail-text);
   }
 
   /* `.folder-sidebar-item--active` の背景は、同じ詳細度で後ろにある
@@ -2285,40 +2421,9 @@ button.link-button:focus-visible {
     background-color: var(--selected-bg);
   }
 
-  .duplicate-group-member-play-error {
-    color: #f3caca;
-  }
-
-  .duplicate-group-member-delete-file {
-    color: #f3caca;
-    border-color: #c75a6a;
-  }
-
   .duplicate-group-member-delete-file:disabled {
     color: inherit;
     border-color: transparent;
-  }
-
-  .duplicate-group-member-diff {
-    background-color: #5a4a14;
-    color: #ffe9a8;
-  }
-
-  .duplicate-group-member-thumb img,
-  .duplicate-group-member-thumb .thumbnail-placeholder {
-    color: #ccc;
-  }
-
-  .generation-failures-notice {
-    color: #cfcfcf;
-  }
-
-  .generation-failure-badge {
-    background-color: #5a1f1f;
-  }
-
-  .status-thumbnail-progress {
-    color: #bbb;
   }
 
   /* ライトでは文字色を指定せず、`:root` の `--text` を継承している。 */
@@ -2330,65 +2435,4 @@ button.link-button:focus-visible {
     color: var(--text);
   }
 
-  .context-menu {
-    border-color: #555;
-  }
-
-  .confirm-dialog-confirm--danger {
-    background-color: #c0392b;
-    border-color: #c0392b;
-  }
-
-  .wb-import-result-success {
-    color: #7ed494;
-  }
-
-  .wb-import-result-attention--amber {
-    background-color: #5a4600;
-  }
-
-  .wb-import-result-attention--failed {
-    background-color: #5a1f1f;
-  }
-
-  .unmatched-row {
-    border-color: #555;
-  }
-
-  .unmatched-kind {
-    background-color: #5a4600;
-  }
-
-  .unmatched-badge {
-    background-color: #1f4a2b;
-    color: #7ed494;
-  }
-
-  .skipped-file-edit-error {
-    color: #f3caca;
-  }
-
-  .skipped-files-notice {
-    color: #b7e4c0;
-  }
-
-  .log-viewer-list {
-    border-color: #555;
-  }
-
-  .log-level-error {
-    color: #ff8a80;
-  }
-  .log-level-warn {
-    color: #ffcc66;
-  }
-  .log-level-info {
-    color: #8ab4f8;
-  }
-  .log-level-debug {
-    color: #b0b4b9;
-  }
-  .log-level-trace {
-    color: #8a8f94;
-  }
 }
