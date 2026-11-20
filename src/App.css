@@ -124,6 +124,12 @@
   /* ボタン・入力欄の縦padding。4px刻みの 8px だと標準のボタンが細く見え、
      12px だと大きすぎるため、見た目を決める値としてここだけ 10px にする。 */
   --control-padding-y: 10px;
+  /* 行や一覧の中に並べる小さなボタン・入力欄の padding と文字サイズ。標準の
+     大きさのままだと行が高くなりすぎるため、種類ごとにばらつかせず共通にする。 */
+  --control-compact-padding: var(--space-1) var(--space-2);
+  --control-compact-font-size: var(--font-sm);
+  /* バッジ(状態の短いラベル)の padding。em なので文字サイズに追従する。 */
+  --badge-padding: 0.1em 0.5em;
 
   /* 角丸は小さい部品(バッジ・メニュー項目)、面(ダイアログ・ボタン・枠)、
      丸薬型(タグのチップ)の3種に限る。 */
@@ -135,6 +141,10 @@
      見分けにくいので使わない。 */
   --weight-regular: 400;
   --weight-strong: 600;
+
+  /* 操作できない要素と、補足文(ヒント・注記)の薄さ。 */
+  --opacity-disabled: 0.6;
+  --opacity-muted: 0.75;
 
   /* 影はボタン、画面下端から上へ開く面、ふつうに下へ開く面(通知・メニュー)、
      最前面のダイアログ・コンテキストメニューで、浮き上がりの大きさを変える。 */
@@ -264,12 +274,11 @@ input:not([type="checkbox"], [type="radio"]):focus-visible {
   border-color: var(--accent);
 }
 
-/* 行幅いっぱいに並ぶ項目やメニューは、外側に出た枠が親のスクロール領域・
-   角丸で切れるので、内側に描く。 */
+/* 行幅いっぱいに並ぶ項目は、外側に出た枠が親のスクロール領域・角丸で切れるので、
+   内側に描く。 */
 .sidebar-section-toggle:focus-visible,
 .folder-sidebar-item:focus-visible,
-.rating-bar-item:focus-visible,
-.context-menu-item:focus-visible {
+.rating-bar-item:focus-visible {
   outline-offset: var(--focus-ring-offset-inset);
 }
 
@@ -284,9 +293,24 @@ button:active {
   border-color: var(--accent);
   background-color: var(--control-active-bg);
 }
+/* 行・リストの中に並べる小さなボタンと入力欄。詳細度は `.header-row-primary
+   button` などの領域ごとの指定と同じで、それらは後ろの宣言が優先される。 */
+.tag-bar-edit-row-actions button,
+.skipped-file-rename,
+.skipped-file-dismiss,
+.skipped-file-edit button,
+.skipped-file-edit-input,
+.folder-row-move-btn,
+.folder-row-edit-btn,
+.folder-row-delete-btn,
+.bulk-tag-candidate {
+  padding: var(--control-compact-padding);
+  font-size: var(--control-compact-font-size);
+}
+
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: var(--opacity-disabled);
 }
 
 .app {
@@ -330,9 +354,17 @@ button:disabled {
   white-space: nowrap;
 }
 
-/* ダイアログ内のエラー文。設定・更新のダイアログは `.dialog-error--compact` を
-   併せて付け、一回り小さくする。 */
-.dialog-error {
+/* エラー文は色・文字サイズ・余白を全て共通にする。 */
+.dialog-error,
+.confirm-dialog-error,
+.bulk-tag-error,
+.log-viewer-error,
+.folder-row-edit-error,
+.folder-dialog-order-check-error,
+.tag-editor-error,
+.tag-bar-edit-error,
+.duplicate-groups-error,
+.generation-failures-error {
   color: var(--error-text);
   font-size: var(--font-sm);
   margin: 0;
@@ -404,14 +436,17 @@ button.search-box-clear {
   gap: var(--space-2);
 }
 
-/* 行の右端に置く。押下状態は枠線色と薄い背景で示し、ライト/ダークどちらでも読めるよう
-   半透明の青を使う。 */
+/* 行の右端に置く。 */
 .info-pane-toggle {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.info-pane-toggle[aria-pressed="true"] {
+/* 押下状態・選択中のトグル系ボタンは、枠線色と薄い青で同じように示す。
+   `.status-badge` は選択中を塗りつぶしで示す別の部品なので含めない。 */
+.info-pane-toggle[aria-pressed="true"],
+.bulk-tag-candidate[aria-pressed="true"],
+.bulk-tag-tab[aria-selected="true"] {
   border-color: var(--accent);
   background-image: linear-gradient(var(--pressed-tint), var(--pressed-tint));
 }
@@ -488,17 +523,6 @@ button.search-box-clear {
   display: flex;
   flex-shrink: 0;
   gap: var(--space-1);
-}
-
-.tag-bar-edit-row-actions button {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
-}
-
-.tag-bar-edit-error {
-  color: var(--error-text);
-  font-size: var(--font-sm);
-  margin: 0;
 }
 
 /* The `flex: 1` body row that hosts LeftPane + the video list side by side.
@@ -1037,7 +1061,7 @@ button.search-box-clear {
   color: var(--offline-text);
   background-color: var(--offline-bg);
   border-radius: var(--radius-sm);
-  padding: 0.1em 0.5em;
+  padding: var(--badge-padding);
 }
 
 /* Overlay-only positioning, applied *in addition to*
@@ -1172,8 +1196,6 @@ button.search-box-clear {
 .skipped-file-rename,
 .skipped-file-dismiss {
   margin-left: 0.5em;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
 }
 
 .skipped-files-notice {
@@ -1192,13 +1214,6 @@ button.search-box-clear {
 .skipped-file-edit-input {
   flex: 1;
   min-width: 10em;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
-}
-
-.skipped-file-edit button {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
 }
 
 .skipped-file-edit-error {
@@ -1224,12 +1239,6 @@ button.search-box-clear {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.duplicate-groups-error {
-  color: var(--error-text);
-  font-size: var(--font-sm);
-  margin: 0;
 }
 
 .duplicate-groups-list {
@@ -1396,7 +1405,7 @@ button.search-box-clear {
   color: inherit;
   border-color: transparent;
   font-weight: var(--weight-regular);
-  opacity: 0.5;
+  opacity: var(--opacity-disabled);
 }
 
 .duplicate-group-member-play-note {
@@ -1425,12 +1434,6 @@ button.search-box-clear {
      `.app`. */
   max-height: 65vh;
   overflow: auto;
-}
-
-.generation-failures-error {
-  color: var(--error-text);
-  font-size: var(--font-sm);
-  margin: 0;
 }
 
 .generation-failures-bulk {
@@ -1473,7 +1476,7 @@ button.search-box-clear {
   color: var(--error-text);
   background-color: var(--failure-badge-bg);
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-1);
+  padding: var(--badge-padding);
 }
 
 .generation-failure-info {
@@ -1565,12 +1568,6 @@ button.search-box-clear {
   gap: 0.5em;
 }
 
-.tag-editor-error {
-  color: var(--error-text);
-  font-size: var(--font-sm);
-  margin: 0;
-}
-
 /* Shared modal chrome for every dialog. ModalShell portals each dialog to
    the end of document.body, outside `.app`, so unlike every rule above,
    `flex`/`flex-shrink` sizing budgets don't apply here at all -- this is a
@@ -1612,11 +1609,11 @@ button.search-box-clear {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-top: 0.5em;
+  margin-top: var(--space-2);
 }
 
 .folder-dialog-empty {
-  opacity: 0.7;
+  opacity: var(--opacity-muted);
   margin: 0;
 }
 
@@ -1679,21 +1676,10 @@ button.search-box-clear {
   font-size: var(--font-sm);
 }
 
-.folder-row-edit-error {
-  color: var(--error-text);
-  font-size: var(--font-xs);
-  margin: 0;
-}
-
 .folder-dialog-rename-summary {
   font-size: var(--font-sm);
-  opacity: 0.85;
+  opacity: var(--opacity-muted);
   margin: 0;
-}
-
-.folder-row-move-btn {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
 }
 
 .folder-row-check {
@@ -1702,18 +1688,6 @@ button.search-box-clear {
   gap: var(--space-1);
   font-size: var(--font-xs);
   white-space: nowrap;
-}
-
-.folder-dialog-order-check-error {
-  color: var(--error-text);
-  font-size: var(--font-xs);
-  margin: 0;
-}
-
-.folder-row-edit-btn,
-.folder-row-delete-btn {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
 }
 
 .folder-dialog-scan-row {
@@ -1725,7 +1699,7 @@ button.search-box-clear {
 .folder-dialog-scan-note {
   margin: 0.25em 0 0;
   font-size: var(--font-xs);
-  opacity: 0.75;
+  opacity: var(--opacity-muted);
 }
 
 /* 解除するフォルダのパスを、タグの削除の確認での強調と揃えて目立たせる。 */
@@ -1771,9 +1745,6 @@ button.link-button:active {
   background: transparent;
   text-decoration: none;
 }
-button.link-button:focus-visible {
-  outline: var(--focus-ring);
-}
 
 .about-dialog-footer {
   justify-content: center;
@@ -1798,12 +1769,7 @@ button.link-button:focus-visible {
 .dialog-hint {
   margin: 0;
   font-size: var(--font-sm);
-  opacity: 0.75;
-}
-
-/* `.dialog-error` と同じ詳細度なので、それより後ろに置いて font-size を上書きする。 */
-.dialog-error--compact {
-  font-size: var(--font-sm);
+  opacity: var(--opacity-muted);
 }
 
 .settings-dialog-check {
@@ -1861,11 +1827,11 @@ button.link-button:focus-visible {
 
 .settings-dialog-actions {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .confirm-dialog-body p {
-  margin: 0 0 0.5em;
+  margin: 0 0 var(--space-2);
 }
 
 .confirm-dialog-path {
@@ -1889,13 +1855,7 @@ button.link-button:focus-visible {
   border-color: var(--danger-bg);
 }
 
-.confirm-dialog-confirm--danger:disabled {
-  opacity: 0.6;
-}
-
 .confirm-dialog-error {
-  color: var(--error-text);
-  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -1950,12 +1910,19 @@ button.link-button:focus-visible {
   background-color: var(--hover-bg);
 }
 
+/* メニューは開いた時点で最初の項目へ自動でフォーカスが移り、マウスを動かしても
+   フォーカスは移らない。リングを出すと、操作していない最初の項目に枠が付いたまま
+   残って見えるため、現在位置は上の背景色だけで示す。 */
+.context-menu-item:focus-visible {
+  outline: none;
+}
+
 .context-menu-item--danger {
   color: var(--danger);
 }
 
 .context-menu-item:disabled {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -2095,7 +2062,7 @@ button.link-button:focus-visible {
 .dialog-result-detail {
   margin: 0;
   font-size: var(--font-sm);
-  opacity: 0.85;
+  opacity: var(--opacity-muted);
 }
 
 /* 旧サムネイルの手動紐付け。一覧は縦に長くなりうるので、行の高さは内容に任せ、
@@ -2153,8 +2120,9 @@ button.link-button:focus-visible {
 .unmatched-badge {
   align-self: flex-start;
   border-radius: var(--radius-sm);
-  padding: 0 var(--space-1);
+  padding: var(--badge-padding);
   font-size: var(--font-xs);
+  font-weight: var(--weight-strong);
 }
 
 .unmatched-kind {
@@ -2245,31 +2213,20 @@ button.link-button:focus-visible {
 }
 
 .bulk-tag-candidate {
-  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-pill);
-  font-size: var(--font-sm);
-}
-
-.bulk-tag-candidate[aria-pressed="true"] {
-  border-color: var(--accent);
-  background-image: linear-gradient(var(--pressed-tint), var(--pressed-tint));
 }
 
 .bulk-tag-error {
-  margin: 0;
-  color: var(--error-text);
-  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
 .bulk-tag-tabs {
   display: flex;
   gap: var(--space-2);
-  margin-bottom: 0.75em;
+  margin-bottom: var(--space-3);
 }
 
 .bulk-tag-tab[aria-selected="true"] {
-  border-color: var(--accent);
   font-weight: var(--weight-strong);
 }
 
@@ -2307,14 +2264,11 @@ button.link-button:focus-visible {
 
 .log-viewer-count {
   font-size: var(--font-sm);
-  opacity: 0.75;
+  opacity: var(--opacity-muted);
   white-space: nowrap;
 }
 
 .log-viewer-error {
-  margin: 0;
-  color: var(--error-text);
-  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -2384,7 +2338,7 @@ button.link-button:focus-visible {
 
 .log-viewer-dir {
   font-size: var(--font-xs);
-  opacity: 0.75;
+  opacity: var(--opacity-muted);
   overflow-wrap: anywhere;
 }
 

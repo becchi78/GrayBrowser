@@ -115,6 +115,12 @@ export function ContextMenu({ position, items, onClose }: Props) {
           }
           disabled={item.disabled}
           aria-disabled={item.disabled || undefined}
+          // 初期フォーカスが先頭項目に残ると、ホバー中の項目と二重に強調される。
+          // 強調を常に1か所にするため、ホバーした項目へフォーカスを追従させる。
+          // 無効な項目は focus() しても何も起きないので、フォーカスは動かさない。
+          onMouseEnter={(e) => {
+            if (!item.disabled) e.currentTarget.focus();
+          }}
           onClick={() => {
             onClose();
             item.onSelect();
