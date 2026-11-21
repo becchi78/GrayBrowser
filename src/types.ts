@@ -260,3 +260,13 @@ export interface LinkCandidateDto {
   /** The video already has thumbnails; linking replaces them. */
   thumbnail_ready: boolean;
 }
+
+// Mirrors src-tauri's LibraryCountsDto: whole-library counts that ignore the
+// current filters.
+export interface LibraryCounts {
+  total: number;
+  /** One entry per watch folder, including folders with no videos. */
+  folders: { folder_path: string; count: number }[];
+  /** Only ratings that at least one video has; 0 is "unrated". */
+  ratings: { rating: number; count: number }[];
+}

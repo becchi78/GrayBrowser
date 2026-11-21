@@ -3,17 +3,17 @@
 // 切り出した。
 export const MIN_WIDTH = 200;
 export const MAX_WIDTH = 500;
-// `.app`'s own `padding: 1em` (16px at :root's `font-size: 16px`) on both
+// `.app`'s own `padding: var(--space-4)` (16px) on both
 // left and right = 32px total, unrelated to this component but needed here
 // to compute how much of the window's width is actually available to
 // `.main-area` (App.css) before this sidebar even starts competing with
 // `.video-list` for space.
 const APP_HORIZONTAL_PADDING_PX = 32;
-// App.css's `.video-list`'s own `min-width` -- kept as a literal constant
-// here (not imported; this codebase has no CSS-values-in-JS bridge) so this
-// component doesn't drag this sidebar wide enough, at a narrow window, to
-// force `.video-list` below its own floor. Must be kept in sync with that
-// rule's `min-width` -- see its own comment for where 532 comes from.
+// `.video-list` の min-width(CSS の `--video-list-min-width`)を読めないとき
+// (CSS の無いテスト環境)の既定値。実際の値はテーマごとに CSS が決め、
+// 呼び出し側が読んで引数で渡す。ここの値は、行の左右padding 24px + gap 8px +
+// サムネイル領域の最小幅 200px + 情報パネル 300px = 532px(枠の無い
+// シネマの値)に合わせてある。
 export const VIDEO_LIST_MIN_WIDTH_PX = 532;
 
 /**
@@ -24,7 +24,10 @@ export const VIDEO_LIST_MIN_WIDTH_PX = 532;
  * `MIN_WIDTH`, so the sidebar itself never gets clamped to something
  * smaller than its own minimum).
  */
-export function effectiveMaxWidth(windowInnerWidth: number): number {
-  const available = windowInnerWidth - APP_HORIZONTAL_PADDING_PX - VIDEO_LIST_MIN_WIDTH_PX;
+export function effectiveMaxWidth(
+  windowInnerWidth: number,
+  videoListMinWidth: number = VIDEO_LIST_MIN_WIDTH_PX,
+): number {
+  const available = windowInnerWidth - APP_HORIZONTAL_PADDING_PX - videoListMinWidth;
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, available));
 }

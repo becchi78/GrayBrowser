@@ -1,6 +1,8 @@
 import { checkFolderReachability } from "../api";
+import type { LibraryCounts } from "../types";
 import { useIsFolderUnreachable } from "../reachabilityContext";
 import { useWatchFolderList } from "../useWatchFolderList";
+import { CountPill } from "./CountPill";
 
 interface Props {
   /** `null` = "すべて" (no folder filter). */
@@ -13,13 +15,16 @@ interface Props {
    * mirrors `list_watch_folders` for the selection UI.
    */
   refreshKey?: number;
+  /** 件数のピル(コンソールテーマで表示)。省略・未取得の間は出さない。 */
+  counts?: LibraryCounts | null;
 }
 
 // Registered-folder list + selection state. "すべて" clears the filter;
 // clicking a folder scopes the grid to it via `list_videos`'s `folder_path`
 // argument (wired end-to-end through ThumbnailGrid -> api.listVideos).
-export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
+export function FolderSidebar({ selected, onSelect, refreshKey, counts }: Props) {
   const folders = useWatchFolderList(refreshKey) ?? [];
+  const folderCounts = new Map(counts?.folders.map((f) => [f.folder_path, f.count]));
 
   return (
     <div className="folder-sidebar" data-testid="folder-sidebar">
@@ -34,6 +39,7 @@ export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
         onClick={() => onSelect(null)}
       >
         すべて
+        <CountPill count={counts?.total} />
       </button>
       {folders.map((folder) => (
         <FolderSidebarItem
@@ -41,6 +47,7 @@ export function FolderSidebar({ selected, onSelect, refreshKey }: Props) {
           folder={folder}
           active={selected === folder}
           onSelect={onSelect}
+          count={folderCounts.get(folder)}
         />
       ))}
     </div>
@@ -51,12 +58,13 @@ interface ItemProps {
   folder: string;
   active: boolean;
   onSelect: (folderPath: string | null) => void;
+  count: number | undefined;
 }
 
 // A separate component because the reachability hook cannot be called inside
 // the parent's map(). The badge comes before the path so that it stays
 // visible when a long path is ellipsized at the end.
-function FolderSidebarItem({ folder, active, onSelect }: ItemProps) {
+function FolderSidebarItem({ folder, active, onSelect, count }: ItemProps) {
   const unreachable = useIsFolderUnreachable(folder);
   return (
     <button
@@ -80,6 +88,7 @@ function FolderSidebarItem({ folder, active, onSelect }: ItemProps) {
         </span>
       )}
       {folder}
+      <CountPill count={count} />
     </button>
   );
 }

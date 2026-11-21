@@ -3,12 +3,15 @@
 // argument-name conversion are only dealt with in one place.
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Update } from "@tauri-apps/plugin-updater";
+import type { Mode, Theme } from "./lib/appearance";
 import type { SidebarSectionsCollapsed } from "./lib/sidebarSections";
 import type {
   DuplicateGroup,
   FfmpegStatusDto,
   GenerationFailuresDto,
+  LibraryCounts,
   LinkCandidateDto,
   LogChunkDto,
   MissingRegistrationResult,
@@ -189,3 +192,15 @@ export const setRememberWindowSizeEnabled = (enabled: boolean) =>
 export const loadViewState = () => invoke<SavedViewState | null>("load_view_state");
 export const saveViewState = (state: SavedViewState) =>
   invoke<void>("save_view_state", { state });
+export const getLibraryCounts = () => invoke<LibraryCounts>("get_library_counts");
+// 文字列のまま受け取り、未知の値の扱い(既定へ倒す)は呼び出し側で決める。
+export const getAppearance = () => invoke<{ theme: string; mode: string }>("get_appearance");
+export const setTheme = (theme: Theme) => invoke<void>("set_theme", { theme });
+export const setAppearanceMode = (mode: Mode) => invoke<void>("set_appearance_mode", { mode });
+/**
+ * タイトルバーとネイティブメニューの明暗をアプリの外観に揃える。`system` は
+ * 強制を解いて OS の設定に従う(null)。WebView 内の配色は CSS の color-scheme が
+ * 受け持つので、これはウィンドウ枠側だけの指定。
+ */
+export const setWindowTheme = (mode: Mode) =>
+  getCurrentWindow().setTheme(mode === "system" ? null : mode);

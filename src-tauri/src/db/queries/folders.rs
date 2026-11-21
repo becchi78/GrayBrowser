@@ -45,6 +45,12 @@ pub fn count_videos_under_folder(
     folder_path: &str,
 ) -> anyhow::Result<u32> {
     let conn = pool.get()?;
+    Ok(count_videos_under_folder_on(&conn, folder_path)?)
+}
+
+/// `count_videos_under_folder` on an already-taken connection, so a caller
+/// counting many folders does not take one pooled connection per folder.
+pub fn count_videos_under_folder_on(conn: &Connection, folder_path: &str) -> rusqlite::Result<u32> {
     let pattern = format!("{}%", gb_core::paths::folder_like_prefix(folder_path));
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM videos WHERE file_path LIKE ?1 ESCAPE '\\'",

@@ -23,6 +23,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(unmocked("listen")),
 }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(unmocked("getCurrentWindow")),
+}));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn(unmocked("getVersion")),
 }));

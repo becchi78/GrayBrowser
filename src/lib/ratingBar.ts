@@ -6,13 +6,14 @@
  * 絞り込みに使える評価の選択肢。ラベルは`StarRating`の入力用★列と同じ
  * 「★をN個並べる」表記に揃える。未評価(0)での抽出は提供しない。
  */
-export const RATING_FILTER_OPTIONS: { value: number; label: string }[] = [
-  { value: 1, label: "★" },
-  { value: 2, label: "★★" },
-  { value: 3, label: "★★★" },
-  { value: 4, label: "★★★★" },
-  { value: 5, label: "★★★★★" },
-];
+export const RATING_FILTER_OPTIONS: { value: number; label: string }[] = [1, 2, 3, 4, 5].map(
+  (value) => ({ value, label: ratingLabel(value) }),
+);
+
+/** 評価の表示。左ペインの選択肢と絞り込み中バーのチップで同じ表記にする。 */
+export function ratingLabel(value: number): string {
+  return "★".repeat(value);
+}
 
 /**
  * 有効な評価の集合に対して`value`の有効/無効を切り替えた、新しい配列を返す

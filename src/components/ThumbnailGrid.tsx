@@ -1,5 +1,15 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import { readLengthToken } from "../lib/cssTokens";
+import { formatCount } from "../lib/filterChips";
 import { isTextEntryTarget } from "../lib/textEntryTarget";
 import type { SortDirection, SortField, VideoDto } from "../types";
 import { useHasNoWatchFolders } from "../useHasNoWatchFolders";
@@ -10,15 +20,10 @@ import { useVideoList } from "../useVideoList";
 import { VideoListOverlays, type VideoListMenu } from "./VideoListOverlays";
 import { VideoRow } from "./VideoRow";
 
-// A row hosts 6 thumbnails + metadata/rating/tag-editor. Measured via CDP
-// (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port) against
-// real `.video-row-info` content at the "one tag assigned" baseline:
-// 205.890625px + `.video-row`'s own padding (0.5em top+bottom = 16px) +
-// ~4px margin = 226px. Rows with 2+ tags that wrap onto a second line fall
-// back to `.video-row-info`'s own `overflow-y: auto` rather than growing
-// ROW_HEIGHT further. The fixed 150px thumbnail height (+16px padding =
-// 166px) fits within 226px too.
-const ROW_HEIGHT = 226;
+// 行の高さの情報源は CSS の `--row-height`(テーマごとに違う)。ここの値は、
+// CSS を読めない環境(jsdom のテスト)でだけ使う既定値で、従来の実測値
+// (サムネイル6枚 + 情報パネル + 行の余白)。
+const ROW_HEIGHT_FALLBACK = 226;
 
 interface Props {
   refreshKey: number;
@@ -32,6 +37,10 @@ interface Props {
   folderPath: string | null;
   /** Empty = "すべて表示" (no rating filter); see RatingBar. */
   ratings: number[];
+  /** 現在のテーマ。変わると行の高さを CSS から読み直し、表示位置を保って再計測する。 */
+  theme?: string;
+  /** 絞り込みなしの総数(一覧上の件数ヘッダー用)。未取得の間は null / 省略。 */
+  totalCount?: number | null;
   /** Hides every row's right-hand info column (CSS only; rows still mount it). */
   infoCollapsed: boolean;
   /** `seq` lets pressing the same percent twice in a row still count as a new request. */
@@ -52,6 +61,8 @@ export function ThumbnailGrid({
   folderPath,
   ratings,
   infoCollapsed,
+  theme,
+  totalCount = null,
   jumpRequest,
   onCountChange,
   onSelectionCountChange,
@@ -109,11 +120,47 @@ export function ThumbnailGrid({
   // One video = one row, so the virtualizer counts rows 1:1 against `videos`.
   // Any overflow from the row's own 6 fixed-width thumbnails is handled purely
   // by `.video-row-thumbnails`'s own `overflow-x: auto` in CSS.
+  //
+  // 行の高さは CSS から読む。見積もりのたびに DOM を読むと数千行で重いので、
+  // 読んだ値を保持し、テーマが変わったときだけ読み直す。
+  const rowHeightRef = useRef<number | null>(null);
+  // 先頭に見えている行。テーマの切り替えで行の高さが変わっても同じ行を
+  // 先頭に戻すために、切り替え前の値を持っておく。
+  const firstIndexRef = useRef(0);
+  // 行の高さを最後に読んだときのテーマ。
+  const settledThemeRef = useRef(theme);
+  const restoreIndexRef = useRef<number | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: videos.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => (rowHeightRef.current ??= readLengthToken("--row-height", ROW_HEIGHT_FALLBACK)),
     overscan: 5,
+    onChange: (instance) => {
+      // <html> の属性は切り替えの瞬間に変わり、このコンポーネントが気づくのは
+      // その後の描画。その間に来る通知(レイアウトの変化による再計算)で、
+      // 新しい行の高さのまま古いスクロール位置から求めた行番号を記録しないよう、
+      // 属性と読み直し済みのテーマが一致している間だけ記録する。
+      if (document.documentElement.dataset.theme !== settledThemeRef.current) return;
+      firstIndexRef.current = instance.range?.startIndex ?? 0;
+    },
+  });
+
+  // テーマが変わったら行の高さを読み直して再計測し、切り替え前の先頭行へ戻す。
+  // 戻すのは、新しい合計の高さで描画し直した後(下の useLayoutEffect)。
+  // 古い合計の高さのままだと、行が高くなるテーマで末尾付近の位置が頭打ちになる。
+  useEffect(() => {
+    if (settledThemeRef.current === theme) return;
+    settledThemeRef.current = theme;
+    rowHeightRef.current = null;
+    restoreIndexRef.current = firstIndexRef.current;
+    rowVirtualizer.measure();
+  }, [theme, rowVirtualizer]);
+
+  useLayoutEffect(() => {
+    const index = restoreIndexRef.current;
+    if (index === null) return;
+    restoreIndexRef.current = null;
+    rowVirtualizer.scrollToIndex(index, { align: "start" });
   });
 
   useEffect(() => {
@@ -160,14 +207,16 @@ export function ThumbnailGrid({
     const filtered = search.trim() !== "" || tagIds.length > 0;
     return (
       <>
-        <div className="video-list-empty">
+        <ListLayer matched={0} totalCount={totalCount}>
+          <div className="video-list-empty">
           {filtered ? "該当する動画が見つかりません。" : "動画がまだ登録されていません。"}
           {!filtered && noWatchFolders && (
             <div data-testid="video-list-empty-hint">
               「ファイル &gt; フォルダ管理...」からフォルダを登録してください。
             </div>
           )}
-        </div>
+          </div>
+        </ListLayer>
         {overlays}
       </>
     );
@@ -175,6 +224,7 @@ export function ThumbnailGrid({
 
   return (
     <>
+      <ListLayer matched={videos.length} totalCount={totalCount}>
       <div
         ref={parentRef}
         className={infoCollapsed ? "video-list video-list--info-collapsed" : "video-list"}
@@ -221,7 +271,35 @@ export function ThumbnailGrid({
           })}
         </div>
       </div>
+      </ListLayer>
       {overlays}
     </>
+  );
+}
+
+// 一覧を包む器。フルーエントのテーマではレイヤー面(左上だけ角丸の面)になり、
+// コンソールのテーマでは先頭に件数のヘッダーを出す。どちらも CSS の出し分けで、
+// 構造は全テーマで同じ(テーマごとに React の木を分けない)。
+function ListLayer({
+  matched,
+  totalCount,
+  children,
+}: {
+  matched: number;
+  totalCount: number | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="list-layer" data-testid="list-layer">
+      <div className="list-header" data-testid="list-header">
+        <span className="list-header-title">LIBRARY</span>
+        <strong className="list-header-count">{formatCount(matched)}</strong>
+        <span className="list-header-unit">件</span>
+        {totalCount !== null && (
+          <span className="list-header-total">/ 全 {formatCount(totalCount)} 件</span>
+        )}
+      </div>
+      {children}
+    </div>
   );
 }

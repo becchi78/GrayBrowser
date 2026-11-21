@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getCollapsedTagGroups, getTagLayout, setCollapsedTagGroups } from "../api";
 import { onCatalogChanged } from "../events";
 import type { TagLayoutItemDto, TagWithCountDto } from "../types";
+import { CountPill } from "./CountPill";
 import { ChevronRightIcon, TagGroupIcon } from "./SidebarIcons";
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
   onChange: (tagIds: number[]) => void;
   /** 編集モーダル保存後にparentがbumpする(FolderSidebarのrefreshKeyと同じ形) */
   refreshKey?: number;
+  /** 各タグの件数のピル(コンソールテーマで表示)を出すか。 */
+  showCounts?: boolean;
 }
 
 // 左ペイン用のタグ絞り込み(複数選択)。タグとタググループをフォルダ一覧と同じ縦の
@@ -18,7 +21,7 @@ interface Props {
 // そのものの AND のままで、グループの有無で意味は変わらない。
 // 並びの編集はネイティブメニュー「タグ > タグの編集...」からのみ開く。
 // この部品自体には編集への導線は置かない。
-export function TagBar({ selected, onChange, refreshKey }: Props) {
+export function TagBar({ selected, onChange, refreshKey, showCounts = false }: Props) {
   const [layout, setLayout] = useState<TagLayoutItemDto[]>([]);
   const [collapsed, setCollapsed] = useState<number[]>([]);
   // 読み込み前にユーザーが開閉したら、あとから届く保存済みの状態で上書きしない
@@ -100,6 +103,7 @@ export function TagBar({ selected, onChange, refreshKey }: Props) {
         data-testid="tag-bar-chip"
       >
         {tag.name}
+        {showCounts && <CountPill count={tag.video_count} />}
       </button>
     );
   }

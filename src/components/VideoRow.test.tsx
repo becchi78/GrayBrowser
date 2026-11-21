@@ -663,3 +663,56 @@ test("タグ欄はこの動画のタグを取得して表示し、tagsVersion �
   await update({ tagsVersion: 1 });
   expect(api.listTagsForVideo).toHaveBeenCalledTimes(2);
 });
+
+// ---- 行頭のチェックボックス(コンソールテーマで表示。DOM は全テーマ共通) ----
+
+test("チェックボックスは本物の checkbox で、選択状態(isSelected)をそのまま映す", async () => {
+  const { update } = await renderRow();
+  const box = screen.getByRole("checkbox", { name: "a.mp4 を選択" });
+
+  expect(box.tagName).toBe("INPUT");
+  expect(box).not.toBeChecked();
+
+  await update({ isSelected: true });
+  expect(box).toBeChecked();
+
+  await update({ isSelected: false });
+  expect(box).not.toBeChecked();
+});
+
+test("チェックボックスのクリックは Ctrl+クリックと同じ「この行だけ切り替え」を通知する", async () => {
+  const { user, onSelect } = await renderRow();
+
+  await user.click(screen.getByTestId("video-row-check"));
+
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(onSelect.mock.calls[0][0]).toEqual(expect.objectContaining({ id: "a" }));
+  expect(onSelect.mock.calls[0][1]).toEqual({ ctrl: true, shift: false });
+});
+
+test("Shift を押しながらのチェックボックスは範囲の追加(ctrl+shift)として通知する", async () => {
+  const { user, onSelect } = await renderRow();
+
+  await user.keyboard("{Shift>}");
+  await user.click(screen.getByTestId("video-row-check"));
+  await user.keyboard("{/Shift}");
+
+  expect(onSelect.mock.calls[0][1]).toEqual({ ctrl: true, shift: true });
+});
+
+test("キーボード(Space)でもチェックボックスを切り替えられる", async () => {
+  const { user, onSelect } = await renderRow();
+
+  screen.getByTestId("video-row-check").focus();
+  await user.keyboard(" ");
+
+  expect(onSelect.mock.calls[0][1]).toEqual({ ctrl: true, shift: false });
+});
+
+test("チェックボックスの操作では再生を始めない", async () => {
+  const { user } = await renderRow();
+
+  await user.dblClick(screen.getByTestId("video-row-check"));
+
+  expect(api.playVideo).not.toHaveBeenCalled();
+});

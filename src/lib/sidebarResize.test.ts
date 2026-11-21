@@ -28,3 +28,10 @@ test("MAX_WIDTHちょうどになる境界（1064px = 32+532+500）", () => {
   assert.equal(effectiveMaxWidth(1065), 500);
   assert.equal(effectiveMaxWidth(1063), 499);
 });
+
+test("一覧の下限幅を渡すと、その値で上限が決まる(テーマごとに違う下限幅)", () => {
+  // 900 - 32 - 556 = 312
+  assert.equal(effectiveMaxWidth(900, 556), 312);
+  // 下限幅が広いほど縮み、MIN_WIDTH で止まる
+  assert.equal(effectiveMaxWidth(900, 700), MIN_WIDTH);
+});

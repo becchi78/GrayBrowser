@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import "./themes.css";
 import "./App.css";
+import { FilterBar } from "./components/FilterBar";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
 import { LogViewerDialog } from "./components/LogViewerDialog";
@@ -28,24 +30,23 @@ import {
   onMenuOpenSettingsDialog,
   onMenuOpenTagBarDialog,
   onMenuOpenWbImportDialog,
-  onMenuStyleSelected,
 } from "./events";
 import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
 import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
 import { useActiveDialog, useMenuOpen } from "./useActiveDialog";
+import type { Theme } from "./lib/appearance";
+import { useAppearance } from "./useAppearance";
+import { useLibraryCounts } from "./useLibraryCounts";
 import { INITIAL_VIEW_STATE, fromSaved, isSameViewState, toSaved, type ViewState } from "./lib/viewState";
-
-// Only "default" exists today. New styles (e.g. "grid") get added here as
-// additional literal values, plus one entry in the viewStyle -> component
-// mapping below -- no other App.tsx changes.
-type ViewStyle = "default";
 
 // Wait this long after the last change before saving, so typing in the search
 // box does not write on every keystroke.
 const VIEW_STATE_SAVE_DELAY_MS = 500;
 
 function App() {
+  // 読み込み中の画面でも反映が始まるよう、ここで呼ぶ。
+  const appearance = useAppearance();
   // The grid is not rendered until the saved state is known: mounting it with
   // the initial state first would run a query for a view the user is about to
   // leave. A failed load just continues with the initial state.
@@ -61,10 +62,10 @@ function App() {
   if (initialView === null) {
     return <div className="app" data-testid="app-loading" />;
   }
-  return <AppContent initialView={initialView} />;
+  return <AppContent initialView={initialView} theme={appearance.theme} />;
 }
 
-function AppContent({ initialView }: { initialView: ViewState }) {
+function AppContent({ initialView, theme }: { initialView: ViewState; theme: Theme }) {
   const [refreshKey, setRefreshKey] = useState(0);
   // 手動の紐付けでサムネイルが置き換わった動画の id -> 回数。サムネイルは
   // 動画ごとに取得済みの画像をメモリに持つため、ファイルだけ差し替わっても
@@ -86,9 +87,9 @@ function AppContent({ initialView }: { initialView: ViewState }) {
   // re-fetches without a full remount.
   const { active: activeDialog, open: openDialog, close: closeDialog } = useActiveDialog();
   const [tagBarRefreshKey, setTagBarRefreshKey] = useState(0);
-  const [viewStyle, setViewStyle] = useState<ViewStyle>("default");
   const [infoPaneCollapsed, setInfoPaneCollapsed] = useState(false);
   const [videoCount, setVideoCount] = useState(0);
+  const counts = useLibraryCounts(refreshKey);
   const [selectedCount, setSelectedCount] = useState(0);
   const [editMenu, setEditMenu] = useState<{ target: EditTarget; position: MenuPosition } | null>(
     null,
@@ -159,20 +160,6 @@ function AppContent({ initialView }: { initialView: ViewState }) {
   useMenuOpen(onMenuAbout, "about", openDialog);
   useMenuOpen(onMenuOpenLogDialog, "log", openDialog);
 
-  useEffect(() => {
-    const unlistenStyle = onMenuStyleSelected((style) => {
-      // Only known values are accepted; unrecognized payloads (e.g. from a
-      // future menu item not yet handled here) are ignored rather than
-      // blindly cast.
-      if (style === "default") {
-        setViewStyle(style);
-      }
-    });
-    return () => {
-      unlistenStyle();
-    };
-  }, []);
-
   return (
     <div className="app">
       {/* No <h1>: the native menu bar (rendered outside the DOM) serves as the
@@ -197,6 +184,17 @@ function AppContent({ initialView }: { initialView: ViewState }) {
           {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
         </button>
       </div>
+      <FilterBar
+        folderPath={folderPath}
+        onFolderPathChange={setFolderPath}
+        tagIds={tagIds}
+        onTagIdsChange={setTagIds}
+        ratings={ratings}
+        onRatingsChange={setRatings}
+        filteredCount={videoCount}
+        totalCount={counts?.total ?? null}
+        tagBarRefreshKey={tagBarRefreshKey}
+      />
       <div className="main-area">
         <LeftPane
           folderPath={folderPath}
@@ -207,29 +205,24 @@ function AppContent({ initialView }: { initialView: ViewState }) {
           onTagIdsChange={setTagIds}
           refreshKey={refreshKey}
           tagBarRefreshKey={tagBarRefreshKey}
+          counts={counts}
         />
-        {
-          // viewStyle -> component mapping, kept as a single map so a
-          // future style just adds a key here.
-          {
-            default: (
-              <ThumbnailGrid
-                refreshKey={refreshKey}
-                thumbnailVersions={thumbnailVersions}
-                search={search}
-                sortField={sortField}
-                sortDirection={sortDirection}
-                tagIds={tagIds}
-                folderPath={folderPath}
-                ratings={ratings}
-                infoCollapsed={infoPaneCollapsed}
-                jumpRequest={jumpRequest}
-                onCountChange={setVideoCount}
-                onSelectionCountChange={setSelectedCount}
-              />
-            ),
-          }[viewStyle]
-        }
+        <ThumbnailGrid
+          refreshKey={refreshKey}
+          thumbnailVersions={thumbnailVersions}
+          search={search}
+          sortField={sortField}
+          sortDirection={sortDirection}
+          tagIds={tagIds}
+          folderPath={folderPath}
+          ratings={ratings}
+          infoCollapsed={infoPaneCollapsed}
+          theme={theme}
+          totalCount={counts?.total ?? null}
+          jumpRequest={jumpRequest}
+          onCountChange={setVideoCount}
+          onSelectionCountChange={setSelectedCount}
+        />
       </div>
       {/* The always-visible status bar. The 未登録/重複/生成失敗 badges and
           their panels live inside StatusBar itself. */}

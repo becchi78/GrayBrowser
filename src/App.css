@@ -1,118 +1,27 @@
-/* 複数のルールで共有する色。ダークテーマで値が変わるものは、下の
-   `@media (prefers-color-scheme: dark)` の `:root` で上書きする。同じ値でも
-   役割が違えば別の変数にし、一方だけ色を変えても他方に波及しないようにする。 */
+/* 色・フォントサイズ・角丸・行の寸法などテーマで変わるトークンは themes.css
+   にある(`<html>` の data-theme / data-mode で切り替わる)。ここには、テーマに
+   依存しないトークンだけを置く。同じ値でも役割が違えば別の変数にし、一方だけ
+   色を変えても他方に波及しないようにする。 */
 :root {
-  /* 本文の文字色とページの背景。 */
-  --text: #0f0f0f;
-  --page-bg: #f6f6f6;
-  /* ダイアログ・メニュー・ポップオーバーなど、ページの上に重ねる面の背景。 */
-  --surface: #ffffff;
-  /* 一覧の枠・区切り線などの控えめな枠線。 */
-  --border-muted: #ddd;
-  /* 画像が読み込まれる前のサムネイル枠の背景。 */
-  --thumbnail-bg: #ddd;
-  /* バッジ・タグのチップの背景。 */
-  --chip-bg: #e8e8e8;
-  /* メニュー項目にマウスを載せたときの背景。 */
-  --hover-bg: #e8e8e8;
-  /* ボタンのホバー・押下中・押下状態の枠線。ダークでも同じ色。 */
-  --accent: #396cd8;
-  /* リンク風のボタンの文字・フォーカス枠、選択中の候補の枠。 */
-  --link: #396cd8;
-  /* 選択中の項目(左ペインの項目、押下中のバッジ)の背景と文字。 */
-  --selected-bg: #396cd8;
-  --on-selected: #ffffff;
-  /* 操作の失敗を伝えるエラー文。 */
-  --error-text: #8a1f1f;
-  /* 削除の確認で強調する対象・危険な操作の文字。 */
-  --danger: #b00020;
-  /* エラーではないが、手作業での確認が要る旨の文字。 */
-  --warn-text: #7a5a00;
-  /* FFmpeg が見つからない旨の通知。ダークでは文字と背景の色が入れ替わる。 */
-  --notice-text: #5a3d00;
-  --notice-bg: #f8d7a3;
-  /* ★の色は左ペインのレーティング見出しのアイコン(.sidebar-section-icon--rating)
-     と同じ青にそろえる。ライト/ダークどちらの背景でも沈まない明度の固定色なので、
-     ダーク側での上書きはしない。未選択は同じ青を薄くして、色相は揃えたまま
-     選択状態だけ区別する。 */
-  --star-color: #3b82f6;
-
-  /* ボタン・入力欄の文字と背景、押下中の背景。ダークでは暗い半透明の面に白文字。 */
-  --control-text: #0f0f0f;
-  --control-bg: #ffffff;
-  --control-hover-bg: #f3f3f3;
-  --control-active-bg: #e8e8e8;
-  /* 押下状態(aria-pressed)のボタンに重ねる半透明の青。下地の明暗どちらでも
-     読めるので、ダークでも上書きしない。 */
-  --pressed-tint: rgba(57, 108, 216, 0.25);
-  /* 左ペインの見出しアイコン。テーマに依存させない固定色。 */
+  /* 左ペインの見出しアイコン。テーマに依存させない固定色。ライト/ダークどちらの
+     背景でも沈まない中間の明度(アンバー600・青500・赤500相当)を選ぶ。 */
   --icon-folder: #d9a010;
   --icon-rating: #3b82f6;
   --icon-tag: #ef4444;
-  /* 到達できない(オフライン)ことを示すバッジ。エラーではないので琥珀色。 */
-  --offline-text: #7a3b00;
-  --offline-bg: #ffe0b2;
-  /* ステータスバーのサムネイル生成の進捗表示の文字。 */
-  --status-progress-text: #555;
-  /* 生成失敗パネルの補足文の文字。 */
-  --failures-notice-text: #555;
-  /* 一覧の行の区切り線、選択中・複数選択中の行の背景と左端の帯。 */
-  --row-border: #e5e5e5;
-  --row-selected-bg: #e8f0fe;
-  --row-multi-selected-bg: #d6e4fd;
-  --row-multi-selected-accent: #3b78e7;
-  /* サムネイルが無いときのプレースホルダ(通常・生成失敗・オフライン)。 */
-  --thumbnail-text: #666;
-  --thumbnail-failed-bg: #f3d6d6;
-  --thumbnail-failed-text: #8a2a2a;
-  --thumbnail-offline-bg: #e4e4e8;
-  --thumbnail-offline-text: #6b6b75;
+
   /* サムネイル画像の上に重ねる文字・帯。画像の明暗に左右されないよう、
      テーマに関係なく同じ値を使う。 */
   --overlay-text: #ffffff;
   --overlay-text-shadow: rgba(0, 0, 0, 0.9);
   --overlay-scrim: rgba(0, 0, 0, 0.65);
   --overlay-error-scrim: rgba(120, 0, 0, 0.8);
-  /* ダイアログの背後を覆う幕。 */
-  --backdrop: rgba(0, 0, 0, 0.45);
-  /* 重複パネルで、グループ内の値が揃っていない項目の強調。 */
-  --diff-bg: #fff1c2;
-  --diff-text: #5a3d00;
-  /* 削除などの危険な操作を確定するボタン。 */
-  --danger-bg: #b00020;
-  --on-danger: #ffffff;
-  /* 成功を伝える文字と背景(取り込み結果・紐付け済みの印・スキップ解消の通知)。 */
-  --success-text: #1f6d2c;
-  --success-bg: #dff0e3;
-  --success-notice-text: #1f6b2e;
-  /* 要確認(エラーではない)の結果ブロックの背景、失敗の結果ブロック・失敗バッジの背景。 */
-  --warn-bg: #fff3cd;
-  --result-failed-bg: #fbe3e3;
-  --failure-badge-bg: #f3caca;
-  /* 画面下部の更新通知と、更新内容(リリースノート)の背景。 */
-  --update-notice-bg: #e8eefc;
-  --update-notice-border: #b9c8ee;
-  --notes-bg: #f1f1f1;
-  /* コンテキストメニュー・紐付け行・ログ一覧の枠線。 */
-  --menu-border: #d0d0d0;
-  --unmatched-row-border: #d0d0d0;
-  --log-list-border: #c8c8c8;
-  /* ログのレベル別の文字色(チェックボックスのラベルと行で共有)。 */
-  --log-error: #b3261e;
-  --log-warn: #9a5b00;
-  --log-info: #1d5fa8;
-  --log-debug: #5f6368;
-  --log-trace: #8a8f94;
 
   /* 文字サイズは em で持つ。em は使う側の親の文字サイズを基準に解決されるので、
      情報パネル(.video-row-info)のように全体を縮小している領域の中でも、
      同じトークンが縮小後の大きさに追従する。px にすると縮小が効かなくなる。
      段階を増やすと近い値が乱立するので、補足(xs)・本文より小さめ(sm)・本文(base)・
-     強調(lg)の4段階に絞る。 */
-  --font-xs: 0.75em;
-  --font-sm: 0.85em;
+     強調(lg)の4段階に絞る。xs/sm/lg はテーマごとに themes.css が決める。 */
   --font-base: 1em;
-  --font-lg: 1.15em;
 
   /* 余白は4px刻み。em だと使う場所の文字サイズで実寸が変わり、同じ値でも
      見た目の間隔が揃わないため、余白だけは px で持つ。 */
@@ -122,21 +31,13 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
-  /* ボタン・入力欄の縦padding。4px刻みの 8px だと標準のボタンが細く見え、
-     12px だと大きすぎるため、見た目を決める値としてここだけ 10px にする。 */
-  --control-padding-y: 10px;
   /* 行や一覧の中に並べる小さなボタン・入力欄の padding と文字サイズ。標準の
-     大きさのままだと行が高くなりすぎるため、種類ごとにばらつかせず共通にする。 */
+     大きさのままだと行が高くなりすぎるため、種類ごとにばらつかせず共通にする。
+     標準のボタン・入力欄の縦 padding(--control-padding-y)はテーマごと。 */
   --control-compact-padding: var(--space-1) var(--space-2);
   --control-compact-font-size: var(--font-sm);
   /* バッジ(状態の短いラベル)の padding。em なので文字サイズに追従する。 */
   --badge-padding: 0.1em 0.5em;
-
-  /* 角丸は小さい部品(バッジ・メニュー項目)、面(ダイアログ・ボタン・枠)、
-     丸薬型(タグのチップ)の3種に限る。 */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-pill: 999px;
 
   /* 太さは通常と強調の2段階。中間(500)は 400 との差が小さく、日本語フォントでは
      見分けにくいので使わない。 */
@@ -158,67 +59,11 @@
      標準で入っており、日本語は後続のフォールバックに任せる。 */
   --font-mono: Consolas, "Cascadia Mono", monospace;
 
-  /* キーボード操作の現在位置。リンク色に合わせ、全ての操作要素で同じ見た目にする。
-     スクロール領域の端にある項目は、外側に出ると切れるので -2px で内側に描く。 */
-  --focus-ring: 2px solid var(--link);
+  /* キーボード操作の現在位置。アクセント色に合わせ、全ての操作要素で同じ見た目に
+     する。スクロール領域の端にある項目は、外側に出ると切れるので -2px で内側に描く。 */
+  --focus-ring: 2px solid var(--accent);
   --focus-ring-offset: 2px;
   --focus-ring-offset-inset: -2px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #f6f6f6;
-    --page-bg: #2f2f2f;
-    --surface: #2f2f2f;
-    --border-muted: #555;
-    --thumbnail-bg: #444;
-    --chip-bg: #444;
-    --hover-bg: #444;
-    --link: #7aa2f7;
-    --selected-bg: #5a8ef0;
-    --on-selected: #0f0f0f;
-    --error-text: #f3caca;
-    --danger: #ff8a80;
-    --warn-text: #f0c674;
-    --notice-text: #f8d7a3;
-    --notice-bg: #5a3d00;
-    --control-text: #ffffff;
-    --control-bg: #0f0f0f98;
-    --control-hover-bg: #1f1f1f98;
-    --control-active-bg: #0f0f0f69;
-    --offline-text: #f8d7a3;
-    --offline-bg: #5a3d00;
-    --status-progress-text: #bbb;
-    --failures-notice-text: #cfcfcf;
-    --row-border: #444;
-    --row-selected-bg: #2a3a5c;
-    --row-multi-selected-bg: #34497a;
-    --row-multi-selected-accent: #7aa7ff;
-    --thumbnail-text: #ccc;
-    --thumbnail-failed-bg: #5a2f2f;
-    --thumbnail-failed-text: #f0b4b4;
-    --thumbnail-offline-bg: #3a3a40;
-    --thumbnail-offline-text: #a0a0aa;
-    --diff-bg: #5a4a14;
-    --diff-text: #ffe9a8;
-    --danger-bg: #c0392b;
-    --success-text: #7ed494;
-    --success-bg: #1f4a2b;
-    --success-notice-text: #b7e4c0;
-    --warn-bg: #5a4600;
-    --result-failed-bg: #5a1f1f;
-    --failure-badge-bg: #5a1f1f;
-    --update-notice-bg: #2a3a5c;
-    --update-notice-border: #4a5f8f;
-    --notes-bg: #3a3a3a;
-    --menu-border: #555;
-    --unmatched-row-border: #555;
-    --log-list-border: #555;
-    --log-error: #ff8a80;
-    --log-warn: #ffcc66;
-    --log-info: #8ab4f8;
-    --log-debug: #b0b4b9;
-  }
 }
 
 :root {
@@ -227,8 +72,7 @@
   font-family:
     "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", Inter,
     Avenir, Helvetica, Arial, system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
+  /* font-size / line-height はテーマごと(themes.css)。 */
   font-weight: var(--weight-regular);
 
   color: var(--text);
@@ -270,6 +114,14 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* 上に挙げた要素以外(リンク・チェックボックス・tabindex の付いた要素など)の
+   キーボード操作の現在位置も、全テーマで同じ見た目にする。詳細度が低いので、
+   個別の指定(入力欄・メニュー項目・一覧の`outline: none`など)が優先される。 */
+:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
 }
@@ -586,12 +438,6 @@ button.search-box-clear {
   font-size: var(--font-sm);
 }
 
-.folder-sidebar-item--active,
-.rating-bar-item--active {
-  background-color: var(--selected-bg);
-  color: var(--on-selected);
-}
-
 .tag-bar-edit-empty {
   opacity: 0.7;
   margin: 0;
@@ -683,7 +529,7 @@ button.search-box-clear {
    `min-height: 0` overrides this item's default `min-height: auto` in
    `.app`'s *column* flex layout: otherwise its minimum height would come
    from its children's content sizes (LeftPane's sections, `.video-list`'s
-   explicit `min-height: 226px`) and it could not shrink, the same
+   explicit `min-height: var(--row-height)`) and it could not shrink, the same
    "flex-basis-0 item can't actually get smaller" problem described at
    `.video-list`. */
 .main-area {
@@ -788,6 +634,22 @@ button.search-box-clear {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 選択中の項目は、行の選択と同じ薄い面に、左端のアクセントの帯で示す。
+   `.folder-sidebar-item`の`background: none`と同じ詳細度なので、必ずその後ろに
+   置くこと(前に置くと順序で負けて背景が出ない)。 */
+.folder-sidebar-item--active,
+.rating-bar-item--active {
+  background-color: var(--row-selected-bg);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: var(--weight-strong);
+}
+
+/* 件数のピル(行末)。全テーマで DOM にあり、見せるのはコンソールだけ。 */
+.count-pill {
+  display: none;
 }
 
 /* 到達できない監視フォルダの印。パスより前に置くので、長いパスが省略表示
@@ -916,13 +778,33 @@ button.search-box-clear {
   z-index: 20;
 }
 
+/* 一覧を包む器。フルーエントではレイヤー面、コンソールでは先頭に件数の
+   ヘッダーを持つ(どちらも下のテーマ別の指定)。`min-width` は、`.main-area`が
+   横並び(row)の flex なので、flex: 1 の flex-basis 0 だけでは左ペインが広がったとき
+   0 まで縮んでしまうのを防ぐ下限。値は、行の非内容幅(左右の padding・列間の
+   gap・チェックボックス列)+ サムネイル領域の最小幅 + 情報パネルの幅で、
+   themes.css の --video-list-min-width が持つ。サイドバーの最大幅の計算
+   (sidebarResize.ts)も同じ変数を読む。 */
+.list-layer {
+  flex: 1;
+  min-width: var(--video-list-min-width);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-header {
+  display: none;
+}
+
 .video-list-empty {
   flex: 1;
   min-width: 300px;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.6;
+  /* 文字なので AA を保てる薄さ(0.6 だと一部のテーマで 4.5:1 を割る)。 */
+  opacity: var(--opacity-muted);
 }
 
 .video-list {
@@ -933,68 +815,63 @@ button.search-box-clear {
      sections still add up to more than the window's height, CSS flexbox's
      shrink algorithm assigns this item exactly 0 of the negative free
      space -- its scaled shrink factor (flex-basis * flex-shrink) is always
-     0, independent of whatever the siblings' own `min-height: 0` +
-     `max-height` + `overflow: auto` (see those rules) do. This floor is
-     what actually guarantees `@tanstack/react-virtual` always has a
-     nonzero container to measure and can render at least one row
-     (ROW_HEIGHT = 226px in ThumbnailGrid.tsx, matching the real rendered
-     `.video-row` height -- see that constant's own comment). */
-  min-height: 226px;
-  /* Horizontal counterpart of the min-height floor above -- `.main-area`
-     is a *row* flex container, so this item's `flex: 1` also gives it a
-     horizontal flex-basis of 0, subject to the same "scaled shrink factor
-     is always 0" mechanics but along the row axis. This floor keeps the
-     list from collapsing to 0 width if the sidebar ever leaves less than
-     this much for it (overflow from a row's own 6 thumbnails is handled by
-     `.video-row-thumbnails`'s own `overflow-x: auto`, not by shrinking
-     this container). Derived from `.video-row`'s own non-content width
-     (24px left+right padding + 8px gap, see that rule's own comment) plus
-     `.video-row-thumbnails-wrap`'s min-width (200px) plus
-     `.video-row-info`'s fixed width (300px): 24px + 200px + 8px + 300px =
-     532px. Below this, `.video-row`'s own content would be wider than
-     `.video-list` itself, which (given `.video-list`'s `overflow: auto`,
-     both axes) would only ever show as an extra, contained horizontal
-     scrollbar on `.video-list` itself -- not visual breakage -- but
-     matching the floor to the real content avoids that scrollbar appearing
-     needlessly. `sidebarResize.ts`'s `VIDEO_LIST_MIN_WIDTH_PX` must match
-     this value; the sidebar's own resizable max width (LeftPane.tsx,
-     500px) is additionally clamped against the window's actual available
-     width so dragging it wide at a narrow window can't force `.video-list`
-     below this floor in the first place -- see that component's own
-     comment. */
-  min-width: 532px;
+     0. This floor is what actually guarantees `@tanstack/react-virtual`
+     always has a nonzero container to measure and can render at least one
+     row (the row height is `--row-height`, which ThumbnailGrid.tsx reads as
+     the virtualizer's row size). */
+  min-height: var(--row-height);
 }
 
 /* One row = one video. `height: 100%` fills the virtualizer's
-   absolutely-positioned wrapper
-   (ThumbnailGrid.tsx sets that wrapper's `height` to `ROW_HEIGHT`);
-   `overflow: hidden` keeps unexpectedly tall content (e.g. a video with
-   many tags) from visually bleeding into the next virtualized row, which
-   is positioned by an absolute `translateY` that assumes every row is
-   exactly `ROW_HEIGHT` tall. `.video-row-info` below has its own
-   `overflow-y: auto` as the actual escape hatch for that content instead. */
+   absolutely-positioned wrapper (ThumbnailGrid.tsx sets that wrapper's
+   `height` to the row height, read from `--row-height`); `overflow: hidden`
+   keeps unexpectedly tall content (e.g. a video with many tags) from visually
+   bleeding into the next virtualized row, which is positioned by an absolute
+   `translateY` that assumes every row is exactly that tall. `.video-row-info`
+   below has its own `overflow-y: auto` as the actual escape hatch for that
+   content instead. `--row-gap-y` is the card gap (0 except Fluent): half of it
+   is left above and below the row inside the wrapper. */
 .video-row {
   display: flex;
   align-items: stretch;
-  /* 情報パネル左側の間隔は8px。右側は下の`padding`の右辺(8px)が担う --
-     左側(サムネイル領域の左の間隔)は`padding`の左辺(1em)のまま。 */
   gap: 8px;
-  height: 100%;
-  /* 右のみpaddingを8pxに縮小。上下・左は1em(左はサムネイル領域の左の間隔)。 */
-  padding: 0.5em 8px 0.5em 1em;
+  height: calc(100% - var(--row-gap-y));
+  margin: calc(var(--row-gap-y) / 2) var(--row-inset-x);
+  padding: var(--row-pad-y) var(--row-pad-r) var(--row-pad-y) var(--row-pad-l);
   box-sizing: border-box;
   overflow: hidden;
   border-bottom: 1px solid var(--row-border);
+  background-color: var(--row-bg, transparent);
 }
 
-.video-row--selected {
+.video-row:hover {
+  background-color: var(--hover-bg);
+}
+
+.video-row--selected,
+.video-row--selected:hover {
   background-color: var(--row-selected-bg);
 }
 
 /* Only applied with 2+ rows selected, so a lone selection keeps the plain selected look. */
-.video-row--multi-selected {
+.video-row--multi-selected,
+.video-row--multi-selected:hover {
   background-color: var(--row-multi-selected-bg);
   box-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
+}
+
+/* 行頭のチェックボックス。コンソールだけが表示する(その列幅が --check-w)。
+   グローバルな`input`の padding・影は、チェックボックスには大きすぎるので打ち消す。 */
+.video-row-check {
+  display: none;
+  flex: none;
+  width: calc(var(--check-w) - 8px);
+  height: calc(var(--check-w) - 8px);
+  margin: calc((var(--name-h) - var(--check-w) + 8px) / 2) 0 0;
+  padding: 0;
+  box-shadow: none;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* The list takes focus (tabIndex=-1) only to receive Ctrl+A/Esc; a focus
@@ -1017,9 +894,11 @@ button.search-box-clear {
    item of `.video-row` from shrinking to nothing. */
 .video-row-thumbnails-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   /* 200px, matching `.video-row-thumbnail-wrap`'s own size below
      (WhiteBrowser互換の200x150サムネイル)。 */
-  min-width: 200px;
+  min-width: var(--thumb-w);
 }
 
 /* 6 fixed-width thumbnails in a row; `overflow-x: auto` is the entire
@@ -1036,7 +915,9 @@ button.search-box-clear {
   align-items: center;
   gap: 0.4em;
   width: 100%;
-  height: 100%;
+  /* ファイル名の行の残り全部。サムネイルは縦中央に置く。 */
+  flex: 1;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
   cursor: pointer;
@@ -1062,9 +943,9 @@ button.search-box-clear {
      costs nothing and avoids a flash of the wrong width if that ever isn't
      true). height stays fixed at 150px regardless of aspect ratio -- see
      VideoRow.tsx's own comment for the width formula. */
-  flex: 0 0 200px;
-  width: 200px;
-  height: 150px;
+  flex: 0 0 var(--thumb-w);
+  width: var(--thumb-w);
+  height: var(--thumb-h);
 }
 
 .video-row-thumbnail-wrap img {
@@ -1128,8 +1009,10 @@ button.search-box-clear {
      `flex: 0 0 300px` avoids that and keeps `.video-row-properties`'s
      4-column grid in its single-row layout, at the cost of not growing with
      extra window width (that goes to `.video-row-thumbnails`). */
-  flex: 0 0 300px;
-  width: 300px;
+  flex: 0 0 var(--info-w);
+  width: var(--info-w);
+  /* サムネイルの高さから始める(コンソールだけ 0 で、ファイル名の行から始める)。 */
+  margin-top: var(--info-offset-top);
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
@@ -1141,9 +1024,8 @@ button.search-box-clear {
      `.star`, etc.) is already written in relative `em` units against this
      ancestor's `font-size` (this file's usual pattern), so adding it once
      here is enough; no individual child rule needs editing to shrink along
-     with it. `.video-list`'s own `min-width` and `sidebarResize.ts`'s
-     `VIDEO_LIST_MIN_WIDTH_PX` must match this column's width -- see those
-     rules' own comments. */
+     with it. `--video-list-min-width` (themes.css) is derived from this
+     column's width (`--info-w`), so the two cannot drift apart. */
   font-size: var(--font-sm);
 }
 
@@ -1233,41 +1115,30 @@ button.search-box-clear {
    instead of next to each member's thumbnail. */
 .thumbnail-offline-badge--overlay {
   position: absolute;
-  /* Bottom-right, to avoid overlapping the file-name overlay below
-     (`.video-row-filename-overlay`), which sits at the top edge. */
+  /* Bottom-right: the file name is its own line above the thumbnails, so
+     this never covers it. */
   bottom: 4px;
   right: 4px;
 }
 
-/* `.video-row-thumbnails-wrap`（上記、position: relative）に対して絶対配置し、
-   内側の`.video-row-thumbnails`が横スクロールしても常に同じ位置に留まる。
-   マウスで選択・コピーできるようクリックを受け取る。その代わり、全幅を覆うと
-   サムネイル上端のクリック（行選択）・ダブルクリック（再生）を奪ってしまうため、
-   `right: auto`と`max-width: 100%`で文字の幅だけに縮める。 */
+/* サムネイルの上の1行(左カラムの先頭)。`.video-row-thumbnails`の兄弟要素で、
+   マウスで選択・コピーできるようクリックを受け取る。全幅を覆うと行の余白の
+   クリック(行選択)を奪うので、文字の幅だけに縮める。 */
 .video-row-filename-overlay {
-  position: absolute;
-  /* 上端に配置(下端は見えにくい/オフラインバッジと将来競合しうるため)。
-     `border-radius`もそれに合わせて上側の角のみ丸める。 */
-  top: 0;
-  left: 0;
-  right: auto;
+  /* DOM ではサムネイルの後ろにあるので、見た目だけ先頭(サムネイルの上)へ。 */
+  order: -1;
+  flex: none;
+  align-self: flex-start;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 0.15em 0.4em;
-  /* 背景は透明。ただしサムネイル画像が明るい色の場合に白文字が読みにくく
-     なるため、背景の代わりにtext-shadow(黒の縁取り)で最低限の視認性を
-     確保する。 */
-  background-color: transparent;
-  color: var(--overlay-text);
-  text-shadow:
-    0 1px 3px var(--overlay-text-shadow),
-    0 0 2px var(--overlay-text-shadow);
-  font-size: var(--font-sm);
-  line-height: 1.3;
+  height: var(--name-h);
+  line-height: var(--name-h);
+  color: var(--text);
+  font-size: var(--font-base);
+  font-weight: var(--weight-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   pointer-events: auto;
   user-select: text;
   cursor: text;
@@ -1374,7 +1245,7 @@ button.search-box-clear {
   flex-basis: 100%;
   margin: 0;
   font-size: var(--font-sm);
-  color: var(--danger);
+  color: var(--error-text);
 }
 
 .duplicate-groups-panel {
@@ -1550,7 +1421,7 @@ button.search-box-clear {
    赤系の見た目にして左に余白を取り、離して置く。 */
 .duplicate-group-member-delete-file {
   margin-left: 1em;
-  color: var(--danger);
+  color: var(--error-text);
   border-color: var(--danger);
   font-weight: var(--weight-strong);
 }
@@ -1576,7 +1447,7 @@ button.search-box-clear {
 
 .duplicate-group-member-play-error {
   font-size: var(--font-sm);
-  color: var(--danger);
+  color: var(--error-text);
 }
 
 .generation-failures-panel {
@@ -1695,6 +1566,7 @@ button.search-box-clear {
   align-items: center;
   gap: 0.3em;
   background-color: var(--chip-bg);
+  color: var(--chip-text);
   border-radius: var(--radius-pill);
   padding: 0.2em 0.6em;
   font-size: var(--font-sm);
@@ -1863,7 +1735,7 @@ button.search-box-clear {
   font-family: var(--font-mono);
   font-size: var(--font-lg);
   font-weight: var(--weight-strong);
-  color: var(--danger);
+  color: var(--error-text);
   overflow-wrap: anywhere;
 }
 
@@ -2001,7 +1873,7 @@ button.link-button:active {
 .confirm-dialog-body .tag-delete-target {
   font-size: var(--font-lg);
   font-weight: var(--weight-strong);
-  color: var(--danger);
+  color: var(--error-text);
   overflow-wrap: anywhere;
 }
 
@@ -2074,7 +1946,7 @@ button.link-button:active {
 }
 
 .context-menu-item--danger {
-  color: var(--danger);
+  color: var(--error-text);
 }
 
 .context-menu-item:disabled {
@@ -2461,7 +2333,8 @@ button.link-button:active {
 
 .log-viewer-row-target {
   flex: none;
-  opacity: 0.5;
+  /* 文字なので AA を保てる薄さ(0.5 だと 4.5:1 を割る)。 */
+  opacity: var(--opacity-muted);
 }
 
 .log-viewer-row-message {
@@ -2498,51 +2371,249 @@ button.link-button:active {
   overflow-wrap: anywhere;
 }
 
-@media (prefers-color-scheme: dark) {
-  /* ライトでは素の `select` に指定が無いので、ダークでだけ入力欄・ボタンと揃える。 */
-  select {
-    color: var(--control-text);
-    background-color: var(--control-bg);
-  }
+/* 素の `select` はブラウザ既定の配色だと入力欄・ボタンと揃わないので、
+   全テーマ・全外観で同じ配色にする。 */
+select {
+  color: var(--control-text);
+  background-color: var(--control-bg);
+}
 
-  button.link-button,
-  button.link-button:hover,
-  button.link-button:active {
-    background: transparent;
-  }
+/* 上の`button`の背景指定より詳細度を上げて、リンク風のボタンと✕を
+   入力欄・面に溶け込ませる。 */
+button.link-button,
+button.link-button:hover,
+button.link-button:active,
+button.search-box-clear {
+  background: transparent;
+}
 
-  /* 上の`button`の背景指定より詳細度を上げて、✕を入力欄に溶け込ませる。 */
-  button.search-box-clear {
-    background: transparent;
-  }
+/* 画像の代替テキストは、プレースホルダと同じ補助の文字色にする。 */
+.video-row-thumbnail-wrap img,
+.duplicate-group-member-thumb img {
+  color: var(--thumbnail-text);
+}
 
-  /* ライトの `img` には文字色の指定が無く(代替テキストは本文色)、ダークだけ
-     プレースホルダと同じ薄い灰色にする。 */
-  .video-row-thumbnail-wrap img,
-  .duplicate-group-member-thumb img {
-    color: var(--thumbnail-text);
-  }
+.status-jump-menu,
+.status-panel {
+  color: var(--text);
+}
 
-  /* `.folder-sidebar-item--active` の背景は、同じ詳細度で後ろにある
-     `.folder-sidebar-item` の `background: none` に負けて、ライトでは透明になる。
-     ダークではこのルールがさらに後ろにあるので、選択中の背景が効く。
-     変数を使っていても、この位置から外すと順序で負けて透明になる。 */
-  .folder-sidebar-item--active {
-    background-color: var(--selected-bg);
-  }
+/* 横スクロールバーをテーマに合わせる(WebView2 = Chromium)。 */
+.video-row-thumbnails {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.video-row-thumbnails::-webkit-scrollbar {
+  height: 6px;
+}
+.video-row-thumbnails::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+.video-row-thumbnails::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-  .duplicate-group-member-delete-file:disabled {
-    color: inherit;
-    border-color: transparent;
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
   }
+}
 
-  /* ライトでは文字色を指定せず、`:root` の `--text` を継承している。 */
-  .status-jump-menu {
-    color: var(--text);
-  }
+/* ---- 絞り込み中バー(検索ボックスの下。全テーマ共通) ---- */
 
-  .status-panel {
-    color: var(--text);
-  }
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+}
 
+.filter-bar-title {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.filter-bar-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filter-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  max-width: 28em;
+  padding: 0 0.3em 0 0.8em;
+  border: 1px solid var(--accent);
+  border-radius: var(--chip-radius);
+  background-color: var(--surface);
+  color: var(--text);
+}
+
+.filter-bar-chip-kind {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.filter-bar-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-strong);
+}
+
+/* グローバルな`button`の枠・影・padding を打ち消した、文字だけの×。 */
+button.filter-bar-chip-remove {
+  padding: 0 0.4em;
+  border: none;
+  border-radius: var(--radius-pill);
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  line-height: inherit;
+}
+
+button.filter-bar-chip-remove:hover {
+  color: var(--text);
+  background-color: var(--hover-bg);
+}
+
+.filter-bar-clear-all {
+  font-size: inherit;
+}
+
+.filter-bar-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-bar-count strong {
+  color: var(--text);
+}
+
+/* ---- テーマ別の出し分け(DOM は全テーマ共通) ---- */
+
+/* Fluent: 一覧をレイヤー面(左上だけ角丸)で包み、行をカードにする。 */
+:root[data-theme="fluent"] .list-layer {
+  background-color: var(--surface);
+  border: 1px solid var(--row-border);
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: var(--radius-md);
+  --row-bg: var(--surface-2);
+}
+
+:root[data-theme="fluent"] .video-row {
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-md);
+}
+
+:root[data-theme="fluent"] .video-row--selected,
+:root[data-theme="fluent"] .video-row--selected:hover {
+  border-color: var(--accent);
+}
+
+/* シネマ: 非選択・非ホバーの行は情報パネルを減光し、ホバーで 150ms かけて戻す。
+   選択行はアクセントの細い枠で示す。 */
+.video-row-info {
+  transition: color 150ms;
+}
+
+:root[data-theme="cinema"]
+  .video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
+  .video-row-info {
+  color: var(--text-muted);
+}
+
+/* 減光中は色(--text-muted)自体が既に薄いので、ラベルの opacity を重ねない
+   (重ねると --text-muted を超えて薄くなり、4.5:1 を割る)。 */
+:root[data-theme="cinema"]
+  .video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
+  .video-row-properties
+  dt {
+  opacity: 1;
+}
+
+:root[data-theme="cinema"] .video-row--selected,
+:root[data-theme="cinema"] .video-row--multi-selected {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+:root[data-theme="cinema"] .video-row--multi-selected {
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    inset 4px 0 0 var(--row-multi-selected-accent);
+}
+
+/* コンソール: カードの面に件数のヘッダー、チェックボックスの列、枠付きの情報パネル、
+   左ペインの件数ピル。 */
+:root[data-theme="console"] .list-layer {
+  background-color: var(--surface);
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+:root[data-theme="console"] .list-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--row-border);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+:root[data-theme="console"] .list-header-title {
+  letter-spacing: 0.08em;
+}
+
+:root[data-theme="console"] .list-header-count {
+  color: var(--text);
+  font-size: var(--font-lg);
+}
+
+:root[data-theme="console"] .video-row-check {
+  display: block;
+}
+
+:root[data-theme="console"] .video-row-info {
+  padding: var(--space-2);
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-2);
+}
+
+:root[data-theme="console"] .folder-sidebar-item,
+:root[data-theme="console"] .rating-bar-item {
+  position: relative;
+  padding-right: 3.6em;
+}
+
+:root[data-theme="console"] .count-pill {
+  display: block;
+  position: absolute;
+  right: 0.6em;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 0.6em;
+  border-radius: var(--radius-pill);
+  background-color: var(--chip-bg);
+  color: var(--chip-text);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-regular);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }

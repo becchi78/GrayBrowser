@@ -156,9 +156,18 @@ export function onMenuAbout(callback: () => void): () => void {
 }
 
 /**
- * Subscribes to menu:style-selected, fired by the native "スタイル" submenu.
- * Payload is the selected style id (currently only `"default"`).
+ * Subscribes to menu:theme-selected, fired by the native "スタイル" submenu's
+ * theme items. Payload is the theme id (an unrecognized string is possible if
+ * the backend gains a theme this build does not know; callers must validate).
  */
-export function onMenuStyleSelected(callback: (style: string) => void): () => void {
-  return subscribe<string>("menu:style-selected", callback);
+export function onMenuThemeSelected(callback: (theme: string) => void): () => void {
+  return subscribe<string>("menu:theme-selected", callback);
+}
+
+/**
+ * Subscribes to menu:appearance-selected, fired by the native "スタイル"
+ * submenu's light/dark items. Payload is the mode id; validate it like the theme.
+ */
+export function onMenuAppearanceSelected(callback: (mode: string) => void): () => void {
+  return subscribe<string>("menu:appearance-selected", callback);
 }

@@ -7,6 +7,8 @@ export function needsPropertiesRefresh(properties: VideoPropertiesDto | null): b
   return properties === null || properties.probed_at === null;
 }
 
+// themes.css の --thumb-h(150px)と値を揃えること。CSS 側を変えるときは
+// ここも同時に変える(幅の計算がこの高さを前提にしている)。
 const THUMBNAIL_HEIGHT_PX = 150;
 const DEFAULT_THUMBNAIL_WIDTH_PX = 200;
 
