@@ -1,15 +1,15 @@
-// src/themes.css の3テーマ × ライト/ダークで、主要な前景/背景の組が WCAG 2.x の
-// AA を満たすか検査する。CSS を実際に評価する代わりに、themes.css が使う
+// src/themes/manifest.json に載っている全テーマ × ライト/ダークで、主要な前景/背景の
+// 組が WCAG 2.x の AA を満たすか検査する。テーマは manifest から自動で拾う。CSS を
+// 実際に評価する代わりに、src/themes/ の CSS が使う
 // 記法(16進・rgb()/rgba()・var()・light-dark()・color-mix(in srgb))だけを
 // 解釈する小さな評価器を持つ。未対応の記法に当たったら黙って通さず例外にする。
 //
 // 使い方: node scripts/theme-contrast.mjs
 // 基準: 文字は 4.5:1、枠・アイコンなど文字以外の表示は 3:1。
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readAllThemesCss, readManifest, splitTopLevel } from "./theme-css.mjs";
 
-export const THEMES = ["console", "fluent", "cinema"];
+export const THEMES = readManifest().themes;
 export const MODES = ["light", "dark"];
 
 // ---- CSS の読み取り ----
@@ -32,24 +32,6 @@ export function parseRules(css) {
     rules.push({ selectors, decls });
   }
   return rules;
-}
-
-/** 括弧の外にある `sep` で分割する。 */
-function splitTopLevel(text, sep) {
-  const parts = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === "(") depth++;
-    else if (c === ")") depth--;
-    else if (c === sep && depth === 0) {
-      parts.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(text.slice(start));
-  return parts.map((p) => p.trim()).filter((p) => p !== "");
 }
 
 /**
@@ -226,8 +208,9 @@ textWithOpacity(DIM_OPACITIES, ["--text"], ["--row-multi-selected-bg"]);
 // 検索ボックスのクリアボタン(アイコン)は 0.6 で、文字ではないので 3:1。
 textWithOpacity([0.6], ["--text"], SURFACES, UI);
 // シネマの非選択行は、情報パネル全体の文字が --text-muted になる。その中の
-// ラベル(dt)に opacity を重ねると AA を割るので、App.css 側で dt の opacity を
-// 外している。ここでは、その状態(--text-muted を不透明で使う)が AA を満たすことを測る。
+// ラベル(dt)に opacity を重ねると AA を割るので、テーマが --info-idle-dt-opacity を
+// 1 にして外している。ここでは、その状態(--text-muted を不透明で使う)が AA を
+// 満たすことを測る。
 textOn(["--text-muted"], ["--page-bg", "--surface", "--surface-2"]);
 
 /** 前景/背景の表現("--x" か "pressed(--x)")を不透明な色にする。 */
@@ -241,10 +224,10 @@ function resolveSide(side, tokens, mode) {
 }
 
 /** 全テーマ・全外観の検査結果。{ theme, mode, fg, bg, ratio, min, ok } の配列。 */
-export function checkAll(css) {
+export function checkAll(css, themes = THEMES) {
   const rules = parseRules(css);
   const results = [];
-  for (const theme of THEMES) {
+  for (const theme of themes) {
     const tokens = tokensFor(rules, theme);
     for (const mode of MODES) {
       for (const [fg, bg, min, opacity = 1] of PAIRS) {
@@ -262,8 +245,7 @@ export function checkAll(css) {
 }
 
 function main() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const css = readFileSync(join(here, "..", "src", "themes.css"), "utf8");
+  const css = readAllThemesCss();
   const results = checkAll(css);
   const failures = results.filter((r) => !r.ok);
   for (const r of failures) {

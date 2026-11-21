@@ -1,0 +1,120 @@
+/* 全テーマ共通の土台: 外観(color-scheme)の切り替え、仕様に無いトークンの導出、
+   構造トークンの既定値。テーマごとのトークンは themes/<テーマ名>.css に置く。
+   data-mode が system のときは OS の設定に従い、light / dark のときは強制する。
+   導出後のコントラストは scripts/theme-contrast.mjs が検査するので、
+   導出式を変えたら実行すること。 */
+
+:root {
+  color-scheme: light dark;
+}
+:root[data-mode="light"] {
+  color-scheme: light;
+}
+:root[data-mode="dark"] {
+  color-scheme: dark;
+}
+
+/* ---- 構造トークンの既定値(どのテーマも上書きしない場合の見た目) ----
+   各テーマは必須トークンとして値を明示する(themes/manifest.json)ので、これは
+   テーマ側の書き忘れを隠すためではなく、素の状態(面・枠・角丸・減光なし)を
+   読み手に示すためのもの。テーマのブロックは詳細度か読み込み順でこれに勝つ。 */
+:root {
+  --layer-bg: transparent;
+  --layer-border-width: 0 0 0 0;
+  --layer-radius: 0;
+  --layer-overflow: visible;
+  --row-bg: transparent;
+  --row-border-width: 0 0 1px 0;
+  --row-radius: 0;
+  --row-selected-border-color: var(--row-border);
+  --row-selected-shadow: none;
+  --row-multi-selected-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
+  --info-padding: 0;
+  --info-border-width: 0;
+  --info-radius: 0;
+  --info-bg: transparent;
+  --info-idle-color: currentcolor;
+  --info-idle-dt-opacity: 0.7;
+  --list-header-letter-spacing: normal;
+}
+
+/* ---- 共通: 仕様に無いトークンの導出 ---- */
+:root {
+  /* 面・枠 */
+  --border-muted: var(--row-border);
+  --thumbnail-bg: var(--chip-bg);
+  --link: var(--accent);
+  --selected-bg: var(--accent);
+  --on-selected: var(--accent-fg);
+  --menu-border: var(--border-strong);
+  --unmatched-row-border: var(--border-strong);
+  --log-list-border: var(--border-strong);
+  --backdrop: var(--scrim);
+  --notes-bg: var(--surface-2);
+
+  /* 文字色 */
+  /* 状態色(danger / warn / success)は、仕様の値のままだと一部の面で文字として
+     AA に届かない(例: ライトの緑・赤)。文字に使うものは、元の色相を保ったまま
+     本文色へ寄せて濃く(ダークでは明るく)する。仕様の値そのものは、アイコンや
+     枠など文字以外の用途にそのまま使う。 */
+  --error-text: color-mix(in srgb, var(--danger) 70%, var(--text));
+  --warn-text: color-mix(in srgb, var(--warn) 70%, var(--text));
+  --success-text: color-mix(in srgb, var(--success) 65%, var(--text));
+  --success-notice-text: var(--success-text);
+  --star-color: var(--star);
+  --status-progress-text: var(--text-muted);
+  --failures-notice-text: var(--text-muted);
+  --thumbnail-text: var(--text-muted);
+  --thumbnail-offline-text: var(--text-muted);
+  --thumbnail-failed-text: var(--text);
+  --diff-text: var(--text);
+  --notice-text: var(--text);
+  --offline-text: var(--warn-text);
+
+  /* ボタン・入力欄 */
+  --control-text: var(--text);
+  --control-bg: var(--surface-2);
+  --control-hover-bg: color-mix(in srgb, var(--surface-2), var(--text) 6%);
+  --control-active-bg: color-mix(in srgb, var(--surface-2), var(--text) 12%);
+  --pressed-tint: color-mix(in srgb, var(--accent) 25%, transparent);
+
+  /* 状態を示す背景(警告・失敗・成功など)は、元の色を面に薄く混ぜて作る。 */
+  --notice-bg: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  --offline-bg: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  --warn-bg: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  --diff-bg: color-mix(in srgb, var(--warn) 20%, var(--surface));
+  --success-bg: color-mix(in srgb, var(--success) 14%, var(--surface));
+  --result-failed-bg: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  --failure-badge-bg: color-mix(in srgb, var(--danger) 18%, var(--surface));
+  --thumbnail-failed-bg: color-mix(in srgb, var(--danger) 16%, var(--surface));
+  --thumbnail-offline-bg: var(--chip-bg);
+  --update-notice-bg: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  --update-notice-border: color-mix(in srgb, var(--accent) 40%, var(--surface));
+
+  /* 危険な操作を確定するボタン。ダークの danger は明るい色なので、文字は暗くする。 */
+  --danger-bg: var(--danger);
+  --on-danger: light-dark(#ffffff, #2a0008);
+
+  /* 一覧の選択行。複数選択は単独の選択より accent を濃く混ぜて区別する。 */
+  --row-multi-selected-bg: color-mix(in srgb, var(--accent) 8%, var(--row-selected-bg));
+  --row-multi-selected-accent: var(--accent);
+
+  /* ログのレベル別の文字色。 */
+  --log-error: var(--error-text);
+  --log-warn: var(--warn-text);
+  --log-info: var(--accent);
+  --log-debug: var(--text-muted);
+  --log-trace: var(--text-subtle);
+
+  /* 一覧の寸法の導出。--video-list-min-width は、行の非内容幅(左右の余白・
+     カードの inset・列間の gap 8px・チェックボックス列)+ サムネイル領域の
+     最小幅 + 情報パネルの幅 + 一覧まわりの枠。サイドバーの最大幅の計算(sidebarResize)も、
+     この変数を読んで使う。 */
+  --info-w: 300px;
+  --thumb-w: 200px;
+  --thumb-h: 150px;
+  --video-list-min-width: calc(
+    var(--row-pad-l) + var(--row-pad-r) + 8px + var(--thumb-w) + var(--info-w) +
+      var(--check-w) + 2 * var(--row-inset-x) + var(--list-frame-x)
+  );
+}

@@ -1,0 +1,69 @@
+/* ---- シネマ: UI を黒に沈め、サムネイルだけを浮かび上がらせる ---- */
+:root[data-theme="cinema"] {
+  font-size: 13px;
+  line-height: 20px;
+  --font-xs: 0.846em;
+  --font-sm: 0.923em;
+  --font-lg: 1.154em;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-pill: 999px;
+  --page-bg: light-dark(#dad7d2, #0b0b0d);
+  --surface: light-dark(#e2dfda, #111114);
+  --surface-2: light-dark(#e9e6e1, #18181c);
+  --text: light-dark(#18181b, #ececee);
+  --text-muted: light-dark(#47474f, #a1a1aa);
+  --text-subtle: light-dark(#56565e, #8e8e97);
+  --row-border: light-dark(#cbc7c0, #1f1f24);
+  --border-strong: light-dark(#b1aca3, #33333b);
+  --accent: light-dark(#8a4106, #f5b544);
+  --accent-fg: light-dark(#ffffff, #1a1203);
+  --row-selected-bg: light-dark(#e5d3b5, #241d10);
+  --hover-bg: light-dark(#d6d3cd, #17171b);
+  --chip-bg: light-dark(#d1cdc6, #1f1f24);
+  --chip-text: light-dark(#2f2f35, #d4d4d8);
+  --star: light-dark(#a85a05, #f5b544);
+  --danger: light-dark(#b91c1c, #f87171);
+  --warn: light-dark(#a8380a, #fb923c);
+  --success: light-dark(#15803d, #4ade80);
+  --scrollbar-thumb: light-dark(#aca69c, #3f3f46);
+  --scrim: light-dark(rgba(24, 24, 27, 0.35), rgba(0, 0, 0, 0.7));
+
+  --control-padding-y: 8px;
+  --chip-radius: var(--radius-pill);
+  /* 積算: 区切り線 1px + padding 8px×2 + (ファイル名の行 24px + 情報パネル
+     ≒ 168px) = 209px に、タグが2行になる行の余裕を足して 218px。情報パネルの
+     168px は実機で測った値ではないので、実機での実測が必要。 */
+  --row-height: 218px;
+  --row-pad-y: 8px;
+  --row-pad-l: 16px;
+  --row-pad-r: 8px;
+  --row-gap-y: 0px;
+  --row-inset-x: 0px;
+  --name-h: 24px;
+  --info-offset-top: 24px;
+  --check-w: 22px;
+  /* 枠なし。 */
+  --list-frame-x: 0px;
+
+  /* 一覧の面・行・情報パネルの見た目。部品のCSSはここのトークンだけを読む。
+     枠の幅は 上 右 下 左 の4値で、0 の辺は描かれない。
+     面と情報パネルの枠は無い。選択行は inset の細い枠で示し、非選択行の情報パネルは減光する。 */
+  --layer-bg: transparent;
+  --layer-border-width: 0 0 0 0;
+  --layer-radius: 0;
+  --layer-overflow: visible;
+  --row-bg: transparent;
+  --row-border-width: 0 0 1px 0;
+  --row-radius: 0;
+  --row-selected-border-color: var(--row-border);
+  --row-selected-shadow: inset 0 0 0 1px var(--accent);
+  --row-multi-selected-shadow: inset 0 0 0 1px var(--accent), inset 4px 0 0 var(--row-multi-selected-accent);
+  --info-padding: 0;
+  --info-border-width: 0;
+  --info-radius: 0;
+  --info-bg: transparent;
+  --info-idle-color: var(--text-muted);
+  --info-idle-dt-opacity: 1;
+  --list-header-letter-spacing: normal;
+}

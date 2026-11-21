@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import type { Appearance, Mode, Theme } from "../lib/appearance";
+import manifest from "../themes/manifest.json";
 import { registerUndismissibleModal } from "../undismissibleModals";
 import { useActiveDialog, type DialogKind } from "../useActiveDialog";
 import { AppMenu } from "./AppMenu";
@@ -152,6 +153,15 @@ test("スタイルは、テーマ3種と外観3種の間に区切りがある", 
     "separator",
     ...Array<string>(3).fill("menuitemradio"),
   ]);
+});
+
+test("スタイルのテーマ項目の id は、マニフェストのテーマ名と順序まで一致する", async () => {
+  renderMenu();
+  await openGroup("style");
+  const ids = Array.from(submenu("style").querySelectorAll('[data-testid^="app-menu-item-theme-"]')).map(
+    (el) => (el.getAttribute("data-testid") ?? "").replace("app-menu-item-theme-", ""),
+  );
+  expect(ids).toEqual(manifest.themes);
 });
 
 test("同時に開くサブメニューは1つだけ", async () => {

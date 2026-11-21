@@ -1,10 +1,10 @@
 // theme-contrast のテスト。package.json の test:unit 参照。
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { checkAll, contrastRatio, evalColor, over, parseRules, tokensFor } from "./theme-contrast.mjs";
+import { THEMES, checkAll, contrastRatio, evalColor, over, parseRules, tokensFor } from "./theme-contrast.mjs";
+import { readAllThemesCss, readManifest } from "./theme-css.mjs";
 
-const themesCss = readFileSync(new URL("../src/themes.css", import.meta.url), "utf8");
+const themesCss = readAllThemesCss();
 
 const tokens = (css, theme = "console") => tokensFor(parseRules(css), theme);
 
@@ -52,7 +52,12 @@ test("未定義の変数・未対応の記法・循環は例外にする(黙っ�
   assert.throws(() => evalColor("var(--c)", t, "light"), /未対応/);
 });
 
-test("src/themes.css は全テーマ・全外観で AA を満たす", () => {
+test("検査するテーマは manifest の全テーマ(直書きしない)", () => {
+  assert.deepEqual(THEMES, readManifest().themes);
+  assert.deepEqual([...new Set(checkAll(themesCss).map((r) => r.theme))], THEMES);
+});
+
+test("src/themes/ の CSS は全テーマ・全外観で AA を満たす", () => {
   const failures = checkAll(themesCss).filter((r) => !r.ok);
   assert.deepEqual(
     failures.map((r) => `${r.theme}/${r.mode} ${r.fg} on ${r.bg} ${r.ratio.toFixed(2)}`),
