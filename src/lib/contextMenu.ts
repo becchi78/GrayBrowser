@@ -42,3 +42,51 @@ export function clampMenuPosition(
     y: Math.max(margin, Math.min(pointer.y, maxY)),
   };
 }
+
+/**
+ * Where a dropdown opens so that its right edge lines up with the anchor's
+ * right edge, directly below the anchor. Shifted inward when it would overflow.
+ */
+export function placeDropdownRightAligned(
+  anchor: { right: number; bottom: number },
+  menu: { width: number; height: number },
+  viewport: { width: number; height: number },
+  gap = 4,
+  margin = 4,
+): MenuPosition {
+  return clampMenuPosition(
+    { x: anchor.right - menu.width, y: anchor.bottom + gap },
+    menu,
+    viewport,
+    margin,
+  );
+}
+
+export interface SubmenuPlacement extends MenuPosition {
+  side: "left" | "right";
+}
+
+/**
+ * Where a submenu opens beside its parent menu. The parent sits near the
+ * right edge of the window, so the left side is preferred; the right side is
+ * used when the left would run off the window. The submenu is flush against
+ * the parent's edge; only when neither side has room (a window far narrower
+ * than the minimum) does the right-side submenu slide left over the parent so
+ * that it stays inside the window. `itemTop` is the top of the parent item, to
+ * which the submenu's first row is aligned.
+ */
+export function placeSubmenu(
+  parent: { left: number; right: number },
+  itemTop: number,
+  menu: { width: number; height: number },
+  viewport: { width: number; height: number },
+  margin = 4,
+): SubmenuPlacement {
+  const leftX = parent.left - menu.width;
+  const side = leftX >= margin ? "left" : "right";
+  const x = side === "left" ? leftX : parent.right;
+  const clamped = clampMenuPosition({ x, y: itemTop }, menu, viewport, margin);
+  // On the left, x stays flush against the parent and only y is clamped. On the
+  // right, x is pulled back inside the window, which can overlap the parent.
+  return { x: side === "left" ? x : Math.min(x, clamped.x), y: clamped.y, side };
+}

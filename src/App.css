@@ -164,6 +164,7 @@ button:not(
     .sidebar-section-toggle,
     .folder-sidebar-item,
     .context-menu-item,
+    .app-menu-item,
     .link-button,
     .confirm-dialog-confirm--danger,
     .tag-chip button
@@ -182,6 +183,7 @@ button:not(
     .sidebar-section-toggle,
     .folder-sidebar-item,
     .context-menu-item,
+    .app-menu-item,
     .link-button,
     .confirm-dialog-confirm--danger,
     .tag-chip button
@@ -2002,6 +2004,97 @@ button.link-button:active {
 
 .context-menu-item:disabled:hover {
   background-color: transparent;
+}
+
+/* 検索行の右端のハンバーガー。高さは行内の他のコントロールと同じ
+   `.header-row-primary button` の padding・font-size に任せ、アイコンは文字の
+   高さに合わせる。 */
+.header-row-primary .app-menu-button {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0.35em 0.6em;
+}
+
+.app-menu-icon {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+/* 1階層目もサブメニューも、ウィンドウの高さに収まらないときは、はみ出す分を
+   メニュー自体でスクロールさせる。位置と最大の高さは AppMenu が指定する。 */
+.app-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 14em;
+  overflow-y: auto;
+  padding: var(--space-1);
+  background-color: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+.app-menu-separator {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background-color: var(--row-border);
+}
+
+.app-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  background-color: transparent;
+  color: inherit;
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-menu-item:hover,
+.app-menu-item:focus-visible,
+.app-menu-item[aria-expanded="true"] {
+  background-color: var(--hover-bg);
+}
+
+/* 1階層目の項目: ラベルを広げ、サブメニューを持つことを示す矢印を右端に置く。 */
+.app-menu-group-label {
+  flex: 1;
+}
+
+.app-menu-chevron {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  color: var(--text-muted);
+}
+
+/* 開いた時点で最初の項目へ自動でフォーカスが移るため、リングは出さず、現在位置は
+   上の背景色だけで示す(ContextMenu と同じ)。 */
+.app-menu-item:focus-visible {
+  outline: none;
+}
+
+/* 選択中を示すチェックの置き場。ラジオでない項目にも同じ幅を空けて、文字の
+   左端をそろえる。 */
+.app-menu-check-slot {
+  display: inline-flex;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  color: var(--accent);
+}
+
+.app-menu-check {
+  width: 100%;
+  height: 100%;
 }
 
 /* Wider than the base .dialog so a long .wb / folder path sits beside its

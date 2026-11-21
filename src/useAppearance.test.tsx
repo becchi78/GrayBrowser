@@ -2,7 +2,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as api from "./api";
-import * as events from "./events";
 import { MODE_STORAGE_KEY, THEME_STORAGE_KEY } from "./lib/appearance";
 import { deferred, settle } from "./testing/async";
 import { useAppearance } from "./useAppearance";
@@ -13,13 +12,6 @@ vi.mock("./api", () => ({
   setAppearanceMode: vi.fn(),
   setWindowTheme: vi.fn(),
 }));
-vi.mock("./events", () => ({
-  onMenuThemeSelected: vi.fn(),
-  onMenuAppearanceSelected: vi.fn(),
-}));
-
-let emitTheme: (v: string) => void;
-let emitMode: (v: string) => void;
 
 const html = () => document.documentElement;
 
@@ -32,14 +24,6 @@ beforeEach(() => {
   vi.mocked(api.setTheme).mockResolvedValue(undefined);
   vi.mocked(api.setAppearanceMode).mockResolvedValue(undefined);
   vi.mocked(api.setWindowTheme).mockResolvedValue(undefined);
-  vi.mocked(events.onMenuThemeSelected).mockImplementation((cb) => {
-    emitTheme = cb;
-    return () => {};
-  });
-  vi.mocked(events.onMenuAppearanceSelected).mockImplementation((cb) => {
-    emitMode = cb;
-    return () => {};
-  });
 });
 
 test("写しが無ければ既定(console / system)を属性に付ける", async () => {
@@ -58,7 +42,7 @@ test("写しがあれば DB の応答を待たずにその値を使う", async (
 
   const { result } = renderHook(() => useAppearance());
 
-  expect(result.current).toEqual({ theme: "cinema", mode: "dark" });
+  expect(result.current.appearance).toEqual({ theme: "cinema", mode: "dark" });
   expect(html().dataset.theme).toBe("cinema");
   expect(html().dataset.mode).toBe("dark");
   expect(api.setWindowTheme).toHaveBeenCalledWith("dark");
@@ -72,7 +56,7 @@ test("DB の値が写しと違えば DB の値で補正し、写しも更新す�
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  expect(result.current).toEqual({ theme: "fluent", mode: "light" });
+  expect(result.current.appearance).toEqual({ theme: "fluent", mode: "light" });
   expect(html().dataset.theme).toBe("fluent");
   expect(html().dataset.mode).toBe("light");
   expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("fluent");
@@ -87,7 +71,7 @@ test("DB が未知の値を返したら、その項目は今の値のまま", as
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  expect(result.current).toEqual({ theme: "cinema", mode: "dark" });
+  expect(result.current.appearance).toEqual({ theme: "cinema", mode: "dark" });
 });
 
 test("DB の取得に失敗しても写しの見た目のまま動く", async () => {
@@ -97,17 +81,17 @@ test("DB の取得に失敗しても写しの見た目のまま動く", async ()
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  expect(result.current.theme).toBe("fluent");
+  expect(result.current.appearance.theme).toBe("fluent");
   expect(html().dataset.theme).toBe("fluent");
 });
 
-test("メニューのテーマ選択は属性・写し・DB に反映し、外観は変えない", async () => {
+test("テーマの選択は属性・写し・DB に反映し、外観は変えない", async () => {
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  act(() => emitTheme("cinema"));
+  act(() => result.current.selectTheme("cinema"));
 
-  expect(result.current).toEqual({ theme: "cinema", mode: "system" });
+  expect(result.current.appearance).toEqual({ theme: "cinema", mode: "system" });
   expect(html().dataset.theme).toBe("cinema");
   expect(html().dataset.mode).toBe("system");
   expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("cinema");
@@ -115,42 +99,30 @@ test("メニューのテーマ選択は属性・写し・DB に反映し、外�
   expect(api.setAppearanceMode).not.toHaveBeenCalled();
 });
 
-test("メニューの外観選択は属性・写し・DB・ウィンドウ枠に反映する", async () => {
+test("外観の選択は属性・写し・DB・ウィンドウ枠に反映する", async () => {
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  act(() => emitMode("dark"));
+  act(() => result.current.selectMode("dark"));
 
-  expect(result.current.mode).toBe("dark");
+  expect(result.current.appearance.mode).toBe("dark");
   expect(html().dataset.mode).toBe("dark");
   expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe("dark");
   expect(api.setAppearanceMode).toHaveBeenCalledWith("dark");
   expect(api.setWindowTheme).toHaveBeenLastCalledWith("dark");
 
-  act(() => emitMode("system"));
+  act(() => result.current.selectMode("system"));
   expect(api.setWindowTheme).toHaveBeenLastCalledWith("system");
 });
 
 test("同じ外観を選び直してもウィンドウ枠の設定を繰り返さない", async () => {
-  renderHook(() => useAppearance());
+  const { result } = renderHook(() => useAppearance());
   await settle();
   const before = vi.mocked(api.setWindowTheme).mock.calls.length;
 
-  act(() => emitMode("system"));
+  act(() => result.current.selectMode("system"));
 
   expect(vi.mocked(api.setWindowTheme).mock.calls.length).toBe(before);
-});
-
-test("不正なメニューの値は無視する", async () => {
-  const { result } = renderHook(() => useAppearance());
-  await settle();
-
-  act(() => emitTheme("neon"));
-  act(() => emitMode("auto"));
-
-  expect(result.current).toEqual({ theme: "console", mode: "system" });
-  expect(api.setTheme).not.toHaveBeenCalled();
-  expect(api.setAppearanceMode).not.toHaveBeenCalled();
 });
 
 test("DB の応答前にユーザーが選んだ項目は、遅れて届いた DB の値で上書きしない", async () => {
@@ -158,10 +130,10 @@ test("DB の応答前にユーザーが選んだ項目は、遅れて届いた D
   vi.mocked(api.getAppearance).mockReturnValue(pending.promise);
   const { result } = renderHook(() => useAppearance());
 
-  act(() => emitTheme("fluent"));
+  act(() => result.current.selectTheme("fluent"));
   await act(async () => pending.resolve({ theme: "cinema", mode: "dark" }));
 
-  expect(result.current).toEqual({ theme: "fluent", mode: "dark" });
+  expect(result.current.appearance).toEqual({ theme: "fluent", mode: "dark" });
 });
 
 test("localStorage が使えなくても反映は続く", async () => {
@@ -171,8 +143,44 @@ test("localStorage が使えなくても反映は続く", async () => {
   const { result } = renderHook(() => useAppearance());
   await settle();
 
-  act(() => emitTheme("fluent"));
+  act(() => result.current.selectTheme("fluent"));
 
-  expect(result.current.theme).toBe("fluent");
+  expect(result.current.appearance.theme).toBe("fluent");
   expect(html().dataset.theme).toBe("fluent");
+});
+
+test("DB の応答前に選んだ外観も、遅れて届いた DB の値で上書きしない(テーマは DB の値になる)", async () => {
+  const pending = deferred<{ theme: string; mode: string }>();
+  vi.mocked(api.getAppearance).mockReturnValue(pending.promise);
+  const { result } = renderHook(() => useAppearance());
+
+  act(() => result.current.selectMode("light"));
+  await act(async () => pending.resolve({ theme: "cinema", mode: "dark" }));
+
+  expect(result.current.appearance).toEqual({ theme: "cinema", mode: "light" });
+  expect(html().dataset.mode).toBe("light");
+});
+
+test("保存に失敗しても、選んだ見た目は反映したまま", async () => {
+  vi.mocked(api.setTheme).mockRejectedValue(new Error("db"));
+  const { result } = renderHook(() => useAppearance());
+  await settle();
+
+  act(() => result.current.selectTheme("fluent"));
+  await settle();
+
+  expect(result.current.appearance.theme).toBe("fluent");
+  expect(html().dataset.theme).toBe("fluent");
+  expect(console.error).toHaveBeenCalled();
+});
+
+test("選択関数は再描画をまたいで同一の参照を保つ", async () => {
+  const { result } = renderHook(() => useAppearance());
+  await settle();
+  const { selectTheme, selectMode } = result.current;
+
+  act(() => result.current.selectTheme("cinema"));
+
+  expect(result.current.selectTheme).toBe(selectTheme);
+  expect(result.current.selectMode).toBe(selectMode);
 });

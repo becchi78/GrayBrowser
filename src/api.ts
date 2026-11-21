@@ -198,9 +198,21 @@ export const getAppearance = () => invoke<{ theme: string; mode: string }>("get_
 export const setTheme = (theme: Theme) => invoke<void>("set_theme", { theme });
 export const setAppearanceMode = (mode: Mode) => invoke<void>("set_appearance_mode", { mode });
 /**
- * タイトルバーとネイティブメニューの明暗をアプリの外観に揃える。`system` は
+ * タイトルバーの明暗をアプリの外観に揃える。`system` は
  * 強制を解いて OS の設定に従う(null)。WebView 内の配色は CSS の color-scheme が
  * 受け持つので、これはウィンドウ枠側だけの指定。
  */
 export const setWindowTheme = (mode: Mode) =>
   getCurrentWindow().setTheme(mode === "system" ? null : mode);
+
+/**
+ * Starts a manual database backup and returns at once; the result is shown in a
+ * native message dialog by the backend once the backup finishes.
+ */
+export const runManualBackup = () => invoke<void>("run_manual_backup");
+
+/**
+ * Quits by closing the main window, so it goes through the same path as the
+ * title bar's close button (including saving the window size).
+ */
+export const quitApp = () => invoke<void>("quit_app");

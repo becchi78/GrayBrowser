@@ -8,6 +8,7 @@ import { LogViewerDialog } from "./components/LogViewerDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { LeftPane } from "./components/LeftPane";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { AppMenu } from "./components/AppMenu";
 import { SearchBox } from "./components/SearchBox";
 import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
@@ -22,20 +23,11 @@ import {
   saveViewState,
   setInfoPaneCollapsed as saveInfoPaneCollapsed,
 } from "./api";
-import {
-  onMenuAbout,
-  onMenuCheckUpdate,
-  onMenuOpenFolderDialog,
-  onMenuOpenLogDialog,
-  onMenuOpenSettingsDialog,
-  onMenuOpenTagBarDialog,
-  onMenuOpenWbImportDialog,
-} from "./events";
 import { EditContextMenu, type EditTarget } from "./components/EditContextMenu";
 import { contextMenuAction, type MenuPosition } from "./lib/contextMenu";
 import { isTextEditTarget } from "./lib/textEntryTarget";
-import { useActiveDialog, useMenuOpen } from "./useActiveDialog";
-import type { Theme } from "./lib/appearance";
+import { useActiveDialog } from "./useActiveDialog";
+import type { Appearance, Mode, Theme } from "./lib/appearance";
 import { useAppearance } from "./useAppearance";
 import { useLibraryCounts } from "./useLibraryCounts";
 import { INITIAL_VIEW_STATE, fromSaved, isSameViewState, toSaved, type ViewState } from "./lib/viewState";
@@ -46,7 +38,7 @@ const VIEW_STATE_SAVE_DELAY_MS = 500;
 
 function App() {
   // 読み込み中の画面でも反映が始まるよう、ここで呼ぶ。
-  const appearance = useAppearance();
+  const { appearance, selectTheme, selectMode } = useAppearance();
   // The grid is not rendered until the saved state is known: mounting it with
   // the initial state first would run a query for a view the user is about to
   // leave. A failed load just continues with the initial state.
@@ -62,10 +54,28 @@ function App() {
   if (initialView === null) {
     return <div className="app" data-testid="app-loading" />;
   }
-  return <AppContent initialView={initialView} theme={appearance.theme} />;
+  return (
+    <AppContent
+      initialView={initialView}
+      appearance={appearance}
+      onSelectTheme={selectTheme}
+      onSelectMode={selectMode}
+    />
+  );
 }
 
-function AppContent({ initialView, theme }: { initialView: ViewState; theme: Theme }) {
+function AppContent({
+  initialView,
+  appearance,
+  onSelectTheme,
+  onSelectMode,
+}: {
+  initialView: ViewState;
+  appearance: Appearance;
+  onSelectTheme: (theme: Theme) => void;
+  onSelectMode: (mode: Mode) => void;
+}) {
+  const theme = appearance.theme;
   const [refreshKey, setRefreshKey] = useState(0);
   // 手動の紐付けでサムネイルが置き換わった動画の id -> 回数。サムネイルは
   // 動画ごとに取得済みの画像をメモリに持つため、ファイルだけ差し替わっても
@@ -80,7 +90,7 @@ function AppContent({ initialView, theme }: { initialView: ViewState; theme: The
   // Empty = "ALL" (no rating filter). Independent filter axis from
   // tagIds -- see RatingBar's own comment.
   const [ratings, setRatings] = useState(initialView.ratings);
-  // The menu-opened dialogs are mutually exclusive: opening one closes the
+  // The dialogs opened from the menu are mutually exclusive: opening one closes the
   // previous one (unless that one cannot be dismissed, e.g. mid-import).
   // tagBarRefreshKey is `refreshKey` scoped to just TagBar: bumped when the
   // TagBarEditDialog saves a new tag order or deletes a tag, so TagBar
@@ -152,18 +162,10 @@ function AppContent({ initialView, theme }: { initialView: ViewState; theme: The
     saveInfoPaneCollapsed(next).catch((e) => console.error(e));
   };
 
-  useMenuOpen(onMenuOpenFolderDialog, "folder", openDialog);
-  useMenuOpen(onMenuOpenWbImportDialog, "wbImport", openDialog);
-  useMenuOpen(onMenuOpenTagBarDialog, "tagBar", openDialog);
-  useMenuOpen(onMenuOpenSettingsDialog, "settings", openDialog);
-  useMenuOpen(onMenuCheckUpdate, "update", openDialog);
-  useMenuOpen(onMenuAbout, "about", openDialog);
-  useMenuOpen(onMenuOpenLogDialog, "log", openDialog);
-
   return (
     <div className="app">
-      {/* No <h1>: the native menu bar (rendered outside the DOM) serves as the
-          title bar. */}
+      {/* No <h1>: the window's title bar names the app, and the hamburger menu
+          at the right end of this row is the app's only menu. */}
       <div className="header-row-primary" data-testid="header-row-primary">
         <SearchBox value={search} onChange={setSearch} />
         <SortControl
@@ -183,6 +185,12 @@ function AppContent({ initialView, theme }: { initialView: ViewState; theme: The
         >
           {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
         </button>
+        <AppMenu
+          openDialog={openDialog}
+          appearance={appearance}
+          onSelectTheme={onSelectTheme}
+          onSelectMode={onSelectMode}
+        />
       </div>
       <FilterBar
         folderPath={folderPath}
@@ -235,7 +243,7 @@ function AppContent({ initialView, theme }: { initialView: ViewState; theme: The
       <FfmpegNotice />
       <UpdateNotice onOpenDetails={() => openDialog("update")} />
 
-      {/* FolderDialog/WbImportDialog are modals reachable only via the menu,
+      {/* FolderDialog/WbImportDialog are modals reachable only from the menu,
           not always-visible. */}
       <FolderDialog
         open={activeDialog === "folder"}

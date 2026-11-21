@@ -37,11 +37,25 @@ export async function ensureAppDbExists() {
   }
 }
 
-// Runs a scan via FolderDialog: opens the dialog by emitting the same
-// "menu:open-folder-dialog" event the native "ファイル > フォルダ管理..." item
-// emits (WebDriver cannot click native menus; the event is reachable through
-// `window.__TAURI__` because `withGlobalTauri` is enabled), triggers the
-// dialog's own scan button, waits for the
+// Opens the hamburger menu, opens one of its groups, and presses a leaf item.
+// `groupId` is the suffix of the group's `app-menu-group-<id>` test id (file,
+// tag, style, settings, help); `itemId` is the suffix of the leaf's
+// `app-menu-item-<id>` (e.g. "folder", "tagBar", "settings"). The menu is
+// ordinary DOM, so this is a plain click sequence; no backend event is involved.
+export async function clickAppMenuItem(browser, groupId, itemId) {
+  const menuButton = await browser.$('[data-testid="app-menu-button"]');
+  await menuButton.waitForClickable({ timeout: 10_000 });
+  await menuButton.click();
+  const groupItem = await browser.$(`[data-testid="app-menu-group-${groupId}"]`);
+  await groupItem.waitForClickable({ timeout: 5_000 });
+  await groupItem.click();
+  const item = await browser.$(`[data-testid="app-menu-item-${itemId}"]`);
+  await item.waitForClickable({ timeout: 5_000 });
+  await item.click();
+}
+
+// Runs a scan via FolderDialog: opens the dialog from the hamburger menu's
+// "ファイル > フォルダ管理..." item, triggers the dialog's own scan button, waits for the
 // scan summary, then closes the dialog again. This replaces the previous
 // always-visible "スキャン開始" button, which moved into FolderDialog (see
 // that component's own handleScan comment for why a scan trigger lives
@@ -51,7 +65,7 @@ export async function ensureAppDbExists() {
 // native folder picker `pickWatchFolders()` would otherwise open, so this
 // never exercises "+ フォルダを追加" itself.
 export async function scanViaFolderDialog(browser, { scanTimeout = 30_000 } = {}) {
-  await browser.execute(() => window.__TAURI__.event.emit("menu:open-folder-dialog"));
+  await clickAppMenuItem(browser, "file", "folder");
 
   const dialog = await browser.$('[data-testid="folder-dialog"]');
   await dialog.waitForExist({ timeout: 10_000 });
