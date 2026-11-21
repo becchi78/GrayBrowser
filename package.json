@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:unit": "node --experimental-strip-types --test \"src/lib/*.test.ts\" e2e/sandboxGuard.test.mjs \"scripts/release/*.test.mjs\"",
-    "test:component": "vitest run",
+    "test:component": "node scripts/run-vitest.mjs run",
     "test:e2e": "node --test --test-concurrency=1 e2e/specs/tag-management.e2e.mjs e2e/specs/incremental-search.e2e.mjs e2e/specs/grid-visible-after-scan.e2e.mjs e2e/specs/layout-shrink-regression.e2e.mjs e2e/specs/tag-bar.e2e.mjs"
   },
   "dependencies": {
