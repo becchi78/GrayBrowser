@@ -44,9 +44,9 @@ fn mode_item_id(mode: Mode) -> String {
 
 fn theme_label(theme: Theme) -> &'static str {
     match theme {
-        Theme::Fluent => "Fluent",
-        Theme::Cinema => "シネマ",
-        Theme::Console => "コンソール",
+        Theme::Console => "ネイビー・コンソール",
+        Theme::Fluent => "Fluent / Mica",
+        Theme::Cinema => "ダーク・シネマ",
     }
 }
 
@@ -338,6 +338,24 @@ mod tests {
                 ("menu:appearance-selected", m.as_str())
             );
         }
+    }
+
+    #[test]
+    fn theme_items_are_ordered_console_fluent_cinema() {
+        let labels: Vec<_> = Theme::ALL.iter().map(|t| theme_label(*t)).collect();
+        assert_eq!(
+            labels,
+            ["ネイビー・コンソール", "Fluent / Mica", "ダーク・シネマ"]
+        );
+        let ids: Vec<_> = Theme::ALL.iter().map(|t| theme_item_id(*t)).collect();
+        assert_eq!(
+            ids,
+            [
+                "menu-theme-console",
+                "menu-theme-fluent",
+                "menu-theme-cinema"
+            ]
+        );
     }
 
     #[test]

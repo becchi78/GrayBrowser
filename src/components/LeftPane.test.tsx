@@ -14,7 +14,7 @@ vi.mock("./TagBar", () => ({ TagBar: () => null }));
 
 // jsdom は CSS を読まないので、一覧の下限幅(CSS の --video-list-min-width)は
 // 差し替え可能な値にし、読み取りの回数も数える。
-const css = vi.hoisted(() => ({ minWidth: 532, reads: 0 }));
+const css = vi.hoisted(() => ({ minWidth: 554, reads: 0 }));
 vi.mock("../lib/cssTokens", () => ({
   readLengthToken: () => {
     css.reads += 1;
@@ -29,7 +29,7 @@ function setWindowWidth(width: number) {
 }
 
 beforeEach(() => {
-  css.minWidth = 532;
+  css.minWidth = 554;
   css.reads = 0;
   setWindowWidth(1400);
   document.documentElement.removeAttribute("data-theme");
@@ -75,7 +75,7 @@ test("テーマを切り替えると、下限幅を読み直して幅を再ク�
   drag(500);
   expect(pane().style.width).toBe("500px");
 
-  // 狭いウィンドウで、下限幅の大きいテーマ(コンソール)に切り替える。
+  // 狭いウィンドウで、下限幅の大きいテーマ(ここではコンソール)に切り替える。
   setWindowWidth(900);
   css.minWidth = 550;
   act(() => {
@@ -95,6 +95,6 @@ test("window の resize でも下限幅を読み直して再クランプする",
     window.dispatchEvent(new Event("resize"));
   });
 
-  // 900 - 32 - 532 = 336
-  expect(pane().style.width).toBe("336px");
+  // 900 - 32 - 554 = 314
+  expect(pane().style.width).toBe("314px");
 });

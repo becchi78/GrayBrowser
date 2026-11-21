@@ -1381,11 +1381,17 @@ test("テーマの切り替えで行の高さが変わっても、先頭に見�
   }
 });
 
-test("一覧は件数のヘッダー(絞り込み後 / 全体)を持つ。見せるのはコンソールのテーマだけ", async () => {
+test("一覧は件数のヘッダー(絞り込み後 / 全体)を、どのテーマでも持つ", async () => {
   vi.mocked(api.listVideos).mockResolvedValue(videos("a", "b", "c"));
   await renderGrid({ totalCount: 3580 });
 
   const header = screen.getByTestId("list-header");
   expect(header).toHaveTextContent("LIBRARY3件/ 全 3,580 件");
   expect(screen.getByTestId("list-layer")).toContainElement(list());
+});
+
+test("絞り込み中は、ヘッダーが全体の件数も併記する(テーマで出し分けない)", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue(videos("a"));
+  await renderGrid({ totalCount: 10 });
+  expect(screen.getByTestId("list-header")).toHaveTextContent("LIBRARY1件/ 全 10 件");
 });

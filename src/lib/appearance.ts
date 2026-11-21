@@ -6,7 +6,7 @@
 // (描画前に走るため、このファイルを import できない)。両者の一致は
 // src/appearanceIndexHtml.test.tsx が検査する。
 
-export const THEMES = ["fluent", "cinema", "console"] as const;
+export const THEMES = ["console", "fluent", "cinema"] as const;
 export type Theme = (typeof THEMES)[number];
 
 export const MODES = ["system", "light", "dark"] as const;

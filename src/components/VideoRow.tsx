@@ -87,9 +87,7 @@ export function VideoRow({
     >
       {/* 行頭のチェックボックスは、選択の状態を見せて Ctrl/⌘+クリックと同じ
           「この行だけ切り替える」操作を受ける(Shift 併用で範囲を追加)。
-          全テーマで描画し、見せるテーマ(コンソール)だけが CSS で表示する。
-          display: none の間はフォーカスも受けないので、他のテーマの操作には
-          影響しない。 */}
+          全テーマで表示する。 */}
       <input
         type="checkbox"
         className="video-row-check"

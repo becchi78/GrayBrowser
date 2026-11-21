@@ -647,9 +647,42 @@ button.search-box-clear {
   font-weight: var(--weight-strong);
 }
 
-/* 件数のピル(行末)。全テーマで DOM にあり、見せるのはコンソールだけ。 */
+/* 件数のピル(行末)。項目の右端に重ねて置くので、項目側に右の余白を確保する。
+   上の `.folder-sidebar-item` / `.rating-bar-item` の padding より後ろに置くこと。
+   余白の 5em は、最大 6 桁(「999,999」)のピルが名前に重ならない値。ピルの
+   font-size は --font-xs(親である項目の font-size = --font-sm の 0.846〜0.875 倍)で、
+   数字 1 字を 0.55em 程度とすると、桁 6 + コンマ 1 の文字幅 + 左右 padding(各 0.6em)
+   + 右端からの距離 0.6em ≒ 54px 前後(13px 基準で項目 12.0px・ピル 10.2px のとき
+   54.7px、12px 基準で項目 11.5px・ピル 10.1px のとき 54.0px)。5em は項目の
+   font-size で 60px / 57.5px にあたり、どちらでも収まる(以前の 3.6em は 43px / 41px で、
+   5 桁以上で重なった)。 */
+.folder-sidebar-item,
+.rating-bar-item {
+  position: relative;
+  padding-right: 5em;
+}
+
+/* ピルを持たない行(タググループの見出し・「すべて解除」)は、右の余白を通常に戻す。
+   見出し右端のバッジが、ピルの右端(ピルの font-size で 0.6em ≒ 6px)と揃う値。 */
+.folder-sidebar-item.tag-bar-group,
+.folder-sidebar-item.tag-bar-clear-all {
+  padding-right: 0.5em;
+}
+
 .count-pill {
-  display: none;
+  display: block;
+  position: absolute;
+  right: 0.6em;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 0.6em;
+  border-radius: var(--radius-pill);
+  background-color: var(--chip-bg);
+  color: var(--chip-text);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-regular);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 到達できない監視フォルダの印。パスより前に置くので、長いパスが省略表示
@@ -778,8 +811,8 @@ button.search-box-clear {
   z-index: 20;
 }
 
-/* 一覧を包む器。フルーエントではレイヤー面、コンソールでは先頭に件数の
-   ヘッダーを持つ(どちらも下のテーマ別の指定)。`min-width` は、`.main-area`が
+/* 一覧を包む器。先頭に件数のヘッダーを持ち、フルーエントではレイヤー面、
+   コンソールではカードの面になる(下のテーマ別の指定)。`min-width` は、`.main-area`が
    横並び(row)の flex なので、flex: 1 の flex-basis 0 だけでは左ペインが広がったとき
    0 まで縮んでしまうのを防ぐ下限。値は、行の非内容幅(左右の padding・列間の
    gap・チェックボックス列)+ サムネイル領域の最小幅 + 情報パネルの幅で、
@@ -794,7 +827,20 @@ button.search-box-clear {
 }
 
 .list-header {
-  display: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--row-border);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.list-header-count {
+  color: var(--text);
+  font-size: var(--font-lg);
 }
 
 .video-list-empty {
@@ -860,10 +906,10 @@ button.search-box-clear {
   box-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
 }
 
-/* 行頭のチェックボックス。コンソールだけが表示する(その列幅が --check-w)。
+/* 行頭のチェックボックス(その列幅が --check-w。チェックボックスの幅 + 右の gap 8px)。
    グローバルな`input`の padding・影は、チェックボックスには大きすぎるので打ち消す。 */
 .video-row-check {
-  display: none;
+  display: block;
   flex: none;
   width: calc(var(--check-w) - 8px);
   height: calc(var(--check-w) - 8px);
@@ -2491,17 +2537,6 @@ button.filter-bar-chip-remove:hover {
   font-size: inherit;
 }
 
-.filter-bar-count {
-  margin-left: auto;
-  color: var(--text-muted);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.filter-bar-count strong {
-  color: var(--text);
-}
-
 /* ---- テーマ別の出し分け(DOM は全テーマ共通) ---- */
 
 /* Fluent: 一覧をレイヤー面(左上だけ角丸)で包み、行をカードにする。 */
@@ -2556,8 +2591,7 @@ button.filter-bar-chip-remove:hover {
     inset 4px 0 0 var(--row-multi-selected-accent);
 }
 
-/* コンソール: カードの面に件数のヘッダー、チェックボックスの列、枠付きの情報パネル、
-   左ペインの件数ピル。 */
+/* コンソール: カードの面、見出しの字間を空けた件数ヘッダー、枠付きの情報パネル。 */
 :root[data-theme="console"] .list-layer {
   background-color: var(--surface);
   border: 1px solid var(--row-border);
@@ -2565,28 +2599,8 @@ button.filter-bar-chip-remove:hover {
   overflow: hidden;
 }
 
-:root[data-theme="console"] .list-header {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5em;
-  flex-shrink: 0;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--row-border);
-  font-size: var(--font-sm);
-  color: var(--text-muted);
-}
-
 :root[data-theme="console"] .list-header-title {
   letter-spacing: 0.08em;
-}
-
-:root[data-theme="console"] .list-header-count {
-  color: var(--text);
-  font-size: var(--font-lg);
-}
-
-:root[data-theme="console"] .video-row-check {
-  display: block;
 }
 
 :root[data-theme="console"] .video-row-info {
@@ -2594,26 +2608,4 @@ button.filter-bar-chip-remove:hover {
   border: 1px solid var(--row-border);
   border-radius: var(--radius-md);
   background-color: var(--surface-2);
-}
-
-:root[data-theme="console"] .folder-sidebar-item,
-:root[data-theme="console"] .rating-bar-item {
-  position: relative;
-  padding-right: 3.6em;
-}
-
-:root[data-theme="console"] .count-pill {
-  display: block;
-  position: absolute;
-  right: 0.6em;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 0 0.6em;
-  border-radius: var(--radius-pill);
-  background-color: var(--chip-bg);
-  color: var(--chip-text);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-regular);
-  line-height: 1.6;
-  font-variant-numeric: tabular-nums;
 }

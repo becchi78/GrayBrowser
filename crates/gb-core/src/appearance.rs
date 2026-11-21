@@ -5,20 +5,21 @@
 /// Visual design of the whole window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
-    Fluent,
-    Cinema,
     #[default]
     Console,
+    Fluent,
+    Cinema,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 3] = [Theme::Fluent, Theme::Cinema, Theme::Console];
+    /// Display order of the menu: the default first.
+    pub const ALL: [Theme; 3] = [Theme::Console, Theme::Fluent, Theme::Cinema];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Theme::Console => "console",
             Theme::Fluent => "fluent",
             Theme::Cinema => "cinema",
-            Theme::Console => "console",
         }
     }
 
@@ -63,6 +64,15 @@ mod tests {
     fn defaults_are_console_and_system() {
         assert_eq!(Theme::default(), Theme::Console);
         assert_eq!(Mode::default(), Mode::System);
+    }
+
+    #[test]
+    fn themes_are_listed_default_first() {
+        assert_eq!(
+            Theme::ALL.map(Theme::as_str),
+            ["console", "fluent", "cinema"]
+        );
+        assert_eq!(Theme::ALL[0], Theme::default());
     }
 
     #[test]

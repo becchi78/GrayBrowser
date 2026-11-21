@@ -6,7 +6,7 @@ interface Props {
   /** 有効な評価。空 = "ALL"(評価による絞り込みなし)。 */
   value: number[];
   onChange: (v: number[]) => void;
-  /** 件数のピル(コンソールテーマで表示)。省略・未取得の間は出さない。 */
+  /** 件数のピル。省略・未取得の間は出さない。 */
   counts?: LibraryCounts | null;
 }
 

@@ -214,6 +214,8 @@ textOn(["--log-error", "--log-warn", "--log-info", "--log-debug", "--log-trace"]
 textOn(["--star", "--star-color", "--danger", "--warn", "--success"], SURFACES, UI);
 textOn(["--star", "--star-color"], ["--row-selected-bg"], UI);
 textOn(["--accent"], [...SURFACES, "--row-selected-bg", "--hover-bg"], UI);
+// 行頭のチェックボックス(チェック時は accent の塗り)は、複数選択の行の上にも載る。
+textOn(["--accent"], ["--row-multi-selected-bg"], UI);
 
 // App.css で文字に opacity を掛けている箇所(0.7〜0.85 と --opacity-muted の 0.75)。
 // 無効状態(:disabled)・進行中の手順の薄表示・装飾は AA の対象外なので含めない。

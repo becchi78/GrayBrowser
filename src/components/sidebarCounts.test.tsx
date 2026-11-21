@@ -1,4 +1,4 @@
-// 左ペインの件数ピル: counts が渡されたときだけ DOM に出る(見せるのはコンソールのテーマだけ)。
+// 左ペインの件数ピル: counts が渡されたときだけ DOM に出る(どのテーマでも表示する)。
 import { screen, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as api from "../api";

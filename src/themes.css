@@ -72,7 +72,7 @@
   --name-h: 22px;
   /* 情報パネルをファイル名の行から始める(他のテーマはサムネイルの高さから)。 */
   --info-offset-top: 0px;
-  /* 行頭のチェックボックスの列。 */
+  /* 行頭のチェックボックスの列(幅 14px + 右の gap 8px)。全テーマ共通の値。 */
   --check-w: 22px;
   /* 一覧の左右に入る枠の幅の合計(.list-layer の左右の枠 1px×2)。 */
   --list-frame-x: 2px;
@@ -123,7 +123,7 @@
   --row-inset-x: 8px;
   --name-h: 24px;
   --info-offset-top: 24px;
-  --check-w: 0px;
+  --check-w: 22px;
   /* 行カードの左右の枠 1px×2 + .list-layer の左の枠 1px(右は無い)。 */
   --list-frame-x: 3px;
 }
@@ -172,7 +172,7 @@
   --row-inset-x: 0px;
   --name-h: 24px;
   --info-offset-top: 24px;
-  --check-w: 0px;
+  --check-w: 22px;
   /* 枠なし。 */
   --list-frame-x: 0px;
 }

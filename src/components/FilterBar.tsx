@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { listAllTags } from "../api";
 import { onCatalogChanged } from "../events";
 import { REFETCH_DELAY_MS } from "../useLibraryCounts";
-import { buildFilterChips, formatCount, hasActiveFilter, type FilterChip } from "../lib/filterChips";
+import { buildFilterChips, hasActiveFilter, type FilterChip } from "../lib/filterChips";
 
 interface Props {
   folderPath: string | null;
@@ -11,10 +11,6 @@ interface Props {
   onTagIdsChange: (tagIds: number[]) => void;
   ratings: number[];
   onRatingsChange: (ratings: number[]) => void;
-  /** 絞り込み後の件数(一覧の行数)。 */
-  filteredCount: number;
-  /** 絞り込みなしの総数。未取得の間は null で、件数の表示を出さない。 */
-  totalCount: number | null;
   /** タグの編集で名前が変わりうるので、親が編集の保存のたびに増やす。 */
   tagBarRefreshKey: number;
 }
@@ -36,8 +32,6 @@ export function FilterBar({
   onTagIdsChange,
   ratings,
   onRatingsChange,
-  filteredCount,
-  totalCount,
   tagBarRefreshKey,
 }: Props) {
   const [tagNames, setTagNames] = useState<ReadonlyMap<number, string>>(new Map());
@@ -119,16 +113,6 @@ export function FilterBar({
       >
         すべて解除
       </button>
-      {totalCount !== null && (
-        <span
-          className="filter-bar-count"
-          data-testid="filter-bar-count"
-          role="status"
-          aria-live="polite"
-        >
-          <strong>{formatCount(filteredCount)}</strong> 件 / 全 {formatCount(totalCount)} 件
-        </span>
-      )}
     </div>
   );
 }

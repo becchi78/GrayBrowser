@@ -10,7 +10,7 @@ interface Props {
   onChange: (tagIds: number[]) => void;
   /** 編集モーダル保存後にparentがbumpする(FolderSidebarのrefreshKeyと同じ形) */
   refreshKey?: number;
-  /** 各タグの件数のピル(コンソールテーマで表示)を出すか。 */
+  /** 各タグの件数のピルを出すか。 */
   showCounts?: boolean;
 }
 

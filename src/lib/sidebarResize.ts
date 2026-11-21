@@ -11,10 +11,10 @@ export const MAX_WIDTH = 500;
 const APP_HORIZONTAL_PADDING_PX = 32;
 // `.video-list` の min-width(CSS の `--video-list-min-width`)を読めないとき
 // (CSS の無いテスト環境)の既定値。実際の値はテーマごとに CSS が決め、
-// 呼び出し側が読んで引数で渡す。ここの値は、行の左右padding 24px + gap 8px +
-// サムネイル領域の最小幅 200px + 情報パネル 300px = 532px(枠の無い
+// 呼び出し側が読んで引数で渡す。ここの値は、行の左右padding 24px + チェックボックス列
+// 22px + gap 8px + サムネイル領域の最小幅 200px + 情報パネル 300px = 554px(枠の無い
 // シネマの値)に合わせてある。
-export const VIDEO_LIST_MIN_WIDTH_PX = 532;
+export const VIDEO_LIST_MIN_WIDTH_PX = 554;
 
 /**
  * The widest this sidebar may be dragged to right now, given the window's

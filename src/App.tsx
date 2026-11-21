@@ -191,8 +191,6 @@ function AppContent({ initialView, theme }: { initialView: ViewState; theme: The
         onTagIdsChange={setTagIds}
         ratings={ratings}
         onRatingsChange={setRatings}
-        filteredCount={videoCount}
-        totalCount={counts?.total ?? null}
         tagBarRefreshKey={tagBarRefreshKey}
       />
       <div className="main-area">

@@ -1,4 +1,4 @@
-// 絞り込み中バー: 表示/非表示、チップの個別解除、すべて解除、件数。
+// 絞り込み中バー: 表示/非表示、チップの個別解除、すべて解除。
 import { screen } from "@testing-library/react";
 import { act } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -28,8 +28,6 @@ function props(over: Partial<Parameters<typeof FilterBar>[0]> = {}) {
     onTagIdsChange: vi.fn(),
     ratings: [],
     onRatingsChange: vi.fn(),
-    filteredCount: 42,
-    totalCount: 3580 as number | null,
     tagBarRefreshKey: 0,
     ...over,
   };
@@ -49,7 +47,7 @@ test("何も絞り込んでいなければバーごと描画しない", async ()
   expect(screen.queryByTestId("filter-bar")).toBeNull();
 });
 
-test("フォルダ・タグ・★をチップで並べ、件数(絞り込み後 / 全体)を出す", async () => {
+test("フォルダ・タグ・★をチップで並べる。件数は出さない(件数は一覧の上のヘッダーが持つ)", async () => {
   await renderBar({ folderPath: "D:\\TV", tagIds: [2, 1], ratings: [3] });
 
   expect(chips().map((c) => c.getAttribute("data-kind"))).toEqual([
@@ -61,12 +59,8 @@ test("フォルダ・タグ・★をチップで並べ、件数(絞り込み後 
   expect(chips()[0]).toHaveTextContent("フォルダD:\\TV");
   expect(chips()[1]).toHaveTextContent("犬");
   expect(chips()[3]).toHaveTextContent("★★★");
-  expect(screen.getByTestId("filter-bar-count")).toHaveTextContent("42 件 / 全 3,580 件");
-});
-
-test("総数が未取得の間は件数を出さない", async () => {
-  await renderBar({ tagIds: [1], totalCount: null });
   expect(screen.queryByTestId("filter-bar-count")).toBeNull();
+  expect(screen.getByTestId("filter-bar")).not.toHaveTextContent("件");
 });
 
 test("×は本物の button で、フォルダのチップだけを解除する", async () => {
@@ -124,13 +118,11 @@ test("既存の左ペインの testid と衝突しない", async () => {
   expect(screen.queryByTestId("tag-bar-clear-all")).toBeNull();
 });
 
-test("チップ欄と件数は支援技術に変化が伝わるよう aria-live を持つ", async () => {
+test("チップ欄は支援技術に変化が伝わるよう aria-live を持つ", async () => {
   await renderBar({ tagIds: [1], ratings: [3] });
 
   expect(screen.getByRole("list")).toHaveAttribute("aria-live", "polite");
-  const count = screen.getByTestId("filter-bar-count");
-  expect(count).toHaveAttribute("role", "status");
-  expect(count).toHaveAttribute("aria-live", "polite");
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 test("タグで絞り込んでいなければ、タグ名の取得も通知の購読もしない", async () => {

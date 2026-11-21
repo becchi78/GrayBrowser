@@ -15,7 +15,7 @@ interface Props {
    * mirrors `list_watch_folders` for the selection UI.
    */
   refreshKey?: number;
-  /** 件数のピル(コンソールテーマで表示)。省略・未取得の間は出さない。 */
+  /** 件数のピル。省略・未取得の間は出さない。 */
   counts?: LibraryCounts | null;
 }
 

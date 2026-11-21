@@ -664,7 +664,7 @@ test("タグ欄はこの動画のタグを取得して表示し、tagsVersion �
   expect(api.listTagsForVideo).toHaveBeenCalledTimes(2);
 });
 
-// ---- 行頭のチェックボックス(コンソールテーマで表示。DOM は全テーマ共通) ----
+// ---- 行頭のチェックボックス(全テーマで表示) ----
 
 test("チェックボックスは本物の checkbox で、選択状態(isSelected)をそのまま映す", async () => {
   const { update } = await renderRow();
