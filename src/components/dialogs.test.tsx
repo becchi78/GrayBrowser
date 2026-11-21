@@ -36,6 +36,8 @@ vi.mock("../api", () => ({
   setNasPollIntervalMinutes: vi.fn(),
   setUpdateCheckOnStartup: vi.fn(),
   setRestoreViewStateEnabled: vi.fn(),
+  getRememberWindowSizeEnabled: vi.fn(),
+  setRememberWindowSizeEnabled: vi.fn(),
   checkForUpdate: vi.fn(),
   listAllTags: vi.fn(),
   assignTagsToVideos: vi.fn(),
@@ -67,6 +69,7 @@ beforeEach(() => {
   vi.mocked(api.getNasPollIntervalMinutes).mockResolvedValue(5);
   vi.mocked(api.getUpdateCheckOnStartup).mockResolvedValue(true);
   vi.mocked(api.getRestoreViewStateEnabled).mockResolvedValue(true);
+  vi.mocked(api.getRememberWindowSizeEnabled).mockResolvedValue(true);
   vi.mocked(api.checkForUpdate).mockResolvedValue(fakeUpdate(() => never()));
   vi.mocked(api.listAllTags).mockResolvedValue([]);
   vi.mocked(api.readLog).mockResolvedValue({ entries: [], next_offset: 0, reset: false });
