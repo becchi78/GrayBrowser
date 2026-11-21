@@ -1,4 +1,4 @@
-import { TagGroupIcon } from "./SidebarIcons";
+import { TagGroupIcon, TrashIcon } from "./SidebarIcons";
 
 interface Props {
   name: string;
@@ -114,7 +114,7 @@ export function TagGroupRow({
             onClick={onDelete}
             disabled={busy}
           >
-            ✕
+            <TrashIcon className="delete-btn-icon" />
           </button>
         </>
       )}

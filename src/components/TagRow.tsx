@@ -1,4 +1,5 @@
 import type { TagWithCountDto } from "../types";
+import { TrashIcon } from "./SidebarIcons";
 
 interface Props {
   tag: TagWithCountDto;
@@ -50,7 +51,7 @@ export function TagRow({ tag, grouped, disableUp, disableDown, busy, onMove, onD
         onClick={onDelete}
         disabled={busy}
       >
-        ✕
+        <TrashIcon className="delete-btn-icon" />
       </button>
     </li>
   );

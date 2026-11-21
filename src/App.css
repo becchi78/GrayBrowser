@@ -352,6 +352,15 @@ button:not(
   font-size: var(--control-compact-font-size);
 }
 
+/* 削除ボタンのゴミ箱。文字と同じ font-size 連動の大きさにして、ボタンの高さを
+   「✕」のときから変えない。色は文字色ではなく危険色に固定する。 */
+.delete-btn-icon {
+  display: block;
+  width: 1em;
+  height: 1em;
+  color: var(--danger);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: var(--opacity-disabled);
@@ -592,7 +601,9 @@ button.search-box-clear {
 .tag-bar-edit-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* 右端の余白は、一覧が縦にスクロールするとき、右端の削除ボタンが
+     スクロールバーに付かないようにするためのもの。 */
+  padding: 0 var(--space-3) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -1769,7 +1780,9 @@ button.search-box-clear {
 .folder-dialog-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* 右端の余白は、一覧が縦にスクロールするとき、右端の ✎・削除ボタンが
+     スクロールバーに付かないようにするためのもの。幅は一覧の内側で吸収する。 */
+  padding: 0 var(--space-3) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

@@ -143,6 +143,17 @@ test("↑↓ はトップレベルの先頭の ↑ と末尾の ↓ だけ無効
   expect(screen.getByTestId("tag-bar-edit-group-move-down-btn")).toBeEnabled();
 });
 
+test("タグとグループの削除ボタンには、ゴミ箱アイコンが出る", async () => {
+  await renderDialog();
+
+  for (const id of ["tag-bar-edit-delete-btn", "tag-bar-edit-group-delete-btn"]) {
+    for (const btn of screen.getAllByTestId(id)) {
+      expect(btn.querySelector("svg")).not.toBeNull();
+      expect(btn).not.toHaveTextContent("✕");
+    }
+  }
+});
+
 test("先頭のグループは ↑ が無効", async () => {
   vi.mocked(api.getTagLayout).mockResolvedValue([group(10, "動物"), tag(1, "猫")]);
   await renderDialog();

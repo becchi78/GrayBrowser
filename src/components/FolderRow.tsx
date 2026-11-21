@@ -1,3 +1,5 @@
+import { TrashIcon } from "./SidebarIcons";
+
 interface Props {
   path: string;
   isFirst: boolean;
@@ -136,7 +138,7 @@ export function FolderRow({
             aria-label="フォルダの登録を解除"
             onClick={onDelete}
           >
-            ✕
+            <TrashIcon className="delete-btn-icon" />
           </button>
         </>
       )}
