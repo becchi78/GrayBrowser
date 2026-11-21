@@ -1,8 +1,10 @@
+pub mod appearance_cmds;
 pub mod catalog_cmds;
 pub mod dedup_cmds;
 pub mod ffmpeg_cmds;
 pub mod generation_retry_cmds;
 pub mod info_pane_cmds;
+pub mod library_count_cmds;
 pub mod log_cmds;
 pub mod player_cmds;
 pub mod properties_cmds;

@@ -85,6 +85,22 @@ export function VideoRow({
       data-testid="video-row"
       onContextMenu={(e) => onContextMenu(video, e)}
     >
+      {/* 行頭のチェックボックスは、選択の状態を見せて Ctrl/⌘+クリックと同じ
+          「この行だけ切り替える」操作を受ける(Shift 併用で範囲を追加)。
+          全テーマで表示する。 */}
+      <input
+        type="checkbox"
+        className="video-row-check"
+        data-testid="video-row-check"
+        aria-label={`${video.file_name} を選択`}
+        checked={isSelected}
+        onChange={(e) =>
+          onSelect(video, {
+            ctrl: true,
+            shift: (e.nativeEvent as globalThis.MouseEvent).shiftKey === true,
+          })
+        }
+      />
       {/* Single click selects (highlight only); double click plays via the
           external player (disabled while offline). Both handlers live on the
           thumbnail area itself, not the row as a whole -- the metadata/
@@ -129,7 +145,8 @@ export function VideoRow({
           </span>
         )}
         {/* ファイル名はマウスで選択してコピーできるよう、クリックを受け取る
-            （App.css側で文字幅だけに縮め、サムネイル上端を覆わない）。
+            （App.css側でサムネイルの上の1行に置き、文字幅だけに縮める。DOM の
+            順序はサムネイルの後ろのままで、見た目の順は CSS の order で決める）。
             このラベルは`.video-row-thumbnails`の兄弟要素でイベントが伝播しない
             ため、行選択はここで明示的に呼ぶ。ダブルクリックは再生に結びつけず、
             ブラウザ標準の単語選択を優先する。ラベルがホバーを受け取るので、

@@ -271,6 +271,27 @@ pub fn list_videos_filtered(
     Ok(rows)
 }
 
+/// Every `videos` row regardless of `status`, the same population
+/// `list_videos_filtered` lists when nothing is filtered.
+pub fn count_all_videos(conn: &Connection) -> rusqlite::Result<u32> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))?;
+    Ok(count as u32)
+}
+
+/// `(rating, count)` for each rating that at least one video has, ascending.
+/// Unrated videos are the `rating = 0` entry.
+pub fn count_videos_by_rating(conn: &Connection) -> rusqlite::Result<Vec<(u8, u32)>> {
+    let mut stmt =
+        conn.prepare("SELECT rating, COUNT(*) FROM videos GROUP BY rating ORDER BY rating")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(rating, count)| Some((u8::try_from(rating).ok()?, count as u32)))
+        .collect())
+}
+
 /// Looks up a video by its exact current path. Used by per-file
 /// reconciliation to tell "known path" (reconcile/reactivate) apart from
 /// "genuinely new path" (path-follow match or plain insert) before any

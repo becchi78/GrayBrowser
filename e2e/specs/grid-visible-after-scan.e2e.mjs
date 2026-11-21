@@ -60,23 +60,22 @@ import { ensureAppDbExists, scanViaFolderDialog, searchAndWaitForCellCount, wait
 // WebView2 client-area height on this platform.
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 const MIN_WINDOW = { width: 900, height: 580 };
-// ROW_HEIGHT in ThumbnailGrid.tsx / `.video-list`'s `min-height` floor in
-// App.css -- kept as one named constant so the two can't silently drift
-// apart without this test file itself needing an update. A row hosts 6
-// thumbnails + metadata/rating/tag editor, so this floor needs enough
-// height to fit the full row. Measured via CDP
-// (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port) against
-// real dev data at the "one tag assigned" baseline -- see
-// ThumbnailGrid.tsx's own ROW_HEIGHT comment for the exact arithmetic. One
-// methodology note from that measurement worth keeping here: reading
-// `scrollHeight` on a `height`-overridden element with `overflow-y: auto`
-// induces a vertical scrollbar that narrows the element's own content
-// width, which skews tag-wrapping measurements -- overriding `align-self`
-// instead avoids that bias.
-const GRID_MIN_HEIGHT_PX = 226;
+// `.video-list`'s `min-height` floor, which is the `--row-height` token in
+// themes.css (ThumbnailGrid.tsx reads the same token as the virtualizer's row
+// size). The app starts on the default theme (console) when the e2e profile
+// has no stored setting, and console's `--row-height` is 199px, so that is the
+// floor asserted here; other themes use larger values (fluent 222, cinema
+// 218). Keep this in step with themes.css when the console row dimensions
+// change. A row hosts the thumbnail + metadata/rating/tag editor, so the
+// floor needs enough height to fit one full row. One methodology note worth
+// keeping: reading `scrollHeight` on a `height`-overridden element with
+// `overflow-y: auto` induces a vertical scrollbar that narrows the element's
+// own content width, which skews tag-wrapping measurements -- overriding
+// `align-self` instead avoids that bias.
+const GRID_MIN_HEIGHT_PX = 199;
 
 // The three tests above only pin down the CSS-side floor (`.video-list`'s
-// `min-height: 226px`) -- none of them fail if `tauri.conf.json`'s own
+// `min-height: var(--row-height)`) -- none of them fail if `tauri.conf.json`'s own
 // default/minimum window size (part ① and ② of the actual fix; see this
 // file's header) is reverted, because they all call `browser.setWindowSize()`
 // themselves before asserting anything, which overrides whatever the app

@@ -23,6 +23,13 @@ vi.mock("../events", () => ({
   onCatalogChanged: vi.fn(),
 }));
 
+// jsdom は CSS を読まないので、行の高さ(CSS の --row-height)は差し替え可能な値にする。
+// null のときは呼び出し側の既定値(226)をそのまま返す。
+const cssState = vi.hoisted(() => ({ rowHeight: null as number | null }));
+vi.mock("../lib/cssTokens", () => ({
+  readLengthToken: (_name: string, fallback: number) => cssState.rowHeight ?? fallback,
+}));
+
 type VideoRowProps = ComponentProps<typeof RealVideoRow>;
 
 // 偽の行が描画・マウントのたびに書き込む記録。vi.mock の工場関数から参照するため
@@ -236,6 +243,8 @@ function useFakeClock() {
 }
 
 interface GridProps {
+  theme?: string;
+  totalCount?: number | null;
   refreshKey: number;
   thumbnailVersions: Readonly<Record<string, number>>;
   search: string;
@@ -1334,4 +1343,55 @@ test("パスを解決できない動画では「エクスプローラーで開�
 
   expect(menuLabels()).toEqual(["タグを設定...", "パスをコピー", "登録から削除"]);
   expect(revealItem()).toBeNull();
+});
+
+// ---- テーマの切り替え ----
+
+test("テーマを切り替えても行は作り直さず、選択も保たれる", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue(videos("a", "b", "c"));
+  const { update } = await renderGrid({ theme: "console" });
+  fireEvent.click(row("b"));
+  const mountsBefore = new Map(rowLog.mounts);
+
+  await update({ theme: "cinema" });
+
+  expect(selectedIds()).toEqual(["b"]);
+  expect(rowLog.mounts).toEqual(mountsBefore);
+});
+
+test("テーマの切り替えで行の高さが変わっても、先頭に見えていた行が先頭のまま残る", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue(manyVideos(100));
+  // 実アプリでは <html> の属性とグリッドの theme は常に一致している。
+  document.documentElement.dataset.theme = "console";
+  try {
+    const { update } = await renderGrid({ theme: "console" });
+    await userScrollTo(20 * ROW_HEIGHT);
+    expect(list().scrollTop).toBe(20 * ROW_HEIGHT);
+
+    // フックが属性を先に付け、その後に theme の props が変わる順を再現する。
+    document.documentElement.dataset.theme = "fluent";
+    cssState.rowHeight = 200;
+    await update({ theme: "fluent" });
+
+    expect(list().scrollTop).toBe(20 * 200);
+    expect((list().firstElementChild as HTMLElement).style.height).toBe(`${100 * 200}px`);
+  } finally {
+    cssState.rowHeight = null;
+    delete document.documentElement.dataset.theme;
+  }
+});
+
+test("一覧は件数のヘッダー(絞り込み後 / 全体)を、どのテーマでも持つ", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue(videos("a", "b", "c"));
+  await renderGrid({ totalCount: 3580 });
+
+  const header = screen.getByTestId("list-header");
+  expect(header).toHaveTextContent("LIBRARY3件/ 全 3,580 件");
+  expect(screen.getByTestId("list-layer")).toContainElement(list());
+});
+
+test("絞り込み中は、ヘッダーが全体の件数も併記する(テーマで出し分けない)", async () => {
+  vi.mocked(api.listVideos).mockResolvedValue(videos("a"));
+  await renderGrid({ totalCount: 10 });
+  expect(screen.getByTestId("list-header")).toHaveTextContent("LIBRARY1件/ 全 10 件");
 });

@@ -1,10 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="console" data-mode="system">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
+    <!-- React の描画より前に、前回の見た目を <html> へ反映する(起動時のちらつき防止)。
+         正は SQLite の設定で、ここで読むのは localStorage の写し。写しが無い・不正・
+         読めない場合は、上の属性(既定の見た目)のまま始め、起動後に DB の値で補正する。
+         値の一覧とキーは src/lib/appearance.ts と同じでなければならない。 -->
+    <script>
+      (function () {
+        try {
+          var themes = ["console", "fluent", "cinema"];
+          var modes = ["system", "light", "dark"];
+          var theme = window.localStorage.getItem("graybrowser.theme");
+          var mode = window.localStorage.getItem("graybrowser.appearanceMode");
+          var root = document.documentElement;
+          if (themes.indexOf(theme) !== -1) root.setAttribute("data-theme", theme);
+          if (modes.indexOf(mode) !== -1) root.setAttribute("data-mode", mode);
+        } catch (e) {
+          // localStorage が使えない環境では既定の見た目のまま。
+        }
+      })();
+    </script>
   </head>
 
   <body>

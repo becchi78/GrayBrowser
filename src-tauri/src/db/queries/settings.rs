@@ -220,6 +220,37 @@ pub fn delete_last_view_state(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+const THEME_KEY: &str = "theme";
+const APPEARANCE_MODE_KEY: &str = "appearance_mode";
+
+/// Unset and unrecognized values both read as the default theme: a corrupt or
+/// hand-edited value must never leave the window without a usable look.
+pub fn get_theme(conn: &Connection) -> anyhow::Result<gb_core::appearance::Theme> {
+    Ok(get_setting(conn, THEME_KEY)?
+        .and_then(|raw| gb_core::appearance::Theme::parse(&raw))
+        .unwrap_or_default())
+}
+
+pub fn set_theme(conn: &Connection, theme: gb_core::appearance::Theme) -> anyhow::Result<()> {
+    set_setting(conn, THEME_KEY, theme.as_str())?;
+    Ok(())
+}
+
+/// Same fallback rule as `get_theme`.
+pub fn get_appearance_mode(conn: &Connection) -> anyhow::Result<gb_core::appearance::Mode> {
+    Ok(get_setting(conn, APPEARANCE_MODE_KEY)?
+        .and_then(|raw| gb_core::appearance::Mode::parse(&raw))
+        .unwrap_or_default())
+}
+
+pub fn set_appearance_mode(
+    conn: &Connection,
+    mode: gb_core::appearance::Mode,
+) -> anyhow::Result<()> {
+    set_setting(conn, APPEARANCE_MODE_KEY, mode.as_str())?;
+    Ok(())
+}
+
 const REMEMBER_WINDOW_SIZE_ENABLED_KEY: &str = "remember_window_size_enabled";
 
 const WINDOW_STATE_KEY: &str = "window_state";
@@ -350,5 +381,42 @@ mod boolean_flag_tests {
         )
         .unwrap();
         assert!(get_restore_view_state_enabled(&conn).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+    use crate::db::test_support::init_temp_db;
+    use gb_core::appearance::{Mode, Theme};
+
+    #[test]
+    fn theme_and_mode_default_to_console_and_system() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Console);
+        assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::System);
+    }
+
+    #[test]
+    fn theme_and_mode_round_trip_independently() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        set_theme(&conn, Theme::Cinema).unwrap();
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Cinema);
+        assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::System);
+        set_appearance_mode(&conn, Mode::Dark).unwrap();
+        assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::Dark);
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Cinema);
+    }
+
+    #[test]
+    fn unrecognized_stored_values_read_as_the_defaults() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        set_setting(&conn, THEME_KEY, "neon").unwrap();
+        set_setting(&conn, APPEARANCE_MODE_KEY, "").unwrap();
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Console);
+        assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::System);
     }
 }
