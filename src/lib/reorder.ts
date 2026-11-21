@@ -3,7 +3,7 @@
 // can share them (tag objects, string paths). Split out into this JSX非依存
 // file so they're unit-testable without mounting the dialog. Every function
 // returns a new array (never mutates `ids`), matching how React state setters
-// are used at each call site (`setDraftTags((tags) => moveUp(tags, index))`).
+// are used at each call site (`const next = moveUp(items, index)`).
 
 /**
  * Swaps the element at `index` with the one before it. A no-op (returns
