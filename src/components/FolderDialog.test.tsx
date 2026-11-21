@@ -97,6 +97,14 @@ test("開くと一覧を取得して表示し、チェックを外したフォ�
   expect(checkbox("C").checked).toBe(true);
 });
 
+test("登録解除ボタンには、ゴミ箱アイコンが出る", async () => {
+  await renderOpen();
+
+  const btn = inRow("B", "folder-row-delete-btn");
+  expect(btn.querySelector("svg")).not.toBeNull();
+  expect(btn).not.toHaveTextContent("✕");
+});
+
 test("フォルダが無いときは、空の案内を出す", async () => {
   vi.mocked(api.listWatchFolders).mockResolvedValue([]);
   await renderOpen({ expectRows: 0 });

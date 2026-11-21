@@ -352,6 +352,15 @@ button:not(
   font-size: var(--control-compact-font-size);
 }
 
+/* 削除ボタンのゴミ箱。文字と同じ font-size 連動の大きさにして、ボタンの高さを
+   「✕」のときから変えない。色は文字色ではなく危険色に固定する。 */
+.delete-btn-icon {
+  display: block;
+  width: 1em;
+  height: 1em;
+  color: var(--danger);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: var(--opacity-disabled);
