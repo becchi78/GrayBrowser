@@ -102,6 +102,7 @@ pub fn run() {
             commands::tag_cmds::get_tag_layout,
             commands::tag_cmds::move_tag_layout_item,
             commands::tag_cmds::create_tag_group,
+            commands::tag_cmds::rename_tag,
             commands::tag_cmds::rename_tag_group,
             commands::tag_cmds::delete_tag_group,
             commands::tag_cmds::get_collapsed_tag_groups,

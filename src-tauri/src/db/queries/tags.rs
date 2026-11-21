@@ -20,6 +20,9 @@ pub enum TagMutationError {
     EmptyGroupName,
     DuplicateGroupName(String),
     GroupNotFound { group_id: i64 },
+    EmptyTagName,
+    DuplicateTagName(String),
+    TagNotFound { tag_id: i64 },
     Sqlite(rusqlite::Error),
 }
 
@@ -37,6 +40,13 @@ impl std::fmt::Display for TagMutationError {
             TagMutationError::GroupNotFound { group_id } => {
                 write!(f, "タググループ {group_id} が見つかりません")
             }
+            TagMutationError::EmptyTagName => write!(f, "タグ名を入力してください"),
+            TagMutationError::DuplicateTagName(name) => {
+                write!(f, "同じ名前のタグが既にあります: {name}")
+            }
+            TagMutationError::TagNotFound { tag_id } => {
+                write!(f, "タグ {tag_id} が見つかりません")
+            }
             TagMutationError::Sqlite(e) => write!(f, "{e}"),
         }
     }
@@ -50,7 +60,10 @@ impl std::error::Error for TagMutationError {
             TagMutationError::VideoNotFound { .. }
             | TagMutationError::EmptyGroupName
             | TagMutationError::DuplicateGroupName(_)
-            | TagMutationError::GroupNotFound { .. } => None,
+            | TagMutationError::GroupNotFound { .. }
+            | TagMutationError::EmptyTagName
+            | TagMutationError::DuplicateTagName(_)
+            | TagMutationError::TagNotFound { .. } => None,
         }
     }
 }
@@ -569,6 +582,52 @@ fn group_id_by_name(tx: &Transaction, name: &str) -> rusqlite::Result<Option<i64
         |r| r.get(0),
     )
     .optional()
+}
+
+/// Renames a tag. The name is normalized like a newly created tag's, so the
+/// same text can never yield two spellings. Renaming to its current name is a
+/// no-op; a name another tag already uses is an error (comparison is
+/// case-sensitive, matching the `UNIQUE` constraint, so `Action` and `action`
+/// coexist). Only `tags.name` changes: `video_tags` refers to the id, and the
+/// order and group are left as they are, so the layout is read back as is
+/// instead of being renumbered and rewritten.
+pub fn rename_tag(
+    conn: &mut Connection,
+    tag_id: i64,
+    raw_name: &str,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    let name =
+        gb_core::tags::normalize_tag_name(raw_name).map_err(|_| TagMutationError::EmptyTagName)?;
+    let tx = conn.transaction()?;
+    let current: String = tx
+        .query_row(
+            "SELECT name FROM tags WHERE id = ?1",
+            params![tag_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(TagMutationError::TagNotFound { tag_id })?;
+    if current != name {
+        let taken = tx
+            .query_row(
+                "SELECT 1 FROM tags WHERE name = ?1 AND id <> ?2",
+                params![name, tag_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if taken {
+            return Err(TagMutationError::DuplicateTagName(name));
+        }
+        tx.execute(
+            "UPDATE tags SET name = ?1 WHERE id = ?2",
+            params![name, tag_id],
+        )?;
+    }
+    let layout = load_layout(&tx)?;
+    let rows = with_counts(&tx, &layout)?;
+    tx.commit()?;
+    Ok(rows)
 }
 
 /// Deletes a tag from the `tags` master table and every `video_tags` row

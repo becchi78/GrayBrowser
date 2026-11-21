@@ -152,6 +152,23 @@ pub fn delete_tag(app: tauri::AppHandle, db: State<Db>, tag_id: i64) -> Result<(
     Ok(())
 }
 
+/// Renames a tag and returns the resulting layout. Notifies a catalog change
+/// because the video list shows each video's tags.
+#[tauri::command]
+pub fn rename_tag(
+    app: tauri::AppHandle,
+    db: State<Db>,
+    id: i64,
+    name: String,
+) -> Result<Vec<TagLayoutItemDto>, String> {
+    let rows = {
+        let mut conn = db.writer.lock().unwrap();
+        queries::rename_tag(&mut conn, id, &name).map_err(|e| e.to_string())?
+    };
+    TauriCatalogNotifier::new(app).notify_changed();
+    Ok(layout_dto(rows))
+}
+
 /// A top-level entry of the left-pane tag layout.
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]

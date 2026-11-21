@@ -5,6 +5,7 @@ import {
   deleteTagGroup,
   getTagLayout,
   moveTagLayoutItem,
+  renameTag,
   renameTagGroup,
 } from "../api";
 import { buildTagDeleteMessage } from "../lib/tagDeleteMessage";
@@ -50,7 +51,8 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
   const [createValue, setCreateValue] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  // 名前の編集中の行は、グループとタグを通して同時に1つだけ。作成の入力行とも排他。
+  const [editing, setEditing] = useState<{ kind: "tag" | "group"; id: number } | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -86,7 +88,7 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
   }
 
   function startCreate() {
-    setEditingGroupId(null);
+    setEditing(null);
     setEditError(null);
     setCreateValue("");
     setCreateError(null);
@@ -107,21 +109,25 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
     }
   }
 
-  function startEdit(id: number, name: string) {
+  function startEdit(kind: "tag" | "group", id: number, name: string) {
     setCreating(false);
     setCreateError(null);
-    setEditingGroupId(id);
+    setEditing({ kind, id });
     setEditingValue(name);
     setEditError(null);
   }
 
   async function handleSaveEdit() {
-    if (editingGroupId === null) return;
+    if (editing === null) return;
     setEditError(null);
     setSaving(true);
     try {
-      setLayout(await renameTagGroup(editingGroupId, editingValue));
-      setEditingGroupId(null);
+      setLayout(
+        editing.kind === "tag"
+          ? await renameTag(editing.id, editingValue)
+          : await renameTagGroup(editing.id, editingValue),
+      );
+      setEditing(null);
       onChanged();
     } catch (e) {
       setEditError(errorText(e));
@@ -137,7 +143,7 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
     setError(null);
     try {
       setLayout(await deleteTagGroup(id));
-      if (editingGroupId === id) setEditingGroupId(null);
+      if (editing?.kind === "group" && editing.id === id) setEditing(null);
       onChanged();
     } catch (e) {
       setError(errorText(e));
@@ -154,6 +160,7 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
     setError(null);
     try {
       await deleteTag(target.id);
+      if (editing?.kind === "tag" && editing.id === target.id) setEditing(null);
       // 削除は済んでいる。後続の取り直しが失敗しても、親には反映させる。
       onTagDeleted(target.id);
       onChanged();
@@ -232,8 +239,15 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
                     disableUp={index === 0}
                     disableDown={index === lastIndex}
                     busy={busy}
+                    editing={editing?.kind === "tag" && editing.id === item.id}
+                    editingValue={editingValue}
+                    editError={editError}
                     onMove={(direction) => handleMove("tag", item.id, direction)}
+                    onStartEdit={() => startEdit("tag", item.id, item.name)}
                     onDelete={() => setDeleteTarget(item)}
+                    onEditingValueChange={setEditingValue}
+                    onSaveEdit={handleSaveEdit}
+                    onCancelEdit={() => setEditing(null)}
                   />
                 );
               }
@@ -245,15 +259,15 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
                       disableUp={index === 0}
                       disableDown={index === lastIndex}
                       busy={busy}
-                      editing={editingGroupId === item.id}
+                      editing={editing?.kind === "group" && editing.id === item.id}
                       editingValue={editingValue}
                       editError={editError}
                       onMove={(direction) => handleMove("group", item.id, direction)}
-                      onStartEdit={() => startEdit(item.id, item.name)}
+                      onStartEdit={() => startEdit("group", item.id, item.name)}
                       onDelete={() => setGroupDeleteTarget(item.id)}
                       onEditingValueChange={setEditingValue}
                       onSaveEdit={handleSaveEdit}
-                      onCancelEdit={() => setEditingGroupId(null)}
+                      onCancelEdit={() => setEditing(null)}
                     />
                     {/* グループの中のタグの ↑↓ は、端でもグループの外へ出られるので常に有効。 */}
                     {item.tags.map((tag) => (
@@ -264,8 +278,15 @@ function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, 
                         disableUp={false}
                         disableDown={false}
                         busy={busy}
+                        editing={editing?.kind === "tag" && editing.id === tag.id}
+                        editingValue={editingValue}
+                        editError={editError}
                         onMove={(direction) => handleMove("tag", tag.id, direction)}
+                        onStartEdit={() => startEdit("tag", tag.id, tag.name)}
                         onDelete={() => setDeleteTarget(tag)}
+                        onEditingValueChange={setEditingValue}
+                        onSaveEdit={handleSaveEdit}
+                        onCancelEdit={() => setEditing(null)}
                       />
                     ))}
                 </Fragment>
