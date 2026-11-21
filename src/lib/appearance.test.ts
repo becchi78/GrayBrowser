@@ -35,14 +35,15 @@ const throwingStorage: StorageLike = {
   },
 };
 
-test("既定は console / system", () => {
-  assert.deepEqual(DEFAULT_APPEARANCE, { theme: "console", mode: "system" });
+test("既定は graphite / system", () => {
+  assert.deepEqual(DEFAULT_APPEARANCE, { theme: "graphite", mode: "system" });
 });
 
 test("parseTheme / parseMode は既知の値だけを受け付ける", () => {
   assert.equal(parseTheme("fluent"), "fluent");
   assert.equal(parseTheme("cinema"), "cinema");
   assert.equal(parseTheme("console"), "console");
+  assert.equal(parseTheme("graphite"), "graphite");
   assert.equal(parseMode("system"), "system");
   assert.equal(parseMode("light"), "light");
   assert.equal(parseMode("dark"), "dark");
@@ -77,7 +78,7 @@ test("書いた値を読み戻せる", () => {
 
 test("不正な値は項目ごとに既定値へ倒す", () => {
   const storage = memoryStorage({ [THEME_STORAGE_KEY]: "neon", [MODE_STORAGE_KEY]: "dark" });
-  assert.deepEqual(readStoredAppearance(storage), { theme: "console", mode: "dark" });
+  assert.deepEqual(readStoredAppearance(storage), { theme: "graphite", mode: "dark" });
   const storage2 = memoryStorage({ [THEME_STORAGE_KEY]: "cinema", [MODE_STORAGE_KEY]: "" });
   assert.deepEqual(readStoredAppearance(storage2), { theme: "cinema", mode: "system" });
 });

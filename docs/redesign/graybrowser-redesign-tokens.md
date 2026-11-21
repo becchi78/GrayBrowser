@@ -221,6 +221,79 @@ UI はほぼ黒に沈め、サムネイルだけを浮かび上がらせる。�
 }
 ```
 
+## 案D · Graphite（モノクローム）
+
+名前どおりグレーだけで組む案。色相を使わず、4 段の明度差と細い線で階層を作る。アクセントもダークでは白、ライトでは黒。色が付くのはサムネイルと意味色（警告・エラー）だけ。
+
+- 長所: サムネイル以外に色が無く、最も目が疲れにくい。アプリ名と見た目が一致する。
+- 短所: 選択・フォーカスを明度だけで示すので、ほかの案より選択状態に気付きにくい（内側の線で補っている）。
+- DOM構造の変更:
+  - タグバーを「絞り込み中バー」に置き換える（全テーマ共通）。
+  - 行を「左: ファイル名＋サムネイル列 / 右: 情報パネル（行の上端から）」の 2 カラムにする（案C と同じ構造。チェックボックスと件数ヘッダーは無し）。
+
+※実装では、チェックボックス・件数ヘッダー・左ペインの件数ピルは全テーマ共通で表示する。絞り込み中バーの件数表示も採用していない。
+
+```css
+/* 案D · Graphite（モノクローム） */
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", sans-serif;
+  font-size: 13px;
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 13px;
+  --font-lg: 15px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+  --page-bg: #D8D8D8;
+  --surface: #E0E0E0;
+  --surface-2: #E8E8E8;
+  --text: #1A1A1A;
+  --text-muted: #474747;
+  --text-subtle: #545454;
+  --row-border: #C6C6C6;
+  --border-strong: #A3A3A3;
+  --accent: #222222;
+  --accent-fg: #F0F0F0;
+  --row-selected-bg: #C9C9C9;
+  --hover-bg: #D3D3D3;
+  --chip-bg: #CECECE;
+  --chip-text: #262626;
+  --star: #3A3A3A;
+  --danger: #A82A2A;
+  --warn: #7A4E00;
+  --success: #2C6B3C;
+  --scrollbar-thumb: #9A9A9A;
+  --scrim: rgba(0,0,0,0.30);
+  --focus-ring: 0 0 0 2px var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #161616;
+    --surface: #1C1C1C;
+    --surface-2: #242424;
+    --text: #EDEDED;
+    --text-muted: #A8A8A8;
+    --text-subtle: #999999;
+    --row-border: #2C2C2C;
+    --border-strong: #404040;
+    --accent: #E6E6E6;
+    --accent-fg: #161616;
+    --row-selected-bg: #2E2E2E;
+    --hover-bg: #222222;
+    --chip-bg: #2C2C2C;
+    --chip-text: #D6D6D6;
+    --star: #D9D9D9;
+    --danger: #F08A8A;
+    --warn: #E0B35A;
+    --success: #7CCB8E;
+    --scrollbar-thumb: #4A4A4A;
+    --scrim: rgba(0,0,0,0.60);
+  }
+}
+```
+
 ## 共通で追加する CSS（どの案でも必要）
 
 ```css

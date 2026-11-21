@@ -1,11 +1,12 @@
 {
   "$comment": "defaultTheme は未設定・未知の data-theme での既定で、そのテーマのファイルだけが素の :root を持つ。テーマの一覧(メニューの並び順)と、全テーマが themes/<name>.css で定義しなければならないトークン。font-size と line-height はトークンではないプロパティだが、全テーマが自分のセレクタに持つので requiredProperties で別に検査する。_base.css が導出するトークンは対象外。",
   "themes": [
+    "graphite",
     "console",
     "fluent",
     "cinema"
   ],
-  "defaultTheme": "console",
+  "defaultTheme": "graphite",
   "requiredProperties": [
     "font-size",
     "line-height"
@@ -65,6 +66,16 @@
     "--info-bg",
     "--info-idle-color",
     "--info-idle-dt-opacity",
-    "--list-header-letter-spacing"
+    "--list-header-letter-spacing",
+    "--info-w",
+    "--thumb-gap",
+    "--thumb-radius",
+    "--nav-w",
+    "--nav-item-h",
+    "--shadow-control",
+    "--shadow-popover",
+    "--shadow-popover-up",
+    "--shadow-dialog",
+    "--font-mono"
   ]
 }

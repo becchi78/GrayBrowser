@@ -52,7 +52,7 @@ test("必須トークンの一覧に重複が無く、_base が導出するト�
   assert.equal(new Set(tokens).size, tokens.length);
   const base = stripComments(read("src/themes/_base.css"));
   const derived = new Set([...base.matchAll(/^\s*(--[\w-]+):/gm)].map((m) => m[1]));
-  for (const t of ["--border-muted", "--thumbnail-bg", "--link", "--info-w", "--thumb-w"]) {
+  for (const t of ["--border-muted", "--thumbnail-bg", "--link", "--thumb-w", "--video-list-min-width"]) {
     assert.ok(derived.has(t), `${t} は _base の導出`);
     assert.ok(!tokens.includes(t), `${t} は必須に入れない`);
   }
@@ -61,11 +61,13 @@ test("必須トークンの一覧に重複が無く、_base が導出するト�
 test("素の :root は既定テーマのファイルだけが持てる(他のテーマに書くと全テーマに効くので検出する)", () => {
   assert.equal(manifest.defaultTheme, DEFAULT_THEME);
   assert.ok(manifest.themes.includes(manifest.defaultTheme));
-  // 既定テーマ(console)の `:root, :root[data-theme="console"]` は許可される。
-  const consoleCss = readThemeCss("console");
-  assert.match(consoleCss, /:root,\s*:root\[data-theme="console"\]/);
-  assert.deepEqual(selectorOverrides(consoleCss, "console", manifest), []);
-  assert.deepEqual(missingRequired(consoleCss, "console", manifest), []);
+  // 既定テーマ(graphite)の `:root, :root[data-theme="graphite"]` は許可される。
+  const defaultCss = readThemeCss(manifest.defaultTheme);
+  assert.match(defaultCss, /:root,\s*:root\[data-theme="graphite"\]/);
+  assert.deepEqual(selectorOverrides(defaultCss, manifest.defaultTheme, manifest), []);
+  assert.deepEqual(missingRequired(defaultCss, manifest.defaultTheme, manifest), []);
+  // 既定でなくなった console は、素の :root を持たない(持つと全テーマに効く)。
+  assert.doesNotMatch(stripComments(readThemeCss("console")), /^\s*:root\s*[,{]/m);
   // 他のテーマのファイルに素の :root を足すと、セレクタ上書きとして検出され、
   // その中のトークンは、そのテーマの定義には数えない。
   for (const theme of manifest.themes.filter((t) => t !== manifest.defaultTheme)) {
@@ -161,11 +163,11 @@ test("外観(mode)の一覧は index.html と appearance.ts で一致する", ()
 
 test("どこか1か所でも食い違えば検出される", () => {
   const base = realSources();
-  const added = [...base.manifest, "graphite"];
+  const added = [...base.manifest, "neon"];
   assert.ok(themeNameMismatches({ ...base, manifest: added }).length > 0);
   assert.equal(themeNameMismatches({ ...base, html: ["console", "fluent"] }).length, 1);
-  assert.equal(themeNameMismatches({ ...base, rust: [...base.rust, "graphite"] }).length, 1);
-  assert.equal(themeNameMismatches({ ...base, ts: ["fluent", "console", "cinema"] }).length, 1);
+  assert.equal(themeNameMismatches({ ...base, rust: [...base.rust, "neon"] }).length, 1);
+  assert.equal(themeNameMismatches({ ...base, ts: ["fluent", "graphite", "console", "cinema"] }).length, 1);
   assert.equal(themeNameMismatches({ ...base, labels: ["console", "fluent"] }).length, 1);
   assert.equal(themeNameMismatches({ ...base, files: ["console", "fluent"] }).length, 1);
   assert.equal(themeNameMismatches({ ...base, menuIds: null }).length, 1);

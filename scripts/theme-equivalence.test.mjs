@@ -50,6 +50,16 @@ const NEW_TOKENS = new Set([
   "--info-idle-color",
   "--info-idle-dt-opacity",
   "--list-header-letter-spacing",
+  "--info-w",
+  "--thumb-gap",
+  "--thumb-radius",
+  "--nav-w",
+  "--nav-item-h",
+  "--shadow-control",
+  "--shadow-popover",
+  "--shadow-popover-up",
+  "--shadow-dialog",
+  "--font-mono",
 ]);
 
 /** 宣言が無いときの既定(CSS の初期値)。 */
@@ -170,6 +180,12 @@ const SCENARIOS = [
   ["row-info-idle", [".video-row-info", IDLE_INFO], ["color"]],
   ["row-label", [".video-row-properties dt"], ["opacity"]],
   ["row-label-idle", [".video-row-properties dt", IDLE_DT], ["opacity"]],
+  ["thumbnails-row", [".video-row-thumbnails"], ["gap"]],
+  ["thumbnail-image", [".video-row-thumbnail-wrap img"], ["border-radius"]],
+  ["thumbnail-placeholder", [".thumbnail-placeholder"], ["border-radius"]],
+  ["nav-folder-item", [".folder-sidebar-item"], ["height"]],
+  ["nav-rating-item", [".rating-bar-item"], ["height"]],
+  ["info-column", [".video-row-info"], ["width", "flex"]],
 ];
 
 // 旧い CSS(テーマ別セレクタ)の最終的な宣言。共通の既定は同じ値を、テーマごとに書く。
@@ -190,6 +206,16 @@ const infoPlain = {
   "border-radius": NONE,
   "background-color": "transparent",
   color: "currentcolor",
+};
+
+/** 3テーマで共通だった値(サムネイルの間隔・角丸、左ペインの項目の高さ、情報パネルの幅)。 */
+const sharedLegacy = {
+  "thumbnails-row": { gap: "0.4em" },
+  "thumbnail-image": { "border-radius": all4("var(--radius-sm)") },
+  "thumbnail-placeholder": { "border-radius": all4("var(--radius-sm)") },
+  "nav-folder-item": { height: "auto" },
+  "nav-rating-item": { height: "auto" },
+  "info-column": { width: "300px", flex: "0 0 300px" },
 };
 
 export const EXPECTED = {
@@ -273,6 +299,22 @@ export const EXPECTED = {
   },
 };
 
+for (const theme of Object.keys(EXPECTED)) Object.assign(EXPECTED[theme], sharedLegacy);
+
+/** 影・等幅フォント・左ペインの初期幅は、旧い実装では全テーマ共通の固定値だった。 */
+const LEGACY_FIXED_TOKENS = {
+  "--shadow-control": "0 1px 2px rgba(0, 0, 0, 0.12)",
+  "--shadow-popover-up": "0 -4px 12px rgba(0, 0, 0, 0.2)",
+  "--shadow-popover": "0 4px 12px rgba(0, 0, 0, 0.2)",
+  "--shadow-dialog": "0 8px 24px rgba(0, 0, 0, 0.3)",
+  "--font-mono": 'Consolas, "Cascadia Mono", monospace',
+  "--nav-w": "200px",
+  "--info-w": "300px",
+  "--thumb-gap": "0.4em",
+  "--thumb-radius": "var(--radius-sm)",
+  "--nav-item-h": "auto",
+};
+
 const manifest = readManifest();
 const LEGACY_THEMES = Object.keys(EXPECTED);
 const appCss = readText(join(SRC_DIR, "App.css"));
@@ -322,4 +364,22 @@ test("部品の CSS を変えても、同値の検査は落ちる(トークン�
   assert.notEqual(broken, appCss);
   const actual = resolveAll(broken, readAllThemesCss());
   assert.notDeepEqual(actual.fluent.row, EXPECTED.fluent.row);
+});
+
+test("旧3テーマの影・等幅フォント・左ペインの初期幅などは、固定値だった時と同じ", () => {
+  const themeRules = parseRules(readAllThemesCss());
+  for (const theme of LEGACY_THEMES) {
+    const tokens = tokensFor(themeRules, theme);
+    for (const [name, value] of Object.entries(LEGACY_FIXED_TOKENS)) {
+      assert.equal(tokens.get(name), value, `${theme} ${name}`);
+    }
+  }
+});
+
+test("部品の CSS は、影・等幅フォントを固定値でなくトークンから読む", () => {
+  assert.doesNotMatch(appCss, /--shadow-[\w-]+:/);
+  assert.doesNotMatch(appCss, /--font-mono:/);
+  for (const name of ["--shadow-popover", "--shadow-dialog", "--font-mono", "--thumb-gap"]) {
+    assert.ok(appCss.includes(`var(${name})`), name);
+  }
 });

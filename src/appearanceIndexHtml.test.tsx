@@ -25,6 +25,6 @@ test("同期スクリプトは appearance.ts と同じ localStorage のキーを
 });
 
 test("<html> の既定の属性は既定のテーマ・外観", () => {
-  expect(html).toMatch(/<html[^>]*data-theme="console"/);
+  expect(html).toMatch(/<html[^>]*data-theme="graphite"/);
   expect(html).toMatch(/<html[^>]*data-mode="system"/);
 });

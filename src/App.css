@@ -48,17 +48,6 @@
   --opacity-disabled: 0.6;
   --opacity-muted: 0.75;
 
-  /* 影はボタン、画面下端から上へ開く面、ふつうに下へ開く面(通知・メニュー)、
-     最前面のダイアログ・コンテキストメニューで、浮き上がりの大きさを変える。 */
-  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.12);
-  --shadow-popover-up: 0 -4px 12px rgba(0, 0, 0, 0.2);
-  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.2);
-  --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.3);
-
-  /* 等幅はパスやログなど桁を揃えたい箇所で共通に使う。Consolas は Windows に
-     標準で入っており、日本語は後続のフォールバックに任せる。 */
-  --font-mono: Consolas, "Cascadia Mono", monospace;
-
   /* キーボード操作の現在位置。アクセント色に合わせ、全ての操作要素で同じ見た目に
      する。スクロール領域の端にある項目は、外側に出ると切れるので -2px で内側に描く。 */
   --focus-ring: 2px solid var(--accent);
@@ -662,6 +651,9 @@ button.search-box-clear {
 .rating-bar-item {
   position: relative;
   padding-right: 5em;
+  /* auto なら padding と行間で決まる高さのまま。長さのテーマは、ボタンの内容が
+     縦中央に置かれるので、padding を触らずに項目の高さだけを揃えられる。 */
+  height: var(--nav-item-h);
 }
 
 /* ピルを持たない行(タググループの見出し・「すべて解除」)は、右の余白を通常に戻す。
@@ -984,7 +976,7 @@ button.search-box-clear {
 .video-row-thumbnails {
   display: flex;
   align-items: center;
-  gap: 0.4em;
+  gap: var(--thumb-gap);
   width: 100%;
   /* ファイル名の行の残り全部。サムネイルは縦中央に置く。 */
   flex: 1;
@@ -1031,7 +1023,7 @@ button.search-box-clear {
      mismatch -- `cover` would silently crop in that case, `contain` never
      does (worst case: a hairline letterbox instead of a crop). */
   object-fit: contain;
-  border-radius: var(--radius-sm);
+  border-radius: var(--thumb-radius);
   background-color: var(--thumbnail-bg);
 }
 
@@ -1041,7 +1033,7 @@ button.search-box-clear {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--thumb-radius);
   background-color: var(--thumbnail-bg);
   color: var(--thumbnail-text);
   font-size: var(--font-sm);

@@ -14,7 +14,7 @@ vi.mock("../api", () => ({
   quitApp: vi.fn(),
 }));
 
-const DEFAULT_APPEARANCE: Appearance = { theme: "console", mode: "system" };
+const DEFAULT_APPEARANCE: Appearance = { theme: "graphite", mode: "system" };
 
 interface Handlers {
   openDialog: ReturnType<typeof vi.fn<(kind: DialogKind) => void>>;
@@ -55,7 +55,7 @@ function labelsOf(el: HTMLElement): string[] {
 const SUBMENUS: Record<string, string[]> = {
   file: ["フォルダ管理...", ".wbインポート...", "データベースをバックアップ", "終了"],
   tag: ["タグの編集..."],
-  style: ["Navy Console", "Fluent Mica", "Dark Cinema", "System", "Light", "Dark"],
+  style: ["Graphite", "Navy Console", "Fluent Mica", "Dark Cinema", "System", "Light", "Dark"],
   settings: ["設定..."],
   help: ["動作ログ...", "更新の確認...", "バージョン情報"],
 };
@@ -142,14 +142,14 @@ test("サブメニューは role=menu で、グループ名の aria-label を持
   expect(sub.parentElement).toContainElement(group("file"));
 });
 
-test("スタイルは、テーマ3種と外観3種の間に区切りがある", async () => {
+test("スタイルは、テーマ4種と外観3種の間に区切りがある", async () => {
   renderMenu();
   await openGroup("style");
   const children = Array.from(submenu("style").children).map(
     (el) => el.getAttribute("role") ?? "",
   );
   expect(children).toEqual([
-    ...Array<string>(3).fill("menuitemradio"),
+    ...Array<string>(4).fill("menuitemradio"),
     "separator",
     ...Array<string>(3).fill("menuitemradio"),
   ]);
@@ -271,7 +271,7 @@ test("現在のテーマと外観だけが aria-checked になる", async () => 
   await openGroup("style");
 
   const radios = within(submenu("style")).getAllByRole("menuitemradio");
-  expect(radios).toHaveLength(6);
+  expect(radios).toHaveLength(7);
   expect(
     radios.filter((el) => el.getAttribute("aria-checked") === "true").map((el) => el.textContent),
   ).toEqual(["Dark Cinema", "Light"]);
@@ -374,7 +374,7 @@ test("スタイルのサブメニューでは、区切りを飛ばして全ラ�
   await openMenu();
   await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowRight}");
 
-  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
 
   expect(screen.getByRole("menuitemradio", { name: "System" })).toHaveFocus();
 });

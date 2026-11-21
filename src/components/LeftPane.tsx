@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSidebarSectionsCollapsed, saveSidebarSectionsCollapsed } from "../api";
 import { readLengthToken } from "../lib/cssTokens";
 import {
+  clampPaneWidth,
   effectiveMaxWidth,
-  MIN_WIDTH,
+  NAV_WIDTH_FALLBACK_PX,
   VIDEO_LIST_MIN_WIDTH_PX,
 } from "../lib/sidebarResize";
 import {
@@ -19,10 +20,13 @@ import { FolderIcon, StarIcon, TagIcon } from "./SidebarIcons";
 import { TagBar } from "./TagBar";
 
 // User-resizable pane width (200px〜500px). No persistence across restarts --
-// state resets to DEFAULT_WIDTH on every mount. MIN_WIDTH/MAX_WIDTH and the
-// effectiveMaxWidth clamp live in src/lib/sidebarResize.ts (JSX非依存、
-// 単体テスト可能にするため切り出し済み).
-const DEFAULT_WIDTH = 200;
+// state resets to the theme's initial width (CSS `--nav-w`) on every mount.
+// MIN_WIDTH/MAX_WIDTH and the effectiveMaxWidth clamp live in
+// src/lib/sidebarResize.ts (JSX非依存、単体テスト可能にするため切り出し済み).
+//
+// 初期幅はマウント時に一度だけ読む。ユーザーがドラッグで決めた幅を、後からの
+// テーマ切り替えで上書きしないため(テーマが変えるのは「未操作のときの幅」だけ)。
+const readInitialWidth = () => clampPaneWidth(readLengthToken("--nav-w", NAV_WIDTH_FALLBACK_PX));
 
 // 一覧の下限幅はテーマごとに違う(CSS の --video-list-min-width)ので、
 // CSS から読む。CSS を読めない環境でだけ定数に倒す。読み取りは計測用の要素を
@@ -62,7 +66,7 @@ export function LeftPane({
   tagBarRefreshKey,
   counts,
 }: Props) {
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [width, setWidth] = useState(readInitialWidth);
   const [collapsed, setCollapsed] = useState(DEFAULT_SIDEBAR_SECTIONS_COLLAPSED);
   // Mutable drag-session state, not React state -- re-rendering on every
   // mousemove pixel would be wasteful; `width` itself is the one value that
@@ -122,7 +126,7 @@ export function LeftPane({
         if (!drag) return;
         const proposed = drag.startWidth + (moveEvent.clientX - drag.startX);
         const max = effectiveMaxWidth(window.innerWidth, minWidthRef.current);
-        setWidth(Math.min(max, Math.max(MIN_WIDTH, proposed)));
+        setWidth(Math.min(max, clampPaneWidth(proposed)));
       }
 
       function handleMouseUp() {

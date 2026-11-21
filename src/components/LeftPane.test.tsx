@@ -14,9 +14,11 @@ vi.mock("./TagBar", () => ({ TagBar: () => null }));
 
 // jsdom は CSS を読まないので、一覧の下限幅(CSS の --video-list-min-width)は
 // 差し替え可能な値にし、読み取りの回数も数える。
-const css = vi.hoisted(() => ({ minWidth: 554, reads: 0 }));
+const css = vi.hoisted(() => ({ minWidth: 554, navW: 200, reads: 0 }));
 vi.mock("../lib/cssTokens", () => ({
-  readLengthToken: () => {
+  readLengthToken: (name: string) => {
+    // 左ペインの初期幅(--nav-w)は、一覧の下限幅の読み取り回数には数えない。
+    if (name === "--nav-w") return css.navW;
     css.reads += 1;
     return css.minWidth;
   },
@@ -30,6 +32,7 @@ function setWindowWidth(width: number) {
 
 beforeEach(() => {
   css.minWidth = 554;
+  css.navW = 200;
   css.reads = 0;
   setWindowWidth(1400);
   document.documentElement.removeAttribute("data-theme");
@@ -97,4 +100,37 @@ test("window の resize でも下限幅を読み直して再クランプする",
 
   // 900 - 32 - 554 = 314
   expect(pane().style.width).toBe("314px");
+});
+
+test("初期幅は CSS の --nav-w から読む", () => {
+  css.navW = 224;
+  renderPane();
+  expect(pane().style.width).toBe("224px");
+});
+
+test("--nav-w が下限・上限を外れていても、MIN_WIDTH〜MAX_WIDTH に収める", () => {
+  css.navW = 120;
+  const first = renderPane();
+  expect(pane().style.width).toBe("200px");
+  first.unmount();
+
+  css.navW = 900;
+  renderPane();
+  expect(pane().style.width).toBe("500px");
+});
+
+test("ドラッグで変えた幅は、テーマを切り替えても --nav-w に戻らない", async () => {
+  css.navW = 200;
+  renderPane();
+  drag(400);
+  expect(pane().style.width).toBe("400px");
+
+  const readsBefore = css.reads;
+  css.navW = 224;
+  act(() => {
+    document.documentElement.setAttribute("data-theme", "graphite");
+  });
+  // テーマの切り替えで下限幅は読み直される(= 切り替えは処理された)が、幅は動かない。
+  await waitFor(() => expect(css.reads).toBeGreaterThan(readsBefore));
+  expect(pane().style.width).toBe("400px");
 });

@@ -36,6 +36,20 @@
   --info-idle-color: currentcolor;
   --info-idle-dt-opacity: 0.7;
   --list-header-letter-spacing: normal;
+  --info-w: 300px;
+  --thumb-gap: 0.4em;
+  --thumb-radius: var(--radius-sm);
+  --nav-w: 200px;
+  --nav-item-h: auto;
+  /* 影はボタン、画面下端から上へ開く面、ふつうに下へ開く面(通知・メニュー)、
+     最前面のダイアログ・コンテキストメニューで、浮き上がりの大きさを変える。 */
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --shadow-popover-up: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.3);
+  /* 等幅はパスやログなど桁を揃えたい箇所で共通に使う。Consolas は Windows に
+     標準で入っており、日本語は後続のフォールバックに任せる。 */
+  --font-mono: Consolas, "Cascadia Mono", monospace;
 }
 
 /* ---- 共通: 仕様に無いトークンの導出 ---- */
@@ -110,7 +124,6 @@
      カードの inset・列間の gap 8px・チェックボックス列)+ サムネイル領域の
      最小幅 + 情報パネルの幅 + 一覧まわりの枠。サイドバーの最大幅の計算(sidebarResize)も、
      この変数を読んで使う。 */
-  --info-w: 300px;
   --thumb-w: 200px;
   --thumb-h: 150px;
   --video-list-min-width: calc(

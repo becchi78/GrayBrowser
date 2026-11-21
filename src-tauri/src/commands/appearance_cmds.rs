@@ -62,7 +62,7 @@ mod tests {
         assert_eq!(
             load(&db).unwrap(),
             AppearanceDto {
-                theme: "console".into(),
+                theme: "graphite".into(),
                 mode: "system".into()
             }
         );
