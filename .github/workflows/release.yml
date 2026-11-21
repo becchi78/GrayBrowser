@@ -40,9 +40,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # タグの実行は main で作られたキャッシュしか読めない。release-cache.yml が
+      # 同じ shared-key で作ったものを復元するだけにする。ここで保存しても
+      # 次のタグからは読めず、容量を食うだけなので保存しない。
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: release-build
+          save-if: false
           workspaces: ". -> target"
 
       - name: Setup Node
