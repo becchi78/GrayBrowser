@@ -1,0 +1,65 @@
+name: Release cache
+
+# リリースの build ジョブ(release.yml)が使う Rust のビルドキャッシュを、main 上で作る。
+# v* タグの実行が読めるキャッシュは、タグ自身か main で作られたものだけで、
+# タグの実行が保存したキャッシュは次のタグから読めず容量を食うだけになる。
+# そのため、ここで main 用に同じキーのキャッシュを作り、release.yml は復元だけを行う。
+# 署名鍵は使わない(Secret も Environment も渡さない)。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "src-tauri/tauri.conf.json"
+      - ".github/workflows/release-cache.yml"
+  # キャッシュは最後のアクセスから7日で削除される。リリースの間隔が空いても
+  # 残るよう、週2回アクセスして延命する。
+  schedule:
+    - cron: "0 18 * * 1,4"
+  workflow_dispatch:
+
+# キャッシュのキーに入るため、release.yml と同じ値にしておく。
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+# 同時に走らせても同じキーへの保存が競合するだけなので、1本に絞る。
+# 実行中のものは、保存の途中で打ち切らず最後まで走らせる。
+concurrency:
+  group: release-cache
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # shared-key と workspaces は release.yml の Cache Rust と一致させる。
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-build
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # バンドルと署名はせず、リリースと同じ cargo のビルドだけを行ってキャッシュを温める。
+      - name: Build (no bundle)
+        run: npm run tauri build -- --no-bundle
