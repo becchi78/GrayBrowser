@@ -575,7 +575,7 @@ test("登録フォルダの件数が分かるまでは案内を出さず、0件�
   await act(async () => folders.resolve([]));
   await settle();
 
-  expect(emptyHint()).toHaveTextContent("メニュー(≡)の「フォルダ管理...」からフォルダを登録してください。");
+  expect(emptyHint()).toHaveTextContent("「メニュー(≡) > ファイル > フォルダ管理...」からフォルダを登録してください。");
 });
 
 test("登録フォルダは refreshKey が変わるたびに取り直し、古い結果は捨てる", async () => {

@@ -212,7 +212,7 @@ export function ThumbnailGrid({
           {filtered ? "該当する動画が見つかりません。" : "動画がまだ登録されていません。"}
           {!filtered && noWatchFolders && (
             <div data-testid="video-list-empty-hint">
-              メニュー(≡)の「フォルダ管理...」からフォルダを登録してください。
+              「メニュー(≡) &gt; ファイル &gt; フォルダ管理...」からフォルダを登録してください。
             </div>
           )}
           </div>

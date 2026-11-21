@@ -235,7 +235,7 @@ test("deleting a tag from the tag editor asks for confirmation, then removes it 
       `//button[@data-testid="tag-bar-chip" and text()="${names[1]}"]`,
     ).then((el) => el.waitForExist({ timeout: 10_000 }));
 
-    await clickAppMenuItem(browser, "tagBar");
+    await clickAppMenuItem(browser, "tag", "tagBar");
     const dialog = await browser.$('[data-testid="tag-bar-edit-dialog"]');
     await dialog.waitForExist({ timeout: 10_000 });
 

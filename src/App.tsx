@@ -165,14 +165,8 @@ function AppContent({
   return (
     <div className="app">
       {/* No <h1>: the window's title bar names the app, and the hamburger menu
-          at the left of this row is the app's only menu. */}
+          at the right end of this row is the app's only menu. */}
       <div className="header-row-primary" data-testid="header-row-primary">
-        <AppMenu
-          openDialog={openDialog}
-          appearance={appearance}
-          onSelectTheme={onSelectTheme}
-          onSelectMode={onSelectMode}
-        />
         <SearchBox value={search} onChange={setSearch} />
         <SortControl
           field={sortField}
@@ -191,6 +185,12 @@ function AppContent({
         >
           {infoPaneCollapsed ? "情報を表示" : "情報を隠す"}
         </button>
+        <AppMenu
+          openDialog={openDialog}
+          appearance={appearance}
+          onSelectTheme={onSelectTheme}
+          onSelectMode={onSelectMode}
+        />
       </div>
       <FilterBar
         folderPath={folderPath}
