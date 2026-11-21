@@ -1854,6 +1854,11 @@ button.link-button:active {
   gap: var(--space-2);
 }
 
+/* リリースノートは長い行を含むため、基本の .dialog より広げて折り返しを減らす。 */
+.update-dialog {
+  width: min(48em, 90vw);
+}
+
 .update-dialog p {
   margin: 0;
 }
@@ -1871,7 +1876,7 @@ button.link-button:active {
 .update-dialog-notes {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  max-height: 30vh;
+  max-height: 45vh;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
