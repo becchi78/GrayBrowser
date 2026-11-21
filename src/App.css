@@ -601,7 +601,9 @@ button.search-box-clear {
 .tag-bar-edit-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* 右端の余白は、一覧が縦にスクロールするとき、右端の削除ボタンが
+     スクロールバーに付かないようにするためのもの。 */
+  padding: 0 var(--space-3) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -1778,7 +1780,9 @@ button.search-box-clear {
 .folder-dialog-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* 右端の余白は、一覧が縦にスクロールするとき、右端の ✎・削除ボタンが
+     スクロールバーに付かないようにするためのもの。幅は一覧の内側で吸収する。 */
+  padding: 0 var(--space-3) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
