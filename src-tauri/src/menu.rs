@@ -44,17 +44,17 @@ fn mode_item_id(mode: Mode) -> String {
 
 fn theme_label(theme: Theme) -> &'static str {
     match theme {
-        Theme::Console => "ネイビー・コンソール",
-        Theme::Fluent => "Fluent / Mica",
-        Theme::Cinema => "ダーク・シネマ",
+        Theme::Console => "Navy Console",
+        Theme::Fluent => "Fluent Mica",
+        Theme::Cinema => "Dark Cinema",
     }
 }
 
 fn mode_label(mode: Mode) -> &'static str {
     match mode {
-        Mode::System => "OSに従う",
-        Mode::Light => "ライト",
-        Mode::Dark => "ダーク",
+        Mode::System => "System",
+        Mode::Light => "Light",
+        Mode::Dark => "Dark",
     }
 }
 
@@ -343,10 +343,7 @@ mod tests {
     #[test]
     fn theme_items_are_ordered_console_fluent_cinema() {
         let labels: Vec<_> = Theme::ALL.iter().map(|t| theme_label(*t)).collect();
-        assert_eq!(
-            labels,
-            ["ネイビー・コンソール", "Fluent / Mica", "ダーク・シネマ"]
-        );
+        assert_eq!(labels, ["Navy Console", "Fluent Mica", "Dark Cinema"]);
         let ids: Vec<_> = Theme::ALL.iter().map(|t| theme_item_id(*t)).collect();
         assert_eq!(
             ids,
@@ -355,6 +352,17 @@ mod tests {
                 "menu-theme-fluent",
                 "menu-theme-cinema"
             ]
+        );
+    }
+
+    #[test]
+    fn mode_items_are_labelled_in_english_in_stored_order() {
+        let labels: Vec<_> = Mode::ALL.iter().map(|m| mode_label(*m)).collect();
+        assert_eq!(labels, ["System", "Light", "Dark"]);
+        let ids: Vec<_> = Mode::ALL.iter().map(|m| mode_item_id(*m)).collect();
+        assert_eq!(
+            ids,
+            ["menu-mode-system", "menu-mode-light", "menu-mode-dark"]
         );
     }
 
