@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractChangelogSection, installerFileName, versionFromTag } from "./release-notes.mjs";
+import { DEV_NOTES, extractChangelogSection, installerFileName, isDevVersion, versionFromTag } from "./release-notes.mjs";
 
 const REPOSITORY = "becchi78/GrayBrowser";
 const PLATFORM = "windows-x86_64";
@@ -36,14 +36,19 @@ export function normalizeSignature(raw) {
 export function buildManifest({ tag, changelog, signature, pubDate }) {
   const version = versionFromTag(tag);
   if (version === null) {
-    throw new Error(`タグ "${tag}" は vX.Y.Z 形式ではありません`);
+    throw new Error(`タグ "${tag}" は vX.Y.Z または vX.Y.Z-dev.N 形式ではありません`);
   }
-  const notes = extractChangelogSection(changelog, version);
-  if (notes === null) {
-    throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
-  }
-  if (notes === "") {
-    throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
+  let notes;
+  if (isDevVersion(version)) {
+    notes = DEV_NOTES;
+  } else {
+    notes = extractChangelogSection(changelog, version);
+    if (notes === null) {
+      throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
+    }
+    if (notes === "") {
+      throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
+    }
   }
   return {
     version,
@@ -61,7 +66,7 @@ export function buildManifest({ tag, changelog, signature, pubDate }) {
 function main(argv) {
   const [tag, signaturePath] = argv;
   if (!tag || !signaturePath) {
-    console.error("usage: node update-manifest.mjs vX.Y.Z <installer.sig path>");
+    console.error("usage: node update-manifest.mjs vX.Y.Z[-dev.N] <installer.sig path>");
     return 2;
   }
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

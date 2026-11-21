@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate } from "../api";
+import { isDevVersion } from "../lib/developerMode";
 import { errorText } from "../lib/errorText";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import {
@@ -227,6 +228,11 @@ function AvailableBody({ update }: { update: { version: string; currentVersion: 
       <p data-testid="update-dialog-available">
         新しいバージョン {update.version} があります(現在のバージョン {update.currentVersion})。
       </p>
+      {isDevVersion(update.version) && (
+        <p className="dialog-hint" data-testid="update-dialog-dev-notice">
+          開発版です。動作確認用のため、不安定な場合があります。
+        </p>
+      )}
       {update.notes !== null && (
         <pre className="update-dialog-notes" data-testid="update-dialog-notes">
           {update.notes}

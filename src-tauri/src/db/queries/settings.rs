@@ -132,6 +132,19 @@ pub fn set_update_check_on_startup(conn: &Connection, enabled: bool) -> anyhow::
     Ok(())
 }
 
+const DEVELOPER_MODE_KEY: &str = "developer_mode";
+
+/// Opt-in, so unset and unrecognized values both read as `false`: a corrupt
+/// value must not silently move a user onto the unstable development channel.
+pub fn get_developer_mode(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(get_setting(conn, DEVELOPER_MODE_KEY)?.as_deref() == Some("1"))
+}
+
+pub fn set_developer_mode(conn: &Connection, enabled: bool) -> anyhow::Result<()> {
+    set_setting(conn, DEVELOPER_MODE_KEY, if enabled { "1" } else { "0" })?;
+    Ok(())
+}
+
 const SIDEBAR_SECTIONS_COLLAPSED_KEY: &str = "sidebar_sections_collapsed";
 
 /// Collapsed flags of the left-pane sections. `true` means collapsed; every
@@ -368,6 +381,29 @@ mod boolean_flag_tests {
         )
         .unwrap();
         assert!(get_update_check_on_startup(&conn).unwrap());
+    }
+
+    #[test]
+    fn developer_mode_defaults_to_off_and_round_trips() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert!(!get_developer_mode(&conn).unwrap());
+        set_developer_mode(&conn, true).unwrap();
+        assert!(get_developer_mode(&conn).unwrap());
+        set_developer_mode(&conn, false).unwrap();
+        assert!(!get_developer_mode(&conn).unwrap());
+    }
+
+    #[test]
+    fn an_unrecognized_stored_developer_mode_value_reads_as_off() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('developer_mode', 'garbage')",
+            [],
+        )
+        .unwrap();
+        assert!(!get_developer_mode(&conn).unwrap());
     }
 
     #[test]

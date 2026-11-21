@@ -61,3 +61,28 @@ test("checkVersions rejects prerelease and malformed tags", () => {
 test("checkVersions works with CRLF CHANGELOG", () => {
   assert.deepEqual(checkVersions({ tag: "v1.2.3", versions: OK, changelog: CHANGELOG.replace(/\n/g, "\r\n") }), []);
 });
+
+const DEV_OK = { "package.json": "1.2.3-dev.4", "src-tauri/tauri.conf.json": "1.2.3-dev.4", "src-tauri/Cargo.toml": "1.2.3-dev.4" };
+
+test("checkVersions for a dev tag passes without a CHANGELOG section", () => {
+  assert.deepEqual(checkVersions({ tag: "v1.2.3-dev.4", versions: DEV_OK, changelog: "" }), []);
+});
+
+test("checkVersions for a dev tag reports mismatching versions", () => {
+  // A stable version or another dev number must not satisfy a dev tag.
+  const versions = { ...DEV_OK, "package.json": "1.2.3", "src-tauri/Cargo.toml": "1.2.3-dev.5" };
+  const problems = checkVersions({ tag: "v1.2.3-dev.4", versions, changelog: "" });
+  assert.equal(problems.length, 2);
+});
+
+test("checkVersions still requires a CHANGELOG section for a stable tag", () => {
+  const problems = checkVersions({ tag: "v1.2.3", versions: OK, changelog: "" });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /CHANGELOG/);
+});
+
+test("checkVersions rejects dev tags in other spellings", () => {
+  for (const tag of ["v1.2.3-dev", "v1.2.3-dev.01", "v1.2.3-dev.0x"]) {
+    assert.equal(checkVersions({ tag, versions: DEV_OK, changelog: "" }).length, 1, tag);
+  }
+});

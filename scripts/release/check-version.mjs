@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractChangelogSection, versionFromTag } from "./release-notes.mjs";
+import { extractChangelogSection, isDevVersion, versionFromTag } from "./release-notes.mjs";
 
 /** `version` of the `[package]` table; other tables' `version` keys are ignored. */
 export function cargoPackageVersion(cargoToml) {
@@ -29,7 +29,7 @@ export function cargoPackageVersion(cargoToml) {
 export function checkVersions({ tag, versions, changelog }) {
   const expected = versionFromTag(tag);
   if (expected === null) {
-    return [`タグ "${tag}" は vX.Y.Z 形式ではありません(プレリリース形式は対象外)`];
+    return [`タグ "${tag}" は vX.Y.Z または vX.Y.Z-dev.N 形式ではありません(その他のプレリリース形式は対象外)`];
   }
   const problems = [];
   for (const [label, found] of Object.entries(versions)) {
@@ -37,7 +37,8 @@ export function checkVersions({ tag, versions, changelog }) {
       problems.push(`${label} のバージョン(${found ?? "取得できず"})がタグ(${expected})と一致しません`);
     }
   }
-  if (extractChangelogSection(changelog, expected) === null) {
+  // Dev builds carry no CHANGELOG entry; stable releases still require one.
+  if (!isDevVersion(expected) && extractChangelogSection(changelog, expected) === null) {
     problems.push(`CHANGELOG.md に "## [${expected}]" の項がありません`);
   }
   return problems;
@@ -46,7 +47,7 @@ export function checkVersions({ tag, versions, changelog }) {
 function main(argv) {
   const [tag] = argv;
   if (!tag) {
-    console.error("usage: node check-version.mjs vX.Y.Z");
+    console.error("usage: node check-version.mjs vX.Y.Z[-dev.N]");
     return 2;
   }
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

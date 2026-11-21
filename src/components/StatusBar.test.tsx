@@ -11,6 +11,7 @@ import { StatusBar } from "./StatusBar";
 
 vi.mock("../api", () => ({
   getThumbnailProgress: vi.fn(),
+  getDeveloperMode: vi.fn(),
 }));
 
 vi.mock("../events", () => ({
@@ -43,6 +44,7 @@ vi.mock("./DuplicateGroupsPanel", () => ({ DuplicateGroupsPanel: fakePanel("dupl
 
 beforeEach(() => {
   vi.mocked(api.getThumbnailProgress).mockResolvedValue(null as never);
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(false);
 });
 
 async function renderBar(props: { videoCount?: number; onJump?: (p: number) => void } = {}) {
@@ -58,6 +60,21 @@ async function renderBar(props: { videoCount?: number; onJump?: (p: number) => v
 const badge = (kind: "unregistered" | "duplicates" | "failed") =>
   screen.getByTestId(`status-badge-${kind}`);
 const jumpButton = () => screen.getByTestId("status-jump-button");
+
+test("開発者モードがオンのとき、バッジがジャンプボタンの直前(左)に出る", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  await renderBar();
+
+  const devBadge = await screen.findByTestId("dev-mode-badge");
+  expect(devBadge.nextElementSibling).toBe(jumpButton().parentElement);
+});
+
+test("開発者モードがオフのとき、バッジは出ない", async () => {
+  await renderBar();
+  await settle();
+
+  expect(screen.queryByTestId("dev-mode-badge")).toBeNull();
+});
 
 test("パネルが報告した件数がバッジに出る", async () => {
   await renderBar();

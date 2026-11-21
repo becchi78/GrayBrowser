@@ -37,16 +37,78 @@ pub struct UpdateMetadata {
     raw_json: serde_json::Value,
 }
 
+/// Manifest of the development channel. A compile-time constant on purpose:
+/// the frontend can only toggle developer mode, never choose where updates
+/// come from. Updates from it are verified against the same public key.
+const DEV_CHANNEL_ENDPOINT: &str =
+    "https://github.com/becchi78/GrayBrowser/releases/download/dev/latest.json";
+
+#[tauri::command]
+pub fn get_developer_mode(db: State<Db>) -> Result<bool, String> {
+    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+    queries::get_developer_mode(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_developer_mode(db: State<Db>, enabled: bool) -> Result<(), String> {
+    let conn = db.writer.lock().unwrap();
+    queries::set_developer_mode(&conn, enabled).map_err(|e| e.to_string())
+}
+
 /// Checks for a newer release. Own command instead of the plugin's JS
 /// `check()` so that the frontend is never granted `updater:allow-check`,
 /// whose `target`/`headers`/`proxy` arguments it could otherwise choose freely;
 /// the endpoint and public key stay fixed to the build-time configuration.
+///
+/// With developer mode on, the development channel is checked too and only the
+/// newer of the two updates is returned (and registered as a resource).
 #[tauri::command]
-pub async fn check_for_update(webview: Webview) -> Result<Option<UpdateMetadata>, String> {
-    let builder = webview.updater_builder().timeout(CHECK_TIMEOUT);
-    let builder = debug_overrides::apply(builder)?;
-    let updater = builder.build().map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
+pub async fn check_for_update(
+    webview: Webview,
+    db: State<'_, Db>,
+) -> Result<Option<UpdateMetadata>, String> {
+    use gb_core::update_channel::{pick_newer, Channel};
+
+    let developer_mode = {
+        let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+        queries::get_developer_mode(&conn).map_err(|e| e.to_string())?
+    };
+
+    let stable = check_channel(&webview, None).await?;
+    let dev = if developer_mode {
+        let endpoint = DEV_CHANNEL_ENDPOINT
+            .parse::<tauri::Url>()
+            .map_err(|e| e.to_string())?;
+        // A missing or unreachable development channel must not hide a stable
+        // update, so its failure is logged and treated as "no update".
+        check_channel(&webview, Some(endpoint))
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("development channel update check failed: {e}");
+                None
+            })
+    } else {
+        None
+    };
+
+    let chosen = match pick_newer(
+        stable.as_ref().map(|u| u.version.as_str()),
+        dev.as_ref().map(|u| u.version.as_str()),
+    ) {
+        Ok(choice) => choice,
+        Err(e) => {
+            // Never guess between channels on versions we cannot order.
+            log::warn!("cannot compare update versions, offering stable: {e}");
+            stable.is_some().then_some(Channel::Stable)
+        }
+    };
+    // The update that is not chosen is dropped here without ever entering the
+    // resources table, so nothing is left to release.
+    let update = match chosen {
+        Some(Channel::Stable) => stable,
+        Some(Channel::Dev) => dev,
+        None => None,
+    };
     Ok(update.map(|update| UpdateMetadata {
         current_version: update.current_version.clone(),
         version: update.version.clone(),
@@ -54,6 +116,22 @@ pub async fn check_for_update(webview: Webview) -> Result<Option<UpdateMetadata>
         raw_json: update.raw_json.clone(),
         rid: webview.resources_table().add(update),
     }))
+}
+
+/// `endpoint: None` uses the endpoints from the build-time configuration. The
+/// debug override is applied last so it redirects both channels' checks to the
+/// same local server.
+async fn check_channel(
+    webview: &Webview,
+    endpoint: Option<tauri::Url>,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let mut builder = webview.updater_builder().timeout(CHECK_TIMEOUT);
+    if let Some(url) = endpoint {
+        builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
+    }
+    let builder = debug_overrides::apply(builder)?;
+    let updater = builder.build().map_err(|e| e.to_string())?;
+    updater.check().await.map_err(|e| e.to_string())
 }
 
 /// Verification-only endpoint/public-key overrides read from the environment,

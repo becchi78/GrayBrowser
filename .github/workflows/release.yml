@@ -1,8 +1,10 @@
 name: Release
 
-# v* タグのpushでのみ起動し、インストーラーをビルドしてDraftのReleaseを作る。
-# 公開（Draft解除）は取り消しにくく、公開した瞬間にアプリ内アップデートの配信も
-# 始まるため、人が内容を確認してから行う。
+# v* タグのpushでのみ起動し、インストーラーをビルドしてReleaseを作る。
+# vX.Y.Z（安定版）はDraftまでしか作らない。公開（Draft解除）は取り消しにくく、
+# 公開した瞬間にアプリ内アップデートの配信も始まるため、人が内容を確認してから行う。
+# vX.Y.Z-dev.N（開発版）は、開発者モードの利用者だけが受け取る動作確認用の版で、
+# Pre-releaseとして直接公開する（下の dev-release ジョブ）。
 on:
   push:
     tags:
@@ -108,7 +110,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # 安定版の経路。開発版タグでは実行しない。
   draft-release:
+    if: ${{ !contains(github.ref_name, '-dev.') }}
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -137,3 +141,65 @@ jobs:
             --draft --verify-tag \
             --title "$TAG" \
             --notes-file release-out/notes.md
+
+  # 開発版の経路。Draftは認証なしでは取得できず、開発者モードの利用者に配れない
+  # ため、Pre-releaseとして公開する。Pre-releaseは releases/latest の対象外なので、
+  # 安定版の利用者の更新確認には影響しない。署名鍵のゲート（build ジョブの
+  # Environment 承認）は安定版と同じ。
+  dev-release:
+    if: ${{ contains(github.ref_name, '-dev.') }}
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    # 固定タグ dev の latest.json を同時に上書きしないよう、実行中のものは
+    # 打ち切らずに待たせる。ただし待機できるのは最新の1件だけで、さらに新しい
+    # タグが来ると古い待機は取り消される。前の開発版の完了を待ってからタグを打つ。
+    concurrency:
+      group: dev-channel
+      cancel-in-progress: false
+    steps:
+      - name: Download installer, update manifest and notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-out
+
+      # 版ごとの Release は、安定版と同じく既存があれば上書きせず失敗させる。
+      # 配布済みの開発版のインストーラーを後から差し替えないため。
+      - name: Create versioned pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          if gh release list --limit 1000 --json tagName --jq '.[].tagName' | grep -Fxq -- "$TAG"; then
+            echo "error: a release for $TAG already exists" >&2
+            exit 1
+          fi
+          gh release create "$TAG" release-out/*-setup.exe release-out/latest.json \
+            --prerelease --verify-tag \
+            --title "$TAG" \
+            --notes-file release-out/notes.md
+
+      # 固定タグ dev の Pre-release は、更新の確認先（latest.json の置き場所）に
+      # すぎない。無ければ作り、あれば作成を飛ばして latest.json だけ上書きする。
+      # 上のステップが失敗した場合はここに到達しないため、実在しない版を指す
+      # latest.json が dev に載ることはない。
+      - name: Point the dev channel at this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          DEV_NOTES: 開発版の更新確認用の置き場です。ここにインストーラーはありません。各開発版は、バージョンごとの Pre-release を参照してください。安定版ではありません。
+        run: |
+          set -o pipefail
+          if ! gh release list --limit 1000 --json tagName --jq '.[].tagName' | grep -Fxq -- dev; then
+            gh release create dev \
+              --prerelease --latest=false \
+              --target "$SHA" \
+              --title "dev" \
+              --notes "$DEV_NOTES"
+          fi
+          gh release upload dev release-out/latest.json --clobber

@@ -38,6 +38,8 @@ vi.mock("../api", () => ({
   setRestoreViewStateEnabled: vi.fn(),
   getRememberWindowSizeEnabled: vi.fn(),
   setRememberWindowSizeEnabled: vi.fn(),
+  getDeveloperMode: vi.fn(),
+  setDeveloperMode: vi.fn(),
   checkForUpdate: vi.fn(),
   listAllTags: vi.fn(),
   assignTagsToVideos: vi.fn(),
@@ -70,6 +72,8 @@ beforeEach(() => {
   vi.mocked(api.getUpdateCheckOnStartup).mockResolvedValue(true);
   vi.mocked(api.getRestoreViewStateEnabled).mockResolvedValue(true);
   vi.mocked(api.getRememberWindowSizeEnabled).mockResolvedValue(true);
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(false);
+  vi.mocked(api.setDeveloperMode).mockResolvedValue(undefined);
   vi.mocked(api.checkForUpdate).mockResolvedValue(fakeUpdate(() => never()));
   vi.mocked(api.listAllTags).mockResolvedValue([]);
   vi.mocked(api.readLog).mockResolvedValue({ entries: [], next_offset: 0, reset: false });

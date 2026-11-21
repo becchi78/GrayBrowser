@@ -1196,6 +1196,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "regex",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -1444,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "graybrowser"
-version = "0.17.3"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

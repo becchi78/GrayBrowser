@@ -64,6 +64,8 @@ pub fn run() {
             commands::reachability_cmds::check_folder_reachability,
             commands::update_cmds::get_update_check_on_startup,
             commands::update_cmds::set_update_check_on_startup,
+            commands::update_cmds::get_developer_mode,
+            commands::update_cmds::set_developer_mode,
             commands::update_cmds::check_for_update,
             commands::view_state_cmds::get_restore_view_state_enabled,
             commands::view_state_cmds::set_restore_view_state_enabled,

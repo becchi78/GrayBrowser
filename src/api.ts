@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Update } from "@tauri-apps/plugin-updater";
 import type { Mode, Theme } from "./lib/appearance";
+import { DEVELOPER_MODE_CHANGED_EVENT } from "./lib/developerMode";
 import type { SidebarSectionsCollapsed } from "./lib/sidebarSections";
 import type {
   DuplicateGroup,
@@ -97,6 +98,12 @@ export const saveSidebarSectionsCollapsed = (state: SidebarSectionsCollapsed) =>
 export const getUpdateCheckOnStartup = () => invoke<boolean>("get_update_check_on_startup");
 export const setUpdateCheckOnStartup = (enabled: boolean) =>
   invoke<void>("set_update_check_on_startup", { enabled });
+export const getDeveloperMode = () => invoke<boolean>("get_developer_mode");
+// 保存したことを常時表示のバッジへ知らせるため、書き込みの後にイベントを送る。
+export const setDeveloperMode = async (enabled: boolean) => {
+  await invoke<void>("set_developer_mode", { enabled });
+  window.dispatchEvent(new Event(DEVELOPER_MODE_CHANGED_EVENT));
+};
 /**
  * 新しい版があれば、ダウンロード・インストールに使う Update を返す(無ければ null)。
  * プラグインの check() ではなく自前のコマンドを使うのは、フロントに check の許可を

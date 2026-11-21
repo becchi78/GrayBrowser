@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEV_NOTES } from "./release-notes.mjs";
 import { buildManifest, installerUrl, normalizeSignature } from "./update-manifest.mjs";
 
 const CHANGELOG = [
@@ -81,5 +82,26 @@ test("normalizeSignature trims whitespace, including CRLF", () => {
 test("normalizeSignature refuses text that is not base64", () => {
   for (const bad of ["untrusted comment: x\nabc", "error: failed to sign", "abc def", "ab-cd"]) {
     assert.throws(() => normalizeSignature(bad), /base64/, bad);
+  }
+});
+
+test("buildManifest for a dev tag uses the dev version, fixed notes and the tagged installer URL", () => {
+  const manifest = buildManifest({
+    tag: "v0.3.0-dev.2",
+    changelog: CHANGELOG,
+    signature: SIG,
+    pubDate: "2026-01-02T03:04:05.000Z",
+  });
+  assert.equal(manifest.version, "0.3.0-dev.2");
+  assert.equal(manifest.notes, DEV_NOTES);
+  assert.equal(
+    manifest.platforms["windows-x86_64"].url,
+    "https://github.com/becchi78/GrayBrowser/releases/download/v0.3.0-dev.2/GrayBrowser_0.3.0-dev.2_x64-setup.exe",
+  );
+});
+
+test("buildManifest rejects dev-like tags in other spellings", () => {
+  for (const tag of ["v0.3.0-dev", "v0.3.0-dev.01", "v0.3.0-rc1"]) {
+    assert.throws(() => buildManifest({ tag, changelog: CHANGELOG, signature: SIG, pubDate: "x" }), /vX\.Y\.Z/, tag);
   }
 });

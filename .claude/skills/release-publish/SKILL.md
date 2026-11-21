@@ -61,6 +61,18 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 
    問題があった場合は公開せず、Draftとタグを削除して修正し、やり直す(Draftの削除・タグの削除も他者から見える操作のため、承認を得てから行う)。
 
+## 開発版(`vX.Y.Z-dev.N`)の出し方
+
+開発者モードの利用者向けの動作確認版。仕組みと信頼境界は`docs/dev/release-process.md`の「開発版チャンネル」を参照。安定版との違いだけを書く。
+
+1. 3ファイル(`package.json`・`tauri.conf.json`・`Cargo.toml`)の版を`X.Y.Z-dev.N`にした状態を`main`に入れる(または、対象のコミットを管理者が決める)。`CHANGELOG.md`・`README.md`は不要。`node scripts/release/check-version.mjs v<X.Y.Z-dev.N>`で事前確認できる。
+2. 承認を得てから`vX.Y.Z-dev.N`タグをpushする(許可する形式はこれだけ。`-rc1`・`-dev`・`-dev.01`は拒否される)。ビルドジョブのEnvironment `release`の承認が必要なのは安定版と同じ。
+3. Draftにならない。ビルド成功後、バージョン別のPre-release(インストーラーと`latest.json`)が直接公開され、続いて固定タグ`dev`のPre-releaseの`latest.json`が上書きされる。公開前に人が確認する段階がないため、承認の前に内容を確認する。
+4. 問題があった場合は、バージョン別のPre-releaseを削除し(承認を得てから)、`dev`の`latest.json`を直前の正常な開発版のもので上書きし直す。
+5. バージョン別のPre-releaseの作成には成功し、`dev`の更新だけが失敗した場合、ジョブを再実行すると「既存のReleaseがある」ことで失敗する。承認を得てから、`gh release upload dev <latest.json> --clobber`で手動で更新する。前の開発版のジョブが終わる前に次のタグをpushしない(待機は最新の1件だけで、古い待機は取り消される)。
+
+`dev`タグ・Releaseは`v*`のRulesetの対象外で、更新の確認先を置いているだけ。信頼は署名検証による。
+
 ## Actionsが失敗した場合の手元ビルド(代替手順)
 
 Actionsを直せない・急ぐ場合のみ、手元でビルドして手動でReleaseを作る。
