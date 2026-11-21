@@ -16,7 +16,6 @@ pub mod watch;
 pub mod wb_import;
 
 mod main_window;
-mod menu;
 mod startup;
 
 #[cfg(test)]
@@ -49,32 +48,11 @@ pub fn run() {
             let watch_manager = startup::start_watching(&services, registered)?;
             app.manage(watch_manager);
 
-            // A failed read must not block startup; the menu then just starts at
-            // the defaults and the frontend's own read corrects the look.
-            let (theme, mode) = app
-                .state::<db::Db>()
-                .read_pool
-                .get()
-                .map_err(anyhow::Error::from)
-                .and_then(|conn| {
-                    Ok((
-                        db::queries::get_theme(&conn)?,
-                        db::queries::get_appearance_mode(&conn)?,
-                    ))
-                })
-                .unwrap_or_else(|e| {
-                    log::warn!("failed to read the stored theme: {e:#}");
-                    Default::default()
-                });
-            let (menu, appearance_menu) = menu::build_menu(app, theme, mode)?;
-            app.set_menu(menu)?;
-            app.on_menu_event(move |app_handle, event| {
-                menu::handle_menu_event(app_handle, &event, &appearance_menu);
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::app_cmds::quit_app,
+            commands::app_cmds::run_manual_backup,
             commands::appearance_cmds::get_appearance,
             commands::appearance_cmds::set_theme,
             commands::appearance_cmds::set_appearance_mode,

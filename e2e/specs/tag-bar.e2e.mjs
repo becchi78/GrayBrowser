@@ -23,7 +23,7 @@ import {
   seedTags,
 } from "../fixtures.mjs";
 import { createSession, saveFailureScreenshot } from "../session.mjs";
-import { ensureAppDbExists, waitForAppReady } from "../uiFlows.mjs";
+import { clickAppMenuItem, ensureAppDbExists, waitForAppReady } from "../uiFlows.mjs";
 
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 
@@ -235,11 +235,7 @@ test("deleting a tag from the tag editor asks for confirmation, then removes it 
       `//button[@data-testid="tag-bar-chip" and text()="${names[1]}"]`,
     ).then((el) => el.waitForExist({ timeout: 10_000 }));
 
-    // WebDriver cannot click native menus; emit the event the "タグ > タグの
-    // 編集..." item emits (reachable via `window.__TAURI__`).
-    await browser.execute(() =>
-      window.__TAURI__.event.emit("menu:open-tag-bar-dialog"),
-    );
+    await clickAppMenuItem(browser, "tagBar");
     const dialog = await browser.$('[data-testid="tag-bar-edit-dialog"]');
     await dialog.waitForExist({ timeout: 10_000 });
 

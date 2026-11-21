@@ -6,7 +6,7 @@ import { UpdateNotice } from "./components/UpdateNotice";
 import { never } from "./testing/async";
 import { fakeUpdate } from "./testing/fakes";
 import { registerUndismissibleModal } from "./undismissibleModals";
-import { useActiveDialog, useMenuOpen, type DialogKind } from "./useActiveDialog";
+import { useActiveDialog, type DialogKind } from "./useActiveDialog";
 
 vi.mock("./api", () => ({
   checkForUpdate: vi.fn(),
@@ -82,23 +82,6 @@ test("すでに別のダイアログへ切り替わった後に古い onClose �
   act(() => result.current.close("folder"));
 
   expect(result.current.active).toBe("about");
-});
-
-test("useMenuOpen は購読した通知で指定の種類を開き、アンマウントで購読を解く", () => {
-  let fire = () => {};
-  const unsubscribe = vi.fn();
-  const subscribe = (cb: () => void) => {
-    fire = cb;
-    return unsubscribe;
-  };
-  const open = vi.fn();
-  const { unmount } = renderHook(() => useMenuOpen(subscribe, "tagBar", open));
-
-  fire();
-  expect(open).toHaveBeenCalledWith("tagBar");
-
-  unmount();
-  expect(unsubscribe).toHaveBeenCalledTimes(1);
 });
 
 // ---- 更新通知から更新ダイアログを開く ----

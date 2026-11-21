@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAppearance, setAppearanceMode, setTheme, setWindowTheme } from "./api";
-import { onMenuAppearanceSelected, onMenuThemeSelected } from "./events";
 import {
   applyAppearance,
   browserStorage,
@@ -9,13 +8,21 @@ import {
   readStoredAppearance,
   writeStoredAppearance,
   type Appearance,
+  type Mode,
+  type Theme,
 } from "./lib/appearance";
 
 // テーマと外観の現在値を持ち、<html> の data-theme / data-mode、localStorage の
 // 写し、ウィンドウ枠の明暗(setTheme)へ反映する。正は SQLite の設定で、
 // 起動直後は index.html の同期スクリプトと同じ写しから始め、DB の値が
-// 取れたら補正する。メニューの選択は即座に反映し、保存は後追いで行う。
-export function useAppearance(): Appearance {
+// 取れたら補正する。選択は即座に反映し、保存は後追いで行う。
+export interface UseAppearance {
+  appearance: Appearance;
+  selectTheme: (theme: Theme) => void;
+  selectMode: (mode: Mode) => void;
+}
+
+export function useAppearance(): UseAppearance {
   const [appearance, setAppearance] = useState<Appearance>(() =>
     readStoredAppearance(browserStorage()),
   );
@@ -62,26 +69,28 @@ export function useAppearance(): Appearance {
       })
       .catch((e) => console.error(e));
 
-    const unlistenTheme = onMenuThemeSelected((value) => {
-      const theme = parseTheme(value);
-      if (theme === null) return;
-      touched.current.theme = true;
-      commit({ ...current.current, theme });
-      setTheme(theme).catch((e) => console.error(e));
-    });
-    const unlistenMode = onMenuAppearanceSelected((value) => {
-      const mode = parseMode(value);
-      if (mode === null) return;
-      touched.current.mode = true;
-      commit({ ...current.current, mode });
-      setAppearanceMode(mode).catch((e) => console.error(e));
-    });
     return () => {
       cancelled = true;
-      unlistenTheme();
-      unlistenMode();
     };
   }, [sync, commit]);
 
-  return appearance;
+  const selectTheme = useCallback(
+    (theme: Theme) => {
+      touched.current.theme = true;
+      commit({ ...current.current, theme });
+      setTheme(theme).catch((e) => console.error(e));
+    },
+    [commit],
+  );
+
+  const selectMode = useCallback(
+    (mode: Mode) => {
+      touched.current.mode = true;
+      commit({ ...current.current, mode });
+      setAppearanceMode(mode).catch((e) => console.error(e));
+    },
+    [commit],
+  );
+
+  return { appearance, selectTheme, selectMode };
 }

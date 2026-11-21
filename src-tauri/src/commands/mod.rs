@@ -1,3 +1,4 @@
+pub mod app_cmds;
 pub mod appearance_cmds;
 pub mod catalog_cmds;
 pub mod dedup_cmds;

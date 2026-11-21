@@ -19,7 +19,7 @@ interface Props {
 // (バックエンドが返す順そのまま)。
 // グループは表示上の入れ物で、クリックは開閉だけ。絞り込みは選択中のタグ
 // そのものの AND のままで、グループの有無で意味は変わらない。
-// 並びの編集はネイティブメニュー「タグ > タグの編集...」からのみ開く。
+// 並びの編集は、ハンバーガーメニューの「タグの編集...」からのみ開く。
 // この部品自体には編集への導線は置かない。
 export function TagBar({ selected, onChange, refreshKey, showCounts = false }: Props) {
   const [layout, setLayout] = useState<TagLayoutItemDto[]>([]);

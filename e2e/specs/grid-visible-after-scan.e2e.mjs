@@ -56,8 +56,8 @@ import { saveFailureScreenshot, createSession } from "../session.mjs";
 import { ensureAppDbExists, scanViaFolderDialog, searchAndWaitForCellCount, waitForAppReady } from "../uiFlows.mjs";
 
 // tauri.conf.json's values (defaults and minimum). minHeight (580) needs no
-// margin beyond the layout calculation: the native menu bar does not consume
-// WebView2 client-area height on this platform.
+// margin beyond the layout calculation: the window has no native menu bar, so
+// the page itself is all that uses the client area.
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 const MIN_WINDOW = { width: 900, height: 580 };
 // `.video-list`'s `min-height` floor, which is the `--row-height` token in

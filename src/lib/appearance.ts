@@ -12,6 +12,19 @@ export type Theme = (typeof THEMES)[number];
 export const MODES = ["system", "light", "dark"] as const;
 export type Mode = (typeof MODES)[number];
 
+// メニューに出す表示名。テーマ名は設計案のタイトル、外観名は OS の用語に揃えた英語表記。
+export const THEME_LABELS: Record<Theme, string> = {
+  console: "Navy Console",
+  fluent: "Fluent Mica",
+  cinema: "Dark Cinema",
+};
+
+export const MODE_LABELS: Record<Mode, string> = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+};
+
 export const DEFAULT_THEME: Theme = "console";
 export const DEFAULT_MODE: Mode = "system";
 

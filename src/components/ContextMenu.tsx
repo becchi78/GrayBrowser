@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { clampMenuPosition, type MenuPosition } from "../lib/contextMenu";
+import { focusFirstItem, moveMenuFocus } from "../lib/menuFocus";
 
 export interface ContextMenuItem {
   label: string;
@@ -16,9 +17,6 @@ interface Props {
   items: ContextMenuItem[];
   onClose: () => void;
 }
-
-// 無効な項目はフォーカスできないので、キー移動と初期フォーカスの対象から除く。
-const ENABLED_ITEM_SELECTOR = '[role="menuitem"]:not(:disabled)';
 
 // 一覧のスクロール領域や重複パネルなど position / overflow の効く祖先の
 // 影響を受けないよう、ModalShell (ConfirmDialog の土台) と同じく document.body へ portal で描画する。
@@ -45,7 +43,7 @@ export function ContextMenu({ position, items, onClose }: Props) {
   // visibility: hidden の要素にはフォーカスできないので、位置が確定してから。
   const isPlaced = placed !== null;
   useEffect(() => {
-    if (isPlaced) menuRef.current?.querySelector<HTMLElement>(ENABLED_ITEM_SELECTOR)?.focus();
+    if (isPlaced) focusFirstItem(menuRef.current);
   }, [isPlaced]);
 
   useEffect(() => {
@@ -64,13 +62,7 @@ export function ContextMenu({ position, items, onClose }: Props) {
       }
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        const entries = Array.from(
-          menuRef.current?.querySelectorAll<HTMLElement>(ENABLED_ITEM_SELECTOR) ?? [],
-        );
-        if (entries.length === 0) return;
-        const current = entries.indexOf(document.activeElement as HTMLElement);
-        const step = e.key === "ArrowDown" ? 1 : -1;
-        entries[(current + step + entries.length) % entries.length].focus();
+        moveMenuFocus(menuRef.current, e.key === "ArrowDown" ? "next" : "prev");
       }
     }
     // 一覧など、どの要素のスクロールでも閉じる(capture でバブリングしない
