@@ -1,0 +1,78 @@
+/* ---- コンソール(既定): 紺の地、一段明るいカード、ティール、高密度 ---- */
+:root,
+:root[data-theme="console"] {
+  font-size: 12px;
+  /* 行間は px で持つ(文字サイズが入れ子で小さくなっても行の高さを一定に
+     して、下の --row-height の積算が成り立つようにするため)。 */
+  line-height: 18px;
+  --font-xs: 0.875em;
+  --font-sm: 0.958em;
+  --font-lg: 1.167em;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-pill: 999px;
+  --page-bg: light-dark(#d6dbe4, #0d1526);
+  --surface: light-dark(#dfe3ea, #131d31);
+  --surface-2: light-dark(#e6e9ef, #18243b);
+  --text: light-dark(#0f1a2b, #e6ebf3);
+  --text-muted: light-dark(#42506a, #9aa8bf);
+  --text-subtle: light-dark(#505d74, #8c9ab2);
+  --row-border: light-dark(#c4cbd8, #22304a);
+  --border-strong: light-dark(#a8b2c4, #2e3f5e);
+  --accent: light-dark(#06624f, #26c6a6);
+  --accent-fg: light-dark(#ffffff, #04201a);
+  --row-selected-bg: light-dark(#c0ded6, #123236);
+  --hover-bg: light-dark(#d2d8e2, #17233a);
+  --chip-bg: light-dark(#cdd4e0, #1e2c46);
+  --chip-text: light-dark(#1c2b45, #c9d4e5);
+  --star: light-dark(#9c6302, #f0b44c);
+  --danger: light-dark(#c0263a, #f2707f);
+  --warn: light-dark(#8c5000, #f0b44c);
+  --success: light-dark(#13804f, #3dd68c);
+  --scrollbar-thumb: light-dark(#9ca7b9, #33445f);
+  --scrim: light-dark(rgba(15, 26, 43, 0.4), rgba(5, 10, 20, 0.65));
+
+  --control-padding-y: 6px;
+  --chip-radius: var(--radius-sm);
+  /* 行の寸法。--row-height は仮想スクロールの行の高さの唯一の情報源で、
+     行の積算(上下 padding 6px×2 + 下端の区切り線 1px + 内容の高さ)から決める。
+     内容は、左がファイル名の行 22px + サムネイル 150px + 横スクロールバー、
+     右(行の上端から始まる情報パネル)が プロパティ4行 + ★ + タグ + 追加欄 +
+     枠・余白 ≒ 172px。右の見積もりは実機で測った値ではなく、余裕がほとんど
+     無い(数 px あふれる可能性もある。あふれた分は情報パネルの縦スクロールに
+     回る)。高さを足すと一覧の密度が下がるので、実機で実測してから決めること。 */
+  --row-height: 199px;
+  --row-pad-y: 6px;
+  --row-pad-l: 12px;
+  --row-pad-r: 8px;
+  --row-gap-y: 0px;
+  --row-inset-x: 0px;
+  --name-h: 22px;
+  /* 情報パネルをファイル名の行から始める(他のテーマはサムネイルの高さから)。 */
+  --info-offset-top: 0px;
+  /* 行頭のチェックボックスの列(幅 14px + 右の gap 8px)。全テーマ共通の値。 */
+  --check-w: 22px;
+  /* 一覧の左右に入る枠の幅の合計(.list-layer の左右の枠 1px×2)。 */
+  --list-frame-x: 2px;
+
+  /* 一覧の面・行・情報パネルの見た目。部品のCSSはここのトークンだけを読む。
+     枠の幅は 上 右 下 左 の4値で、0 の辺は描かれない。
+     行は下端の区切り線だけ。一覧の面と情報パネルは枠付きのカード。 */
+  --layer-bg: var(--surface);
+  --layer-border-width: 1px 1px 1px 1px;
+  --layer-radius: var(--radius-md);
+  --layer-overflow: hidden;
+  --row-bg: transparent;
+  --row-border-width: 0 0 1px 0;
+  --row-radius: 0;
+  --row-selected-border-color: var(--row-border);
+  --row-selected-shadow: none;
+  --row-multi-selected-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
+  --info-padding: var(--space-2);
+  --info-border-width: 1px 1px 1px 1px;
+  --info-radius: var(--radius-md);
+  --info-bg: var(--surface-2);
+  --info-idle-color: currentcolor;
+  --info-idle-dt-opacity: 0.7;
+  --list-header-letter-spacing: 0.08em;
+}

@@ -1,0 +1,70 @@
+/* ---- Fluent: Windows 11 標準アプリと地続き。地の上に角丸のレイヤー面 ---- */
+:root[data-theme="fluent"] {
+  font-size: 13px;
+  line-height: 20px;
+  --font-xs: 0.846em;
+  --font-sm: 0.923em;
+  --font-lg: 1.154em;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+  --page-bg: light-dark(#d9dadd, #1c1f26);
+  --surface: light-dark(#e1e2e5, #252932);
+  --surface-2: light-dark(#e8e9ec, #2d323c);
+  --text: light-dark(#1b1b1b, #f3f4f6);
+  --text-muted: light-dark(#4f535a, #b4bac6);
+  --text-subtle: light-dark(#5b5f66, #a0a7b3);
+  --row-border: light-dark(#c7cad0, #353a45);
+  --border-strong: light-dark(#a9adb5, #4a505c);
+  --accent: light-dark(#00508d, #60cdff);
+  --accent-fg: light-dark(#ffffff, #00253a);
+  --row-selected-bg: light-dark(#c6d8e9, #1f3a4c);
+  --hover-bg: light-dark(#d4d6da, #2c313b);
+  --chip-bg: light-dark(#cfd2d8, #353b47);
+  --chip-text: light-dark(#26292e, #e3e7ee);
+  --star: light-dark(#9e5f00, #ffc83d);
+  --danger: light-dark(#c42b1c, #ff99a4);
+  --warn: light-dark(#8a5100, #f7c948);
+  --success: light-dark(#0f7b0f, #6ccb5f);
+  --scrollbar-thumb: light-dark(#979ba3, #5a606c);
+  --scrim: light-dark(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.55));
+
+  --control-padding-y: 8px;
+  --chip-radius: var(--radius-pill);
+  /* 行はカード(上下の隙間 4px ずつ = --row-gap-y の 8px)。積算: 隙間 8px +
+     カードの枠 1px×2 + padding 8px×2 + (ファイル名の行 24px + 情報パネル
+     ≒ 168px) = 218px に対し 222px。差は 4px だが、情報パネルの 168px は実機で
+     測った値ではないので、実質の余裕は 1〜2px 程度しかない。実機での実測が必要。 */
+  --row-height: 222px;
+  --row-pad-y: 8px;
+  --row-pad-l: 16px;
+  --row-pad-r: 8px;
+  --row-gap-y: 8px;
+  --row-inset-x: 8px;
+  --name-h: 24px;
+  --info-offset-top: 24px;
+  --check-w: 22px;
+  /* 行カードの左右の枠 1px×2 + .list-layer の左の枠 1px(右は無い)。 */
+  --list-frame-x: 3px;
+
+  /* 一覧の面・行・情報パネルの見た目。部品のCSSはここのトークンだけを読む。
+     枠の幅は 上 右 下 左 の4値で、0 の辺は描かれない。
+     レイヤー面は左上だけ角丸で上と左だけ枠。行は全周の枠のカードで、選択はアクセント色の枠。 */
+  --layer-bg: var(--surface);
+  --layer-border-width: 1px 0 0 1px;
+  --layer-radius: var(--radius-md) 0 0 0;
+  --layer-overflow: visible;
+  --row-bg: var(--surface-2);
+  --row-border-width: 1px 1px 1px 1px;
+  --row-radius: var(--radius-md);
+  --row-selected-border-color: var(--accent);
+  --row-selected-shadow: none;
+  --row-multi-selected-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
+  --info-padding: 0;
+  --info-border-width: 0;
+  --info-radius: 0;
+  --info-bg: transparent;
+  --info-idle-color: currentcolor;
+  --info-idle-dt-opacity: 0.7;
+  --list-header-letter-spacing: normal;
+}

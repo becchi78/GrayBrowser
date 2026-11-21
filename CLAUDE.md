@@ -23,7 +23,7 @@ GrayBrowserは、大量のローカル動画ファイルを高速にスキャン
 - **OS依存ロジックの分離**: ビジネスロジック（ハッシュ計算、機種依存文字バリデーション、パスマッチング等）はOS非依存の純粋関数として `crates/gb-core` に実装し、`#[cfg(windows)]` を含めない。Windows API依存処理はtraitを介した薄いアダプタ層（`src-tauri/src/adapters/`）に閉じ込める。`gb-core` に `tauri`/`rusqlite`/`notify`/`windows-sys` を依存させない。これはテストの高速化・決定性確保のための方針であり、実行環境の制約とは無関係に維持する。
 - **trait+adapter+fakeパターン**: 新規にOS/外部依存を足すときは、`crates/gb-core/src/ports/` にtraitを定義し、`src-tauri/src/adapters/` に実装し、`crates/gb-core/src/testing/`（Cargo feature `testing` 限定）にフェイクを置く。コマンド層は「フェイク注入可能な薄皮関数 + `#[tauri::command]` ラッパー」に分離し、実Tauriランタイム無しにunit test可能にする。
 
-DBスキーマ・ID設計・参照整合性の規約は `db-schema-change` スキル、サムネイル・機種依存文字ファイル名・外部プロセス呼び出しの規約は `media-ingestion` スキルを参照。
+DBスキーマ・ID設計・参照整合性の規約は `db-schema-change` スキル、サムネイル・機種依存文字ファイル名・外部プロセス呼び出しの規約は `media-ingestion` スキルを参照。テーマ(見た目の設計)の追加・変更の規約と手順は `theme-change` スキルを参照。
 
 ## コメントの書き方
 

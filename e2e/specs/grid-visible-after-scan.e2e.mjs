@@ -61,11 +61,11 @@ import { ensureAppDbExists, scanViaFolderDialog, searchAndWaitForCellCount, wait
 const DEFAULT_WINDOW = { width: 1280, height: 900 };
 const MIN_WINDOW = { width: 900, height: 580 };
 // `.video-list`'s `min-height` floor, which is the `--row-height` token in
-// themes.css (ThumbnailGrid.tsx reads the same token as the virtualizer's row
+// themes/<theme>.css (ThumbnailGrid.tsx reads the same token as the virtualizer's row
 // size). The app starts on the default theme (console) when the e2e profile
 // has no stored setting, and console's `--row-height` is 199px, so that is the
 // floor asserted here; other themes use larger values (fluent 222, cinema
-// 218). Keep this in step with themes.css when the console row dimensions
+// 218). Keep this in step with themes/console.css when the console row dimensions
 // change. A row hosts the thumbnail + metadata/rating/tag editor, so the
 // floor needs enough height to fit one full row. One methodology note worth
 // keeping: reading `scrollHeight` on a `height`-overridden element with

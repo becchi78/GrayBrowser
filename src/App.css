@@ -1,4 +1,4 @@
-/* 色・フォントサイズ・角丸・行の寸法などテーマで変わるトークンは themes.css
+/* 色・フォントサイズ・角丸・行の寸法などテーマで変わるトークンは themes/ のCSS
    にある(`<html>` の data-theme / data-mode で切り替わる)。ここには、テーマに
    依存しないトークンだけを置く。同じ値でも役割が違えば別の変数にし、一方だけ
    色を変えても他方に波及しないようにする。 */
@@ -20,7 +20,7 @@
      情報パネル(.video-row-info)のように全体を縮小している領域の中でも、
      同じトークンが縮小後の大きさに追従する。px にすると縮小が効かなくなる。
      段階を増やすと近い値が乱立するので、補足(xs)・本文より小さめ(sm)・本文(base)・
-     強調(lg)の4段階に絞る。xs/sm/lg はテーマごとに themes.css が決める。 */
+     強調(lg)の4段階に絞る。xs/sm/lg はテーマごとに themes/<テーマ名>.css が決める。 */
   --font-base: 1em;
 
   /* 余白は4px刻み。em だと使う場所の文字サイズで実寸が変わり、同じ値でも
@@ -72,7 +72,7 @@
   font-family:
     "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", Inter,
     Avenir, Helvetica, Arial, system-ui, sans-serif;
-  /* font-size / line-height はテーマごと(themes.css)。 */
+  /* font-size / line-height はテーマごと(themes/<テーマ名>.css)。 */
   font-weight: var(--weight-regular);
 
   color: var(--text);
@@ -818,14 +818,21 @@ button.search-box-clear {
    横並び(row)の flex なので、flex: 1 の flex-basis 0 だけでは左ペインが広がったとき
    0 まで縮んでしまうのを防ぐ下限。値は、行の非内容幅(左右の padding・列間の
    gap・チェックボックス列)+ サムネイル領域の最小幅 + 情報パネルの幅で、
-   themes.css の --video-list-min-width が持つ。サイドバーの最大幅の計算
-   (sidebarResize.ts)も同じ変数を読む。 */
+   themes/_base.css の --video-list-min-width が持つ。サイドバーの最大幅の計算
+   (sidebarResize.ts)も同じ変数を読む。面・枠・角丸はテーマのトークンで決まる。
+   枠は style を常に solid にし、幅(上 右 下 左)だけをトークンで 0 にして消す。 */
 .list-layer {
   flex: 1;
   min-width: var(--video-list-min-width);
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background-color: var(--layer-bg);
+  border-style: solid;
+  border-color: var(--row-border);
+  border-width: var(--layer-border-width);
+  border-radius: var(--layer-radius);
+  overflow: var(--layer-overflow);
 }
 
 .list-header {
@@ -838,6 +845,10 @@ button.search-box-clear {
   font-size: var(--font-sm);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.list-header-title {
+  letter-spacing: var(--list-header-letter-spacing);
 }
 
 .list-header-count {
@@ -888,8 +899,14 @@ button.search-box-clear {
   padding: var(--row-pad-y) var(--row-pad-r) var(--row-pad-y) var(--row-pad-l);
   box-sizing: border-box;
   overflow: hidden;
-  border-bottom: 1px solid var(--row-border);
-  background-color: var(--row-bg, transparent);
+  /* 枠の style は常に solid で、辺ごとの幅(--row-border-width は上 右 下 左)
+     だけがテーマで変わる。幅は box-sizing: border-box の内側に入るので、
+     --row-height の積算はこの幅を前提にしている。 */
+  border-style: solid;
+  border-color: var(--row-border);
+  border-width: var(--row-border-width);
+  border-radius: var(--row-radius);
+  background-color: var(--row-bg);
 }
 
 .video-row:hover {
@@ -899,13 +916,19 @@ button.search-box-clear {
 .video-row--selected,
 .video-row--selected:hover {
   background-color: var(--row-selected-bg);
+  border-color: var(--row-selected-border-color);
 }
 
-/* Only applied with 2+ rows selected, so a lone selection keeps the plain selected look. */
+.video-row--selected {
+  box-shadow: var(--row-selected-shadow);
+}
+
+/* Only applied with 2+ rows selected, so a lone selection keeps the plain selected look.
+   上の .video-row--selected より後ろに置くこと(両方のクラスを持つ行で、こちらが勝つ)。 */
 .video-row--multi-selected,
 .video-row--multi-selected:hover {
   background-color: var(--row-multi-selected-bg);
-  box-shadow: inset 4px 0 0 var(--row-multi-selected-accent);
+  box-shadow: var(--row-multi-selected-shadow);
 }
 
 /* 行頭のチェックボックス(その列幅が --check-w。チェックボックスの幅 + 右の gap 8px)。
@@ -1065,6 +1088,12 @@ button.search-box-clear {
   flex-direction: column;
   justify-content: flex-start;
   gap: 0.35em;
+  padding: var(--info-padding);
+  border-style: solid;
+  border-color: var(--row-border);
+  border-width: var(--info-border-width);
+  border-radius: var(--info-radius);
+  background-color: var(--info-bg);
   overflow-y: auto;
   overflow-x: hidden;
   /* Shrinks the entire panel proportionally -- every child rule below
@@ -1072,7 +1101,7 @@ button.search-box-clear {
      `.star`, etc.) is already written in relative `em` units against this
      ancestor's `font-size` (this file's usual pattern), so adding it once
      here is enough; no individual child rule needs editing to shrink along
-     with it. `--video-list-min-width` (themes.css) is derived from this
+     with it. `--video-list-min-width` (themes/_base.css) is derived from this
      column's width (`--info-w`), so the two cannot drift apart. */
   font-size: var(--font-sm);
 }
@@ -2630,75 +2659,23 @@ button.filter-bar-chip-remove:hover {
   font-size: inherit;
 }
 
-/* ---- テーマ別の出し分け(DOM は全テーマ共通) ---- */
+/* ---- テーマ別の見た目(DOM は全テーマ共通。差はトークンの値だけで表す) ---- */
 
-/* Fluent: 一覧をレイヤー面(左上だけ角丸)で包み、行をカードにする。 */
-:root[data-theme="fluent"] .list-layer {
-  background-color: var(--surface);
-  border: 1px solid var(--row-border);
-  border-right: none;
-  border-bottom: none;
-  border-top-left-radius: var(--radius-md);
-  --row-bg: var(--surface-2);
-}
-
-:root[data-theme="fluent"] .video-row {
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius-md);
-}
-
-:root[data-theme="fluent"] .video-row--selected,
-:root[data-theme="fluent"] .video-row--selected:hover {
-  border-color: var(--accent);
-}
-
-/* シネマ: 非選択・非ホバーの行は情報パネルを減光し、ホバーで 150ms かけて戻す。
-   選択行はアクセントの細い枠で示す。 */
+/* 非選択・非ホバー・非フォーカスの行の情報パネルを、テーマが決めた色へ減光し、
+   ホバーで 150ms かけて戻す。減光しないテーマは --info-idle-color が currentcolor(継承と同じ)。 */
 .video-row-info {
   transition: color 150ms;
 }
 
-:root[data-theme="cinema"]
-  .video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
+.video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
   .video-row-info {
-  color: var(--text-muted);
+  color: var(--info-idle-color);
 }
 
-/* 減光中は色(--text-muted)自体が既に薄いので、ラベルの opacity を重ねない
-   (重ねると --text-muted を超えて薄くなり、4.5:1 を割る)。 */
-:root[data-theme="cinema"]
-  .video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
+/* 減光中は色自体が既に薄いので、ラベルの opacity を重ねるかどうかもテーマが決める
+   (重ねると色トークンを超えて薄くなり、4.5:1 を割るテーマがある)。 */
+.video-row:not(.video-row--selected, .video-row--multi-selected, :hover, :focus-within)
   .video-row-properties
   dt {
-  opacity: 1;
-}
-
-:root[data-theme="cinema"] .video-row--selected,
-:root[data-theme="cinema"] .video-row--multi-selected {
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-:root[data-theme="cinema"] .video-row--multi-selected {
-  box-shadow:
-    inset 0 0 0 1px var(--accent),
-    inset 4px 0 0 var(--row-multi-selected-accent);
-}
-
-/* コンソール: カードの面、見出しの字間を空けた件数ヘッダー、枠付きの情報パネル。 */
-:root[data-theme="console"] .list-layer {
-  background-color: var(--surface);
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-:root[data-theme="console"] .list-header-title {
-  letter-spacing: 0.08em;
-}
-
-:root[data-theme="console"] .video-row-info {
-  padding: var(--space-2);
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-2);
+  opacity: var(--info-idle-dt-opacity);
 }

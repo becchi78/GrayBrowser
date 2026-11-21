@@ -1,7 +1,7 @@
 // 件数ヘッダー・左ペインの件数ピル・行頭のチェックボックスは、全テーマ共通の部品。
 // どこかのテーマの指定で隠してしまうと、jsdom では CSS が効かず気付けないので、
 // CSS のテキストで見張る。
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "vitest";
 
@@ -10,7 +10,11 @@ const css = readFileSync(resolve("src/App.css"), "utf8").replace(
   /\/\*[\s\S]*?\*\//g,
   "",
 );
-const themes = readFileSync(resolve("src/themes.css"), "utf8");
+// テーマごとのトークンは src/themes/<テーマ名>.css にある(_base.css は共通の導出)。
+const themes = readdirSync(resolve("src/themes"))
+  .filter((f) => f.endsWith(".css") && !f.startsWith("_"))
+  .map((f) => readFileSync(resolve("src/themes", f), "utf8"))
+  .join("\n");
 
 // 宣言ブロックごとに [セレクタ, 本体] へ分ける。@media の中の規則も、`{` と `}` の
 // 間にある単純な規則として拾える(セレクタの前に @media の見出しが付くだけ)。
