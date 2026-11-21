@@ -5,6 +5,7 @@ import { JUMP_PERCENTS } from "../lib/jumpToPercent";
 import { formatThumbnailProgress } from "../lib/thumbnailProgress";
 import type { ThumbnailProgress } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
+import { DevModeBadge } from "./DevModeBadge";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
 import { SkippedFilesPanel } from "./SkippedFilesPanel";
 
@@ -186,6 +187,7 @@ export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Pro
           </span>
         )}
       </div>
+      <DevModeBadge />
       <JumpMenu
         open={jumpMenuOpen}
         disabled={videoCount === 0}

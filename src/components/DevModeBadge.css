@@ -1,13 +1,19 @@
+/* ステータスバーの右端、ジャンプボタンの左に置く。右寄せの余白はこのバッジが
+   受け持つため、後ろに続くジャンプ側の自動余白は打ち消す(オフのときはバッジ
+   自体が無く、ジャンプが従来どおり右端に寄る)。 */
 .dev-mode-badge {
-  position: fixed;
-  right: var(--space-2);
-  bottom: var(--space-1);
-  z-index: 40;
+  margin-left: auto;
+  margin-right: var(--space-2);
   padding: var(--badge-padding);
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--accent-fg);
   font-size: var(--font-xs);
   font-weight: var(--weight-strong);
+  white-space: nowrap;
   pointer-events: none;
+}
+
+.dev-mode-badge + .status-jump {
+  margin-left: 0;
 }
