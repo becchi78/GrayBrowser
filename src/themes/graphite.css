@@ -1,0 +1,101 @@
+/* ---- Graphite: 無彩色だけで組むモノクローム。階層は明度差と細い線で示し、
+   色が付くのはサムネイルと意味色(警告・エラー・成功)だけ。既定のテーマで、
+   未設定・未知の data-theme でもこの値になる(素の :root を兼ねる)。 ---- */
+:root,
+:root[data-theme="graphite"] {
+  font-size: 13px;
+  /* 行間は px で持つ(文字サイズが入れ子で小さくなっても行の高さを一定にして、
+     下の --row-height の積算が成り立つようにするため)。13px の本文に対し、
+     行を詰めすぎない 20px(fluent / cinema と同じ)。モックの情報パネルの行の
+     間隔(約 20px)にも合う。 */
+  line-height: 20px;
+  --font-xs: 0.846em;
+  --font-sm: 0.923em;
+  --font-lg: 1.154em;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+  --page-bg: light-dark(#d8d8d8, #161616);
+  --surface: light-dark(#e0e0e0, #1c1c1c);
+  --surface-2: light-dark(#e8e8e8, #242424);
+  --text: light-dark(#1a1a1a, #ededed);
+  --text-muted: light-dark(#474747, #a8a8a8);
+  --text-subtle: light-dark(#545454, #999999);
+  --row-border: light-dark(#c6c6c6, #2c2c2c);
+  --border-strong: light-dark(#a3a3a3, #404040);
+  --accent: light-dark(#222222, #e6e6e6);
+  --accent-fg: light-dark(#f0f0f0, #161616);
+  --row-selected-bg: light-dark(#c9c9c9, #2e2e2e);
+  --hover-bg: light-dark(#d3d3d3, #222222);
+  --chip-bg: light-dark(#cecece, #2c2c2c);
+  --chip-text: light-dark(#262626, #d6d6d6);
+  --star: light-dark(#3a3a3a, #d9d9d9);
+  --danger: light-dark(#a82a2a, #f08a8a);
+  --warn: light-dark(#7a4e00, #e0b35a);
+  --success: light-dark(#2c6b3c, #7ccb8e);
+  --scrollbar-thumb: light-dark(#9a9a9a, #4a4a4a);
+  --scrim: light-dark(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.6));
+
+  /* ボタン・入力欄の高さ ≒ 行高 + padding×2 + 枠 1px×2。行間の指定が無いので
+     行高は UA の normal(13px の Segoe UI で約 17.3px)で、6px なら約 31px。
+     モックの検索欄・ボタン(約 31px)に合う(4px だと約 27px)。見積もりで、実機での
+     測定が必要。情報パネル内のボタン・入力欄は別の padding で上書きされるので、
+     行の高さには影響しない。 */
+  --control-padding-y: 6px;
+  /* 資料の文言(radius-sm 5px)とモック(両端が丸いピル)が食い違うため、モックに合わせた。 */
+  --chip-radius: var(--radius-pill);
+  /* 行の寸法。--row-height は仮想スクロールの行の高さの唯一の情報源で、
+     行の積算(区切り線 1px + 上下 padding 8px×2 + 内容の高さ)から決める。
+     内容は、左がファイル名の行 24px + サムネイル 150px + 横スクロールバー
+     (≒ 13px)= 187px、右(行の上端から始まる情報パネル)がプロパティ4行 +
+     ★ + タグ + 追加欄 ≒ 165px。大きいほうの左で 17 + 187 = 204px。モックの行の
+     間隔(約 204px)とも一致する。右の 165px と左のスクロールバーの 13px は
+     見積もりで、実機で測った値ではない。実機での実測が必要。 */
+  --row-height: 204px;
+  --row-pad-y: 8px;
+  --row-pad-l: 14px;
+  --row-pad-r: 14px;
+  --row-gap-y: 0px;
+  --row-inset-x: 0px;
+  --name-h: 24px;
+  /* 情報パネルをファイル名の行から始める(console と同じ2カラム)。 */
+  --info-offset-top: 0px;
+  --check-w: 22px;
+  /* 枠なし。 */
+  --list-frame-x: 0px;
+
+  /* 一覧の面・行・情報パネルの見た目。部品のCSSはここのトークンだけを読む。
+     枠の幅は 上 右 下 左 の4値で、0 の辺は描かれない。
+     行はカードにせず区切り線だけ。情報パネルは枠も背景も無い素のパネル。
+     選択行は背景 + 内側 1px のアクセント線(明度差だけに頼らない)。 */
+  --layer-bg: var(--surface);
+  --layer-border-width: 0 0 0 0;
+  --layer-radius: 0;
+  --layer-overflow: visible;
+  --row-bg: transparent;
+  --row-border-width: 0 0 1px 0;
+  --row-radius: 0;
+  --row-selected-border-color: var(--row-border);
+  --row-selected-shadow: inset 0 0 0 1px var(--accent);
+  --row-multi-selected-shadow: inset 0 0 0 1px var(--accent), inset 4px 0 0 var(--row-multi-selected-accent);
+  --info-padding: 0;
+  --info-border-width: 0;
+  --info-radius: 0;
+  --info-bg: transparent;
+  --info-idle-color: currentcolor;
+  --info-idle-dt-opacity: 0.7;
+  --list-header-letter-spacing: normal;
+
+  /* 情報パネルの幅、サムネイルの間隔・角丸、左ペインの初期幅と項目の高さ。 */
+  --info-w: 340px;
+  --thumb-gap: 3px;
+  --thumb-radius: 4px;
+  --nav-w: 224px;
+  --nav-item-h: 30px;
+  /* 面の区別は明度差で付け、影は浮いている面(ポップオーバー・ダイアログ)だけに使う。 */
+  --shadow-control: none;
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-popover-up: 0 -8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-dialog: 0 24px 56px rgba(0, 0, 0, 0.5);
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+}

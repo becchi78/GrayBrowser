@@ -20,17 +20,17 @@ beforeEach(() => {
   html().removeAttribute("data-theme");
   html().removeAttribute("data-mode");
   vi.spyOn(console, "error").mockImplementation(() => {});
-  vi.mocked(api.getAppearance).mockResolvedValue({ theme: "console", mode: "system" });
+  vi.mocked(api.getAppearance).mockResolvedValue({ theme: "graphite", mode: "system" });
   vi.mocked(api.setTheme).mockResolvedValue(undefined);
   vi.mocked(api.setAppearanceMode).mockResolvedValue(undefined);
   vi.mocked(api.setWindowTheme).mockResolvedValue(undefined);
 });
 
-test("写しが無ければ既定(console / system)を属性に付ける", async () => {
+test("写しが無ければ既定(graphite / system)を属性に付ける", async () => {
   renderHook(() => useAppearance());
   await settle();
 
-  expect(html().dataset.theme).toBe("console");
+  expect(html().dataset.theme).toBe("graphite");
   expect(html().dataset.mode).toBe("system");
 });
 

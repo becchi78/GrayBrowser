@@ -1,14 +1,15 @@
 /* テーマ(見た目の設計)の入口。<html> の data-theme で選び、色は light-dark() で
    持つので、ライト/ダークは color-scheme だけで切り替わる。data-theme が無い・未知の値
-   のときは既定の console になる。
+   のときは既定の graphite になる。
 
    仕様の値(色・フォントサイズ・角丸)はそのまま使う。フォントサイズは、情報パネルを
    縮小した中でも同じトークンが追従するよう em の比率で持っている(ルートの
    フォントサイズに対する仕様の px の比。ルート直下では仕様と同じ px になる)。
 
-   読み込み順: _base(console の `:root` と同じ詳細度の既定値を先に置く)→ 各テーマ。
+   読み込み順: _base(既定テーマの `:root` と同じ詳細度の既定値を先に置く)→ 各テーマ。
    テーマの一覧と必須トークンは themes/manifest.json、手順は theme-change スキル。 */
 @import "./themes/_base.css";
+@import "./themes/graphite.css";
 @import "./themes/console.css";
 @import "./themes/fluent.css";
 @import "./themes/cinema.css";

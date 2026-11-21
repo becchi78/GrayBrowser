@@ -52,7 +52,7 @@ test("チェックボックスの列幅は、全テーマが 0 より大きい�
   const widths = [...themes.matchAll(/--check-w:\s*(\d+)px/g)].map((m) =>
     Number(m[1]),
   );
-  expect(widths).toHaveLength(3);
+  expect(widths).toHaveLength(4);
   for (const w of widths) expect(w).toBeGreaterThan(0);
 });
 

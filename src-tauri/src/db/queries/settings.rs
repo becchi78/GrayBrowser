@@ -391,11 +391,21 @@ mod appearance_tests {
     use gb_core::appearance::{Mode, Theme};
 
     #[test]
-    fn theme_and_mode_default_to_console_and_system() {
+    fn theme_and_mode_default_to_graphite_and_system() {
         let (_d, db) = init_temp_db();
         let conn = db.writer.lock().unwrap();
-        assert_eq!(get_theme(&conn).unwrap(), Theme::Console);
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Graphite);
         assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::System);
+    }
+
+    #[test]
+    fn a_previously_saved_theme_survives_the_default_change() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        for theme in [Theme::Console, Theme::Fluent, Theme::Cinema] {
+            set_setting(&conn, THEME_KEY, theme.as_str()).unwrap();
+            assert_eq!(get_theme(&conn).unwrap(), theme);
+        }
     }
 
     #[test]
@@ -416,7 +426,7 @@ mod appearance_tests {
         let conn = db.writer.lock().unwrap();
         set_setting(&conn, THEME_KEY, "neon").unwrap();
         set_setting(&conn, APPEARANCE_MODE_KEY, "").unwrap();
-        assert_eq!(get_theme(&conn).unwrap(), Theme::Console);
+        assert_eq!(get_theme(&conn).unwrap(), Theme::Graphite);
         assert_eq!(get_appearance_mode(&conn).unwrap(), Mode::System);
     }
 }

@@ -6,6 +6,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
     #[default]
+    Graphite,
     Console,
     Fluent,
     Cinema,
@@ -13,10 +14,16 @@ pub enum Theme {
 
 impl Theme {
     /// Display order of the menu: the default first.
-    pub const ALL: [Theme; 3] = [Theme::Console, Theme::Fluent, Theme::Cinema];
+    pub const ALL: [Theme; 4] = [
+        Theme::Graphite,
+        Theme::Console,
+        Theme::Fluent,
+        Theme::Cinema,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Theme::Graphite => "graphite",
             Theme::Console => "console",
             Theme::Fluent => "fluent",
             Theme::Cinema => "cinema",
@@ -61,8 +68,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_console_and_system() {
-        assert_eq!(Theme::default(), Theme::Console);
+    fn defaults_are_graphite_and_system() {
+        assert_eq!(Theme::default(), Theme::Graphite);
         assert_eq!(Mode::default(), Mode::System);
     }
 
@@ -70,7 +77,7 @@ mod tests {
     fn themes_are_listed_default_first() {
         assert_eq!(
             Theme::ALL.map(Theme::as_str),
-            ["console", "fluent", "cinema"]
+            ["graphite", "console", "fluent", "cinema"]
         );
         assert_eq!(Theme::ALL[0], Theme::default());
     }
@@ -86,8 +93,18 @@ mod tests {
     }
 
     #[test]
+    fn previously_chosen_themes_still_parse() {
+        // Stored values from before Graphite became the default must keep
+        // their meaning; only a missing value falls back to the default.
+        assert_eq!(Theme::parse("console"), Some(Theme::Console));
+        assert_eq!(Theme::parse("fluent"), Some(Theme::Fluent));
+        assert_eq!(Theme::parse("cinema"), Some(Theme::Cinema));
+        assert_eq!(Theme::parse("graphite"), Some(Theme::Graphite));
+    }
+
+    #[test]
     fn unknown_empty_and_differently_cased_values_are_rejected() {
-        for bad in ["", "Fluent", "default", " console", "console "] {
+        for bad in ["", "Fluent", "Graphite", "default", " console", "console "] {
             assert_eq!(Theme::parse(bad), None, "{bad:?}");
         }
         for bad in ["", "System", "auto", "dark "] {
