@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  getDeveloperMode,
   getNasPollIntervalMinutes,
   getRememberWindowSizeEnabled,
   getRestoreViewStateEnabled,
   getUpdateCheckOnStartup,
+  setDeveloperMode,
   setNasPollIntervalMinutes,
   setRememberWindowSizeEnabled,
   setRestoreViewStateEnabled,
@@ -30,6 +32,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   const [updateCheck, setUpdateCheck] = useState(true);
   const [restoreView, setRestoreView] = useState(true);
   const [rememberWindowSize, setRememberWindowSize] = useState(true);
+  const [developerMode, setDeveloperModeChecked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,13 +54,15 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       getUpdateCheckOnStartup(),
       getRestoreViewStateEnabled(),
       getRememberWindowSizeEnabled(),
+      getDeveloperMode(),
     ])
-      .then(([minutes, updateCheckOnStartup, restoreViewState, rememberSize]) => {
+      .then(([minutes, updateCheckOnStartup, restoreViewState, rememberSize, developer]) => {
         if (!cancelled) {
           setText(String(minutes));
           setUpdateCheck(updateCheckOnStartup);
           setRestoreView(restoreViewState);
           setRememberWindowSize(rememberSize);
+          setDeveloperModeChecked(developer);
           setLoading(false);
         }
       })
@@ -101,6 +106,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       await setUpdateCheckOnStartup(updateCheck);
       await setRestoreViewStateEnabled(restoreView);
       await setRememberWindowSizeEnabled(rememberWindowSize);
+      await setDeveloperMode(developerMode);
       if (mountedRef.current) {
         onClose();
       }
@@ -190,6 +196,21 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
           オフにすると、起動のたびに、既定の大きさで開きます。
         </p>
       </div>
+      <div className="settings-dialog-field">
+        <label className="settings-dialog-check">
+          <input
+            type="checkbox"
+            checked={developerMode}
+            disabled={busy}
+            data-testid="settings-developer-mode-input"
+            onChange={(e) => setDeveloperModeChecked(e.target.checked)}
+          />
+          開発者モード
+        </label>
+        <p className="dialog-hint">
+          オンにすると、更新の確認で、安定版に加えて開発版(動作確認用)も対象になります。開発版は不安定な場合があります。データベースの構造が変わる更新のときは、更新後の最初の起動で自動的にバックアップされます。
+        </p>
+      </div>
       {error !== null && (
         <p className="dialog-error dialog-error--compact" role="alert" data-testid="settings-dialog-error">
           {error}
@@ -205,6 +226,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             setUpdateCheck(true);
             setRestoreView(true);
             setRememberWindowSize(true);
+            setDeveloperModeChecked(false);
             setError(null);
           }}
         >

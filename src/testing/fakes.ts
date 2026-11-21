@@ -11,10 +11,10 @@ export function fakeUpdate(
   downloadAndInstall: (
     onEvent: Parameters<UpdateResult["downloadAndInstall"]>[0] & {},
   ) => Promise<void>,
-  { body = "ノート" }: { body?: string | null } = {},
+  { body = "ノート", version = "2.0.0" }: { body?: string | null; version?: string } = {},
 ) {
   return {
-    version: "2.0.0",
+    version,
     currentVersion: "1.0.0",
     body,
     close: vi.fn().mockResolvedValue(undefined),

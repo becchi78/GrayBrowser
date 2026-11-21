@@ -6,16 +6,32 @@ import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Prerelease/build suffixes are rejected on purpose: the workflow publishes
-// stable installers only, and a loose parse would let "v1.2.3-rc1" pass the
-// consistency check against a plain "1.2.3" in the manifests.
-const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
+// Only vX.Y.Z and vX.Y.Z-dev.N are accepted. Other prerelease/build suffixes
+// are rejected on purpose: a loose parse would let "v1.2.3-rc1" pass the
+// consistency check against a plain "1.2.3" in the manifests. The dev number
+// has no leading zeros so that one dev build has exactly one spelling.
+const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)(-dev\.(?:0|[1-9]\d*))?$/;
 
-/** "v0.8.4" -> "0.8.4". Returns null for anything that is not vX.Y.Z. */
+/** "v0.8.4" -> "0.8.4", "v0.18.0-dev.2" -> "0.18.0-dev.2". Returns null for any other form. */
 export function versionFromTag(tag) {
   const match = TAG_PATTERN.exec(tag);
-  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+  return match ? `${match[1]}.${match[2]}.${match[3]}${match[4] ?? ""}` : null;
 }
+
+/** True for a tag that versionFromTag accepts and that names a dev build. */
+export function isDevTag(tag) {
+  return versionFromTag(tag) !== null && tag.includes("-dev.");
+}
+
+/** True for a version string produced from a dev tag ("X.Y.Z-dev.N"). */
+export function isDevVersion(version) {
+  return /-dev\.\d+$/.test(version);
+}
+
+// Dev builds have no CHANGELOG section (they are not release candidates of a
+// particular entry), so the notes are fixed text shared by the release body
+// and the manifest.
+export const DEV_NOTES = "開発版・動作確認用です。安定版ではありません。不具合が含まれる場合があります。";
 
 function splitLines(text) {
   // The working tree may hold CRLF (autocrlf checkouts), and the notes must
@@ -64,15 +80,21 @@ export function sha256Hex(bytes) {
 
 /** Assembles the Draft release body. Throws when the version has no CHANGELOG section. */
 export function buildReleaseNotes({ changelog, version, installerName, sha256 }) {
-  const section = extractChangelogSection(changelog, version);
-  if (section === null) {
-    throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
-  }
-  if (section === "") {
-    throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
+  let head;
+  if (isDevVersion(version)) {
+    head = DEV_NOTES;
+  } else {
+    const section = extractChangelogSection(changelog, version);
+    if (section === null) {
+      throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
+    }
+    if (section === "") {
+      throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
+    }
+    head = promoteHeadings(section);
   }
   return [
-    promoteHeadings(section),
+    head,
     "",
     "## インストール時の注意(Windows SmartScreen)",
     "",
@@ -90,12 +112,12 @@ export function buildReleaseNotes({ changelog, version, installerName, sha256 })
 function main(argv) {
   const [tag, installerPath] = argv;
   if (!tag) {
-    console.error("usage: node release-notes.mjs vX.Y.Z [installer-path]");
+    console.error("usage: node release-notes.mjs vX.Y.Z[-dev.N] [installer-path]");
     return 2;
   }
   const version = versionFromTag(tag);
   if (version === null) {
-    console.error(`タグ "${tag}" は vX.Y.Z 形式ではありません`);
+    console.error(`タグ "${tag}" は vX.Y.Z または vX.Y.Z-dev.N 形式ではありません`);
     return 1;
   }
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

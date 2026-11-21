@@ -1,0 +1,13 @@
+.dev-mode-badge {
+  position: fixed;
+  right: var(--space-2);
+  bottom: var(--space-1);
+  z-index: 40;
+  padding: var(--badge-padding);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-strong);
+  pointer-events: none;
+}

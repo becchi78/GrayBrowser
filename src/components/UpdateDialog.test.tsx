@@ -91,6 +91,25 @@ test("更新があると新しいバージョンと現在のバージョン、�
   expect(text("update-dialog-apply-btn")).toHaveFocus();
 });
 
+test("提示された版が開発版なら、開発版であることを明示する", async () => {
+  vi.mocked(api.checkForUpdate).mockResolvedValue(
+    fakeUpdate(() => never(), { version: "2.1.0-dev.3" }),
+  );
+
+  renderDialog();
+
+  expect(await screen.findByTestId("update-dialog-dev-notice")).toHaveTextContent("開発版");
+});
+
+test("提示された版が安定版なら、開発版の表示は出さない", async () => {
+  vi.mocked(api.checkForUpdate).mockResolvedValue(fakeUpdate(() => never()));
+
+  renderDialog();
+
+  await screen.findByTestId("update-dialog-available");
+  expect(screen.queryByTestId("update-dialog-dev-notice")).toBeNull();
+});
+
 test.each([
   { name: "空文字", body: "" },
   { name: "空白だけ", body: "  \n " },

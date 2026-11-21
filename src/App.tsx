@@ -14,6 +14,7 @@ import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { UpdateNotice } from "./components/UpdateNotice";
+import { DevModeBadge } from "./components/DevModeBadge";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
@@ -242,6 +243,7 @@ function AppContent({
       {/* FfmpegNotice is a top-level, always-visible notice, not a dialog. */}
       <FfmpegNotice />
       <UpdateNotice onOpenDetails={() => openDialog("update")} />
+      <DevModeBadge />
 
       {/* FolderDialog/WbImportDialog are modals reachable only from the menu,
           not always-visible. */}
