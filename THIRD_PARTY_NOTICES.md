@@ -28,3 +28,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Space Grotesk
+
+The wordmark in the README banner images (`image/banner/`) is set in
+[Space Grotesk](https://github.com/floriankarsten/space-grotesk) and baked into
+the images as outlines or pixels; the font itself is not distributed with the
+application.
+
+Copyright 2020 The Space Grotesk Project Authors
+(https://github.com/floriankarsten/space-grotesk)
+
+Licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org).
