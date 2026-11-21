@@ -17,6 +17,9 @@ pub struct TagRow {
 pub enum TagMutationError {
     InvalidName(gb_core::tags::TagNameError),
     VideoNotFound { video_id: String },
+    EmptyGroupName,
+    DuplicateGroupName(String),
+    GroupNotFound { group_id: i64 },
     Sqlite(rusqlite::Error),
 }
 
@@ -26,6 +29,13 @@ impl std::fmt::Display for TagMutationError {
             TagMutationError::InvalidName(e) => write!(f, "invalid tag name: {e}"),
             TagMutationError::VideoNotFound { video_id } => {
                 write!(f, "video {video_id} does not exist")
+            }
+            TagMutationError::EmptyGroupName => write!(f, "グループ名を入力してください"),
+            TagMutationError::DuplicateGroupName(name) => {
+                write!(f, "同じ名前のタググループが既にあります: {name}")
+            }
+            TagMutationError::GroupNotFound { group_id } => {
+                write!(f, "タググループ {group_id} が見つかりません")
             }
             TagMutationError::Sqlite(e) => write!(f, "{e}"),
         }
@@ -37,7 +47,10 @@ impl std::error::Error for TagMutationError {
         match self {
             TagMutationError::InvalidName(e) => Some(e),
             TagMutationError::Sqlite(e) => Some(e),
-            TagMutationError::VideoNotFound { .. } => None,
+            TagMutationError::VideoNotFound { .. }
+            | TagMutationError::EmptyGroupName
+            | TagMutationError::DuplicateGroupName(_)
+            | TagMutationError::GroupNotFound { .. } => None,
         }
     }
 }
@@ -298,17 +311,13 @@ fn list_tag_usage_for_videos_chunked(
         return Ok(Vec::new());
     }
 
-    let mut stmt =
-        tx.prepare("SELECT id, name FROM tags ORDER BY (sort_order IS NULL), sort_order, name")?;
-    let tags = stmt
-        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(tags
+    let layout = load_layout(&tx)?;
+    Ok(gb_core::tag_layout::flatten(&layout)
         .into_iter()
-        .filter_map(|(id, name)| {
-            counts.get(&id).map(|&video_count| TagWithCountRow {
-                id,
-                name,
+        .filter_map(|t| {
+            counts.get(&t.id).map(|&video_count| TagWithCountRow {
+                id: t.id,
+                name: t.name.clone(),
                 video_count,
             })
         })
@@ -337,74 +346,229 @@ pub fn list_tags_for_video(
     Ok(rows)
 }
 
-/// Every tag in the `tags` master table, for a tag picker/autocomplete UI --
-/// independent of whether it's currently assigned to any video. Ordered by the
-/// user-defined `sort_order`; tags without one follow, by name.
-pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Result<Vec<TagRow>> {
-    let conn = pool.get()?;
-    let mut stmt =
-        conn.prepare("SELECT id, name FROM tags ORDER BY (sort_order IS NULL), sort_order, name")?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(TagRow {
-                id: r.get(0)?,
-                name: r.get(1)?,
-            })
-        })?
+/// Reads every group and tag and builds the display layout. Takes a plain
+/// `&Connection` (a `Transaction` derefs to it) so writers can read inside
+/// their own transaction and compute from the same snapshot they then write.
+fn load_layout(conn: &Connection) -> rusqlite::Result<gb_core::tag_layout::TagLayout> {
+    let groups = conn
+        .prepare("SELECT id, name, sort_order FROM tag_groups")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    let tags = conn
+        .prepare("SELECT id, name, sort_order, group_id FROM tags")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(gb_core::tag_layout::build_layout(&groups, &tags))
 }
 
+/// Writes the whole layout back. Every tag and group is renumbered (and every
+/// tag's `group_id` rewritten) rather than only the moved ones, so stale
+/// numbers or dangling `group_id`s left by earlier edits cannot tie with the
+/// fresh ones. The caller owns the transaction.
+fn save_layout(tx: &Transaction, layout: &gb_core::tag_layout::TagLayout) -> rusqlite::Result<()> {
+    let a = gb_core::tag_layout::assignments(layout);
+    let mut tag_stmt =
+        tx.prepare("UPDATE tags SET group_id = ?1, sort_order = ?2 WHERE id = ?3")?;
+    for t in &a.tags {
+        tag_stmt.execute(params![t.group_id, t.sort_order, t.id])?;
+    }
+    let mut group_stmt = tx.prepare("UPDATE tag_groups SET sort_order = ?1 WHERE id = ?2")?;
+    for g in &a.groups {
+        group_stmt.execute(params![g.sort_order, g.id])?;
+    }
+    Ok(())
+}
+
+/// Every tag in the `tags` master table, for a tag picker/autocomplete UI --
+/// independent of whether it's currently assigned to any video. In the
+/// left-pane display order, with each group's tags listed where the group is.
+pub fn list_all_tags(pool: &r2d2::Pool<SqliteConnectionManager>) -> anyhow::Result<Vec<TagRow>> {
+    let conn = pool.get()?;
+    let layout = load_layout(&conn)?;
+    Ok(gb_core::tag_layout::flatten(&layout)
+        .into_iter()
+        .map(|t| TagRow {
+            id: t.id,
+            name: t.name.clone(),
+        })
+        .collect())
+}
+
+#[derive(Debug)]
 pub struct TagWithCountRow {
     pub id: i64,
     pub name: String,
     pub video_count: i64,
 }
 
-/// Same tags and order as `list_all_tags`, plus how many videos carry each
-/// one. LEFT JOIN keeps tags with no videos (count 0), which a plain join
-/// would drop.
-pub fn list_all_tags_with_video_count(
+/// A top-level entry of the tag layout, with usage counts on the tags.
+#[derive(Debug)]
+pub enum LayoutItemRow {
+    Tag(TagWithCountRow),
+    Group {
+        id: i64,
+        name: String,
+        tags: Vec<TagWithCountRow>,
+    },
+}
+
+/// Attaches how many videos carry each tag. Tags with no videos get 0.
+fn with_counts(
+    conn: &Connection,
+    layout: &gb_core::tag_layout::TagLayout,
+) -> rusqlite::Result<Vec<LayoutItemRow>> {
+    use gb_core::tag_layout::{LayoutItem, TagEntry};
+    let counts: std::collections::HashMap<i64, i64> = conn
+        .prepare("SELECT tag_id, COUNT(*) FROM video_tags GROUP BY tag_id")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let row = |t: &TagEntry| TagWithCountRow {
+        id: t.id,
+        name: t.name.clone(),
+        video_count: counts.get(&t.id).copied().unwrap_or(0),
+    };
+    Ok(layout
+        .items
+        .iter()
+        .map(|item| match item {
+            LayoutItem::Tag(t) => LayoutItemRow::Tag(row(t)),
+            LayoutItem::Group(g) => LayoutItemRow::Group {
+                id: g.id,
+                name: g.name.clone(),
+                tags: g.tags.iter().map(row).collect(),
+            },
+        })
+        .collect())
+}
+
+/// The left-pane layout: ungrouped tags and groups in display order.
+pub fn get_tag_layout(
     pool: &r2d2::Pool<SqliteConnectionManager>,
-) -> anyhow::Result<Vec<TagWithCountRow>> {
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.name, COUNT(vt.video_id) \
-         FROM tags t LEFT JOIN video_tags vt ON vt.tag_id = t.id \
-         GROUP BY t.id \
-         ORDER BY (t.sort_order IS NULL), t.sort_order, t.name",
-    )?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(TagWithCountRow {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                video_count: r.get(2)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+) -> anyhow::Result<Vec<LayoutItemRow>> {
+    let mut conn = pool.get()?;
+    // One transaction so the tags and their counts come from a single snapshot.
+    let tx = conn.transaction()?;
+    let layout = load_layout(&tx)?;
+    Ok(with_counts(&tx, &layout)?)
+}
+
+/// Runs `edit` on the current layout and stores the result, all in one
+/// transaction; an `Err` from `edit` or any statement rolls everything back.
+/// `edit` may also change `tag_groups` rows (create/delete) through `tx`.
+/// Returns the stored layout with counts.
+fn edit_layout(
+    conn: &mut Connection,
+    edit: impl FnOnce(
+        &Transaction,
+        gb_core::tag_layout::TagLayout,
+    ) -> Result<Option<gb_core::tag_layout::TagLayout>, TagMutationError>,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    let tx = conn.transaction()?;
+    let current = load_layout(&tx)?;
+    let layout = match edit(&tx, current.clone())? {
+        Some(next) => {
+            save_layout(&tx, &next)?;
+            next
+        }
+        // Nothing to change (e.g. an edge move): skip the write entirely.
+        None => current,
+    };
+    let rows = with_counts(&tx, &layout)?;
+    tx.commit()?;
     Ok(rows)
 }
 
-/// Stores the user's tag order: the first id gets 0, the next 1, and so on.
-/// Ids with no tag are skipped without leaving a gap, and a repeated id keeps
-/// its first position. Every tag not in the list is reset to NULL (placed
-/// after the listed ones, by name) rather than left as is: a stale number
-/// could equal one just assigned and make the order between the two
-/// undefined. One transaction, so a failure leaves the previous order intact.
-pub fn set_tag_order(conn: &mut Connection, tag_ids: &[i64]) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
-    tx.execute("UPDATE tags SET sort_order = NULL", [])?;
-    let mut next = 0_i64;
-    {
-        let mut stmt = tx.prepare("UPDATE tags SET sort_order = ?1 WHERE id = ?2")?;
-        for id in gb_core::tags::dedup_keep_first(tag_ids) {
-            if stmt.execute(params![next, id])? > 0 {
-                next += 1;
-            }
+/// Moves a tag or group one step up or down in the visible order. At an edge
+/// (or for an unknown id) nothing changes and the current layout is returned.
+pub fn move_tag_layout_item(
+    conn: &mut Connection,
+    item: gb_core::tag_layout::ItemRef,
+    direction: gb_core::tag_layout::Direction,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    edit_layout(conn, |_, layout| {
+        Ok(gb_core::tag_layout::move_item(&layout, item, direction))
+    })
+}
+
+/// Creates an empty group at the top of the list. The name is normalized like
+/// a tag name and must be unique.
+pub fn create_tag_group(
+    conn: &mut Connection,
+    raw_name: &str,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    let name = normalize_group_name(raw_name)?;
+    edit_layout(conn, |tx, layout| {
+        if group_id_by_name(tx, &name)?.is_some() {
+            return Err(TagMutationError::DuplicateGroupName(name.clone()));
         }
-    }
-    tx.commit()
+        tx.execute("INSERT INTO tag_groups (name) VALUES (?1)", params![name])?;
+        let id = tx.last_insert_rowid();
+        Ok(Some(gb_core::tag_layout::insert_group_at_top(
+            &layout, id, &name,
+        )))
+    })
+}
+
+/// Renames a group. Renaming to its current name is a no-op; a name another
+/// group already uses is an error.
+pub fn rename_tag_group(
+    conn: &mut Connection,
+    group_id: i64,
+    raw_name: &str,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    let name = normalize_group_name(raw_name)?;
+    edit_layout(conn, |tx, _| {
+        let exists = tx
+            .query_row(
+                "SELECT 1 FROM tag_groups WHERE id = ?1",
+                params![group_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists {
+            return Err(TagMutationError::GroupNotFound { group_id });
+        }
+        match group_id_by_name(tx, &name)? {
+            Some(id) if id == group_id => return Ok(None),
+            Some(_) => return Err(TagMutationError::DuplicateGroupName(name.clone())),
+            None => {}
+        }
+        tx.execute(
+            "UPDATE tag_groups SET name = ?1 WHERE id = ?2",
+            params![name, group_id],
+        )?;
+        // The layout is read before the rename; reload so the saved and
+        // returned layout carry the new name.
+        Ok(Some(load_layout(tx)?))
+    })
+}
+
+/// Deletes a group. Its tags stay, at the top level where the group was, and
+/// no `video_tags` row is touched.
+pub fn delete_tag_group(
+    conn: &mut Connection,
+    group_id: i64,
+) -> Result<Vec<LayoutItemRow>, TagMutationError> {
+    edit_layout(conn, |tx, layout| {
+        tx.execute("DELETE FROM tag_groups WHERE id = ?1", params![group_id])?;
+        Ok(Some(gb_core::tag_layout::remove_group(&layout, group_id)))
+    })
+}
+
+/// Group names follow the tag-name rules, but an empty name is reported in
+/// terms of groups since the message is shown to the user as is.
+fn normalize_group_name(raw: &str) -> Result<String, TagMutationError> {
+    gb_core::tags::normalize_tag_name(raw).map_err(|_| TagMutationError::EmptyGroupName)
+}
+
+fn group_id_by_name(tx: &Transaction, name: &str) -> rusqlite::Result<Option<i64>> {
+    tx.query_row(
+        "SELECT id FROM tag_groups WHERE name = ?1",
+        params![name],
+        |r| r.get(0),
+    )
+    .optional()
 }
 
 /// Deletes a tag from the `tags` master table and every `video_tags` row

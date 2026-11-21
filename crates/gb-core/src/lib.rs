@@ -24,6 +24,7 @@ pub mod scan_pipeline;
 pub mod search;
 pub mod sort;
 pub mod stderr_tail;
+pub mod tag_layout;
 pub mod tags;
 pub mod thumbnail_paths;
 pub mod thumbnail_policy;

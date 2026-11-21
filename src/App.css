@@ -288,6 +288,7 @@ input:not([type="checkbox"], [type="radio"]):focus-visible {
    内側に描く。 */
 .sidebar-section-toggle:focus-visible,
 .folder-sidebar-item:focus-visible,
+.tag-bar-group:focus-visible,
 .rating-bar-item:focus-visible {
   outline-offset: var(--focus-ring-offset-inset);
 }
@@ -502,6 +503,62 @@ button.search-box-clear {
   min-width: 0;
 }
 
+/* タググループの見出し行。.folder-sidebar-item の後ろ(下の定義)より詳細度を
+   上げて、flex 配置と左余白を上書きする。 */
+.folder-sidebar-item.tag-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding-left: 0.75em;
+}
+
+.tag-bar-group-chevron {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  /* 開いているときに下向きになるよう回す。 */
+  transition: transform 0.12s;
+}
+
+.tag-bar-group[aria-expanded="true"] .tag-bar-group-chevron {
+  transform: rotate(90deg);
+}
+
+.tag-bar-group-icon {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+  color: var(--icon-tag);
+}
+
+.tag-bar-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 閉じたグループの中に選択中のタグがあるときの件数。色は .folder-sidebar-badge と同じ。 */
+.tag-bar-group-badge {
+  flex: none;
+  margin-left: auto;
+  color: var(--offline-text);
+  background-color: var(--offline-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--badge-padding);
+  font-size: var(--font-sm);
+}
+
+/* グループ内のタグは、グループ名の文字の位置に揃えて字下げする。 */
+.folder-sidebar-item.tag-bar-chip--grouped {
+  padding-left: calc(0.75em + 0.9em + 1.1em + 0.8em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-bar-group-chevron {
+    transition: none;
+  }
+}
+
 /* 評価の一覧。フォルダ一覧と同じ縦並びのボタン。 */
 .rating-bar {
   display: flex;
@@ -562,9 +619,53 @@ button.search-box-clear {
   text-overflow: ellipsis;
 }
 
-/* `.dialog-footer` is `space-between`, which would left-align a lone button. */
-.tag-bar-edit-footer {
-  justify-content: flex-end;
+/* グループ内のタグは、グループ見出しの下にインデントして並べる。 */
+.tag-bar-edit-row--grouped {
+  padding-left: var(--space-4);
+}
+
+.tag-bar-edit-group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.tag-bar-edit-group-icon {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+  color: var(--icon-tag);
+}
+
+.tag-bar-edit-group-name {
+  font-weight: 600;
+}
+
+.tag-bar-edit-group-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tag-bar-edit-create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tag-bar-edit-input-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tag-bar-edit-name-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-sm);
 }
 
 /* The `flex: 1` body row that hosts LeftPane + the video list side by side.

@@ -166,6 +166,27 @@ pub fn set_sidebar_sections_collapsed(
     Ok(())
 }
 
+const TAG_GROUPS_COLLAPSED_KEY: &str = "tag_groups_collapsed";
+
+/// Ids of the tag groups the user has collapsed. Unset and unparseable values
+/// both read as empty (every group open): a corrupt value must not leave tags
+/// hidden with no obvious cause. Ids of deleted groups may linger; they match
+/// nothing and ids are never reused (AUTOINCREMENT).
+pub fn get_collapsed_tag_groups(conn: &Connection) -> anyhow::Result<Vec<i64>> {
+    Ok(get_setting(conn, TAG_GROUPS_COLLAPSED_KEY)?
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default())
+}
+
+pub fn set_collapsed_tag_groups(conn: &Connection, ids: &[i64]) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        TAG_GROUPS_COLLAPSED_KEY,
+        &serde_json::to_string(&gb_core::tags::dedup_keep_first(ids))?,
+    )?;
+    Ok(())
+}
+
 const RESTORE_VIEW_STATE_ENABLED_KEY: &str = "restore_view_state_enabled";
 
 const LAST_VIEW_STATE_KEY: &str = "last_view_state";

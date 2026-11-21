@@ -1,18 +1,25 @@
-import { useEffect, useState } from "react";
-import { deleteTag, listTagsWithVideoCount, setTagOrder } from "../api";
-import { moveDown, moveUp } from "../lib/reorder";
+import { Fragment, useEffect, useState } from "react";
+import {
+  createTagGroup,
+  deleteTag,
+  deleteTagGroup,
+  getTagLayout,
+  moveTagLayoutItem,
+  renameTagGroup,
+} from "../api";
 import { buildTagDeleteMessage } from "../lib/tagDeleteMessage";
-import type { TagWithCountDto } from "../types";
+import type { TagLayoutItemDto, TagWithCountDto } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell } from "./ModalShell";
+import { TagGroupRow } from "./TagGroupRow";
+import { TagRow } from "./TagRow";
 import { errorText } from "../lib/errorText";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   /** Bumped-parent-refetch callback, same role as FolderDialog's own
-   * `onChanged` -- TagBar re-fetches its tag order on `refreshKey`
-   * change. */
+   * `onChanged` -- TagBar re-fetches its layout on `refreshKey` change. */
   onChanged: () => void;
   /** Lets the parent drop the id from any active tag filter; a deleted tag
    * left in the filter would keep the video list filtered by an id that no
@@ -20,27 +27,39 @@ interface Props {
   onTagDeleted: (tagId: number) => void;
 }
 
-// Every ↑/↓ click is saved immediately, same convention as FolderDialog's
-// handleMove. The list is re-fetched after a save rather than mirrored locally:
-// the backend resets any tag missing from the submitted order, so re-reading
-// keeps the display equal to the persisted state. On failure the displayed list
-// is left untouched, which is exactly the persisted order.
-export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Props) {
-  const [tags, setTags] = useState<TagWithCountDto[]>([]);
-  const [reordering, setReordering] = useState(false);
+// Every change is saved immediately, same convention as FolderDialog's
+// handleMove. Where to move an item (including in and out of a group) is decided
+// by the backend, which returns the whole new layout; replacing the display with
+// that result keeps it equal to the persisted state. On failure the displayed
+// layout is left untouched, which is exactly the persisted one.
+export function TagBarEditDialog({ open, ...rest }: Props) {
+  // 親は常時マウントして open だけ切り替える。本体を開くたびに作り直すことで、
+  // 前回の入力状態や一覧(取得に失敗したときに残ってしまう)を確実に捨てる。
+  return open ? <TagBarEditDialogBody {...rest} /> : null;
+}
+
+function TagBarEditDialogBody({ onClose, onChanged, onTagDeleted }: Omit<Props, "open">) {
+  const [layout, setLayout] = useState<TagLayoutItemDto[]>([]);
+  const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TagWithCountDto | null>(null);
+  const [groupDeleteTarget, setGroupDeleteTarget] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [creating, setCreating] = useState(false);
+  const [createValue, setCreateValue] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+
   useEffect(() => {
-    if (!open) {
-      return;
-    }
     let cancelled = false;
-    listTagsWithVideoCount()
+    getTagLayout()
       .then((fetched) => {
         if (cancelled) return;
-        setTags(fetched);
+        setLayout(fetched);
         setError(null);
       })
       .catch((e) => {
@@ -49,28 +68,82 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, []);
 
-  if (!open) {
-    return null;
-  }
+  const busy = saving || deleting;
 
-  async function handleMove(index: number, direction: "up" | "down") {
-    const next = direction === "up" ? moveUp(tags, index) : moveDown(tags, index);
-    if (next === tags) {
-      return;
-    }
+  async function handleMove(kind: "tag" | "group", id: number, direction: "up" | "down") {
     setError(null);
-    setReordering(true);
+    setSaving(true);
     try {
-      await setTagOrder(next.map((tag) => tag.id));
-      // 並びは保存済み。後続の取り直しが失敗しても、左ペインには反映させる。
+      setLayout(await moveTagLayoutItem(kind, id, direction));
       onChanged();
-      setTags(await listTagsWithVideoCount());
     } catch (e) {
       setError(errorText(e));
     } finally {
-      setReordering(false);
+      setSaving(false);
+    }
+  }
+
+  function startCreate() {
+    setEditingGroupId(null);
+    setEditError(null);
+    setCreateValue("");
+    setCreateError(null);
+    setCreating(true);
+  }
+
+  async function handleCreate() {
+    setCreateError(null);
+    setSaving(true);
+    try {
+      setLayout(await createTagGroup(createValue));
+      setCreating(false);
+      onChanged();
+    } catch (e) {
+      setCreateError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startEdit(id: number, name: string) {
+    setCreating(false);
+    setCreateError(null);
+    setEditingGroupId(id);
+    setEditingValue(name);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit() {
+    if (editingGroupId === null) return;
+    setEditError(null);
+    setSaving(true);
+    try {
+      setLayout(await renameTagGroup(editingGroupId, editingValue));
+      setEditingGroupId(null);
+      onChanged();
+    } catch (e) {
+      setEditError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDeleteGroup() {
+    if (groupDeleteTarget === null) return;
+    const id = groupDeleteTarget;
+    setDeleting(true);
+    setError(null);
+    try {
+      setLayout(await deleteTagGroup(id));
+      if (editingGroupId === id) setEditingGroupId(null);
+      onChanged();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setDeleting(false);
+      setGroupDeleteTarget(null);
     }
   }
 
@@ -81,9 +154,10 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     setError(null);
     try {
       await deleteTag(target.id);
-      setTags((current) => current.filter((tag) => tag.id !== target.id));
+      // 削除は済んでいる。後続の取り直しが失敗しても、親には反映させる。
       onTagDeleted(target.id);
       onChanged();
+      setLayout(await getTagLayout());
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -91,6 +165,8 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
       setDeleteTarget(null);
     }
   }
+
+  const lastIndex = layout.length - 1;
 
   // ConfirmDialog sits beside (not inside) the ModalShell; see ModalShell for why.
   return (
@@ -101,50 +177,100 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         testId="tag-bar-edit-dialog"
         onDismiss={onClose}
         // 削除の確認が開いている間は、Escape で確認だけを閉じる。
-        dismissible={!reordering && !deleting && deleteTarget === null}
+        dismissible={
+          !busy && deleteTarget === null && groupDeleteTarget === null
+        }
       >
         <h2>タグの編集</h2>
-        {tags.length === 0 ? (
+        {creating && (
+          <div className="tag-bar-edit-create" data-testid="tag-bar-edit-create">
+            <div className="tag-bar-edit-input-controls">
+              <input
+                className="tag-bar-edit-name-input"
+                data-testid="tag-bar-edit-create-input"
+                aria-label="新しいグループ名"
+                placeholder="グループ名"
+                value={createValue}
+                onChange={(e) => setCreateValue(e.target.value)}
+                disabled={busy}
+              />
+              <button
+                type="button"
+                data-testid="tag-bar-edit-create-btn"
+                onClick={handleCreate}
+                disabled={busy}
+              >
+                作成
+              </button>
+              <button
+                type="button"
+                data-testid="tag-bar-edit-create-cancel-btn"
+                onClick={() => setCreating(false)}
+                disabled={busy}
+              >
+                キャンセル
+              </button>
+            </div>
+            {createError && (
+              <p className="tag-bar-edit-error" data-testid="tag-bar-edit-create-error">
+                {createError}
+              </p>
+            )}
+          </div>
+        )}
+        {layout.length === 0 ? (
           <p className="tag-bar-edit-empty">タグがありません。</p>
         ) : (
           <ul className="tag-bar-edit-list" data-testid="tag-bar-edit-list">
-            {tags.map((tag, index) => (
-              <li key={tag.id} className="tag-bar-edit-row" data-testid="tag-bar-edit-row">
-                <button
-                  type="button"
-                  className="tag-bar-edit-move-btn"
-                  aria-label="上へ移動"
-                  data-testid="tag-bar-edit-move-up-btn"
-                  onClick={() => handleMove(index, "up")}
-                  disabled={reordering || deleting || index === 0}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="tag-bar-edit-move-btn"
-                  aria-label="下へ移動"
-                  data-testid="tag-bar-edit-move-down-btn"
-                  onClick={() => handleMove(index, "down")}
-                  disabled={reordering || deleting || index === tags.length - 1}
-                >
-                  ↓
-                </button>
-                <span className="tag-bar-edit-row-name" title={tag.name}>
-                  {tag.name}
-                </span>
-                <button
-                  type="button"
-                  className="tag-bar-edit-delete-btn"
-                  aria-label="タグを削除"
-                  data-testid="tag-bar-edit-delete-btn"
-                  onClick={() => setDeleteTarget(tag)}
-                  disabled={reordering || deleting}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
+            {layout.map((item, index) => {
+              if (item.kind === "tag") {
+                return (
+                  <TagRow
+                    key={`tag-${item.id}`}
+                    tag={item}
+                    grouped={false}
+                    disableUp={index === 0}
+                    disableDown={index === lastIndex}
+                    busy={busy}
+                    onMove={(direction) => handleMove("tag", item.id, direction)}
+                    onDelete={() => setDeleteTarget(item)}
+                  />
+                );
+              }
+              return (
+                // 見出しと中のタグは、同じ平らな <ul> の兄弟の <li> にする(インデントはクラスで付ける)。
+                <Fragment key={`group-${item.id}`}>
+                    <TagGroupRow
+                      name={item.name}
+                      disableUp={index === 0}
+                      disableDown={index === lastIndex}
+                      busy={busy}
+                      editing={editingGroupId === item.id}
+                      editingValue={editingValue}
+                      editError={editError}
+                      onMove={(direction) => handleMove("group", item.id, direction)}
+                      onStartEdit={() => startEdit(item.id, item.name)}
+                      onDelete={() => setGroupDeleteTarget(item.id)}
+                      onEditingValueChange={setEditingValue}
+                      onSaveEdit={handleSaveEdit}
+                      onCancelEdit={() => setEditingGroupId(null)}
+                    />
+                    {/* グループの中のタグの ↑↓ は、端でもグループの外へ出られるので常に有効。 */}
+                    {item.tags.map((tag) => (
+                      <TagRow
+                        key={`tag-${tag.id}`}
+                        tag={tag}
+                        grouped
+                        disableUp={false}
+                        disableDown={false}
+                        busy={busy}
+                        onMove={(direction) => handleMove("tag", tag.id, direction)}
+                        onDelete={() => setDeleteTarget(tag)}
+                      />
+                    ))}
+                </Fragment>
+              );
+            })}
           </ul>
         )}
         {error && (
@@ -152,12 +278,20 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
             {error}
           </p>
         )}
-        <div className="dialog-footer tag-bar-edit-footer">
+        <div className="dialog-footer">
+          <button
+            type="button"
+            data-testid="tag-bar-edit-add-group-btn"
+            onClick={startCreate}
+            disabled={busy}
+          >
+            + タググループを追加
+          </button>
           <button
             type="button"
             data-testid="tag-bar-edit-close-btn"
             onClick={onClose}
-            disabled={reordering || deleting}
+            disabled={busy}
           >
             閉じる
           </button>
@@ -178,6 +312,17 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
             {buildTagDeleteMessage(deleteTarget.video_count)}
           </p>
         )}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={groupDeleteTarget !== null}
+        title="タググループを削除"
+        confirmLabel="削除する"
+        danger
+        busy={deleting}
+        onConfirm={handleConfirmDeleteGroup}
+        onCancel={() => setGroupDeleteTarget(null)}
+      >
+        <p>グループを削除します。中のタグはグループなしに戻ります。</p>
       </ConfirmDialog>
     </>
   );
