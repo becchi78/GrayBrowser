@@ -148,8 +148,8 @@ export function AppMenu({ openDialog, appearance, onSelectTheme, onSelectMode }:
     },
     { id: "tag", label: "タグ", entries: [dialog("tagBar", "タグの編集...", "tagBar")] },
     {
-      id: "style",
-      label: "スタイル",
+      id: "theme",
+      label: "テーマ",
       entries: [
         ...THEMES.map((t) => ({
           id: `theme-${t}`,

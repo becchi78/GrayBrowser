@@ -55,7 +55,7 @@ function labelsOf(el: HTMLElement): string[] {
 const SUBMENUS: Record<string, string[]> = {
   file: ["フォルダ管理...", ".wbインポート...", "データベースをバックアップ", "終了"],
   tag: ["タグの編集..."],
-  style: ["Graphite", "Navy Console", "Fluent Mica", "Dark Cinema", "System", "Light", "Dark"],
+  theme: ["Graphite", "Navy Console", "Fluent Mica", "Dark Cinema", "System", "Light", "Dark"],
   settings: ["設定..."],
   help: ["動作ログ...", "更新の確認...", "バージョン情報"],
 };
@@ -90,7 +90,7 @@ test("ボタンを押すと開き、aria-expanded が true になる", async () 
 test("1階層目は5つのグループだけが並び、葉は直接並ばない", async () => {
   renderMenu();
   await openMenu();
-  expect(labelsOf(topMenu())).toEqual(["ファイル", "タグ", "スタイル", "設定", "ヘルプ"]);
+  expect(labelsOf(topMenu())).toEqual(["ファイル", "タグ", "テーマ", "設定", "ヘルプ"]);
   expect(screen.queryByRole("menuitemradio")).toBeNull();
 });
 
@@ -142,10 +142,10 @@ test("サブメニューは role=menu で、グループ名の aria-label を持
   expect(sub.parentElement).toContainElement(group("file"));
 });
 
-test("スタイルは、テーマ4種と外観3種の間に区切りがある", async () => {
+test("テーマは、テーマ4種と外観3種の間に区切りがある", async () => {
   renderMenu();
-  await openGroup("style");
-  const children = Array.from(submenu("style").children).map(
+  await openGroup("theme");
+  const children = Array.from(submenu("theme").children).map(
     (el) => el.getAttribute("role") ?? "",
   );
   expect(children).toEqual([
@@ -155,10 +155,10 @@ test("スタイルは、テーマ4種と外観3種の間に区切りがある", 
   ]);
 });
 
-test("スタイルのテーマ項目の id は、マニフェストのテーマ名と順序まで一致する", async () => {
+test("テーマのテーマ項目の id は、マニフェストのテーマ名と順序まで一致する", async () => {
   renderMenu();
-  await openGroup("style");
-  const ids = Array.from(submenu("style").querySelectorAll('[data-testid^="app-menu-item-theme-"]')).map(
+  await openGroup("theme");
+  const ids = Array.from(submenu("theme").querySelectorAll('[data-testid^="app-menu-item-theme-"]')).map(
     (el) => (el.getAttribute("data-testid") ?? "").replace("app-menu-item-theme-", ""),
   );
   expect(ids).toEqual(manifest.themes);
@@ -183,9 +183,9 @@ test("1階層目の項目にホバーするとサブメニューが開き、別�
   expect(submenu("tag")).toBeInTheDocument();
   expect(group("tag")).toHaveFocus();
 
-  await userEvent.hover(group("style"));
+  await userEvent.hover(group("theme"));
   expect(querySubmenu("tag")).toBeNull();
-  expect(submenu("style")).toBeInTheDocument();
+  expect(submenu("theme")).toBeInTheDocument();
 });
 
 test("サブメニューの外へマウスが出ても、サブメニューは閉じない", async () => {
@@ -268,9 +268,9 @@ test("コマンドが失敗しても例外にせず、記録に残す", async ()
 
 test("現在のテーマと外観だけが aria-checked になる", async () => {
   renderMenu({ theme: "cinema", mode: "light" });
-  await openGroup("style");
+  await openGroup("theme");
 
-  const radios = within(submenu("style")).getAllByRole("menuitemradio");
+  const radios = within(submenu("theme")).getAllByRole("menuitemradio");
   expect(radios).toHaveLength(7);
   expect(
     radios.filter((el) => el.getAttribute("aria-checked") === "true").map((el) => el.textContent),
@@ -279,7 +279,7 @@ test("現在のテーマと外観だけが aria-checked になる", async () => 
 
 test("テーマの項目を選ぶと選択関数を呼び、外観は呼ばずにメニューを閉じる", async () => {
   const { onSelectTheme, onSelectMode } = renderMenu();
-  await openGroup("style");
+  await openGroup("theme");
 
   await userEvent.click(screen.getByRole("menuitemradio", { name: "Fluent Mica" }));
 
@@ -291,7 +291,7 @@ test("テーマの項目を選ぶと選択関数を呼び、外観は呼ばず�
 
 test("外観の項目を選ぶと選択関数を呼び、テーマは呼ばない", async () => {
   const { onSelectTheme, onSelectMode } = renderMenu();
-  await openGroup("style");
+  await openGroup("theme");
 
   await userEvent.click(screen.getByRole("menuitemradio", { name: "Dark" }));
 
@@ -369,7 +369,7 @@ test("サブメニュー内で↓↑は循環し、Home/End で先頭/末尾へ�
   expect(screen.getByRole("menuitem", { name: "フォルダ管理..." })).toHaveFocus();
 });
 
-test("スタイルのサブメニューでは、区切りを飛ばして全ラジオを移動できる", async () => {
+test("テーマのサブメニューでは、区切りを飛ばして全ラジオを移動できる", async () => {
   renderMenu();
   await openMenu();
   await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowRight}");
@@ -583,14 +583,14 @@ test("サブメニューは、1階層目の左側に、その項目の高さを�
   stubRects({
     "app-menu-button": { left: 940, right: 980, top: 10, bottom: 40 },
     "app-menu": { left: 780, right: 980, top: 44, width: 200, height: 150 },
-    "app-menu-group-style": { top: 100, height: 28 },
-    "app-submenu-style": { width: 160, height: 200 },
+    "app-menu-group-theme": { top: 100, height: 28 },
+    "app-submenu-theme": { width: 160, height: 200 },
   });
   renderMenu();
   await openMenu();
-  await userEvent.click(group("style"));
+  await userEvent.click(group("theme"));
 
-  expect(submenu("style")).toHaveStyle({ left: "620px", top: "96px", visibility: "visible" });
+  expect(submenu("theme")).toHaveStyle({ left: "620px", top: "96px", visibility: "visible" });
 });
 
 test("左に収まらないときは、サブメニューを1階層目の右側へ開く", async () => {
