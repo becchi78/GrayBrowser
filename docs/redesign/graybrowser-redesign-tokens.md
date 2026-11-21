@@ -2,6 +2,19 @@
 
 `src/App.css` の `:root` を案ごとに置き換えます。ライトが既定値、ダークは `prefers-color-scheme` で上書きします。
 
+> **注意**: このファイルは、リデザイン時の設計資料です。実装は `src/themes/` にあり(`light-dark()` で、ライトとダークの値を1つのトークンに持ちます)、テーマの追加・変更の手順は `.claude/skills/theme-change/SKILL.md` にあります。下のCSSは、仕様の値の原典として、そのまま残しています。
+
+## モック画像
+
+見た目の正にする画像です(同じフォルダにあります)。
+
+| 案 | テーマ | メイン(ダーク) | メイン(ライト) | ダイアログ | トークン仕様 |
+|---|---|---|---|---|---|
+| A | Fluent Mica | [fluent-main-dark](fluent-main-dark.png) | [fluent-main-light](fluent-main-light.png) | [設定](fluent-settings-dialog-dark.png) | [fluent-token-spec](fluent-token-spec.png) |
+| B | Dark Cinema | [cinema-main-dark](cinema-main-dark.png) | [cinema-main-light](cinema-main-light.png) | [タグ編集](cinema-tag-edit-dialog-dark.png) | [cinema-token-spec](cinema-token-spec.png) |
+| C | Navy Console | [console-main-dark](console-main-dark.png) | [console-main-light](console-main-light.png) | [タグ編集](console-tag-edit-dialog-dark.png) | [console-token-spec](console-token-spec.png) |
+| D | Graphite | [graphite-main-dark](graphite-main-dark.png) | [graphite-main-light](graphite-main-light.png) | [設定](graphite-settings-dialog-dark.png) | [graphite-token-spec](graphite-token-spec.png) |
+
 ## 案A · Fluent / Mica
 
 Windows 11 標準アプリと地続きの見た目。Mica の地に、角丸 8px のレイヤー面を 1 枚載せて階層を作る。

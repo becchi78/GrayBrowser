@@ -110,9 +110,11 @@ OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → 
 
 - エントリポイント: `src/main.tsx` → `src/App.tsx`。ルーティングライブラリは使わず、単一ビュー+モーダルダイアログ(`FolderDialog`, `WbImportDialog`)というシンプルな構成。状態管理はReactの`useState`/`useEffect`のみ(Redux等は不使用)。
 - `src/api.ts`が唯一のIPC境界: すべての`invoke()`呼び出しをここに集約し、コマンド名とRustの`snake_case`→JSの`camelCase`変換をこの1箇所だけで扱う。
-- `src/events.ts`: メニューイベントや`catalog:changed`等のTauriイベント購読ラッパー。
+- `src/events.ts`: `catalog:changed`等のTauriイベント(Rustからフロントへの通知)の購読ラッパー。
 - `src/components/`: 機能単位のReactコンポーネント群(`ThumbnailGrid`, `TagEditor`, `DuplicateGroupsPanel`等)。
 - `src/lib/`: 純粋なTSユーティリティ(同居する`.test.ts`でテスト)。
+- アプリのメニュー: ネイティブのメニューバーは使わない。検索行の右端のハンバーガー(`src/components/AppMenu.tsx`)に、ファイル・タグ・テーマ・設定・ヘルプのグループごとのサブメニューとして置く。項目は、`useActiveDialog`の`open`を直接呼んでダイアログを開く。Rustでしかできないもの(終了の`quit_app`、バックアップの`run_manual_backup`)だけをコマンドにしている。終了は、ウィンドウを閉じる経路を通す(ウィンドウの大きさの保存処理`CloseRequested`を通すため)。
+- テーマ: `<html>`の`data-theme`(graphite / console / fluent / cinema)と`data-mode`(system / light / dark)で切り替える。見た目の差は、`src/themes/<テーマ名>.css`のトークンの値だけで表し、部品のCSS(`src/App.css`)は`[data-theme`を書かない。テーマの一覧と必須トークンは`src/themes/manifest.json`に持ち、欠落や名前の不一致は`npm run test:unit`が検出する(Rustの`Theme`(`crates/gb-core/src/appearance.rs`)も一覧を持つ)。設定(テーマ・外観)はSQLiteの`settings`が正で、`index.html`の同期スクリプトが`localStorage`の写しから、起動時のチラつきを防ぐ(`src/useAppearance.ts`)。テーマの追加・変更は`theme-change`スキルを参照。
 
 ## 9. CI/CD
 
