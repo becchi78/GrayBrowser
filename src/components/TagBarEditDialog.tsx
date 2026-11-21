@@ -20,20 +20,14 @@ interface Props {
   onTagDeleted: (tagId: number) => void;
 }
 
-// Draft-then-save editing, same convention as useWatchFolders's editingValue/
-// cancelEdit: every ↑/↓ click below only mutates local `draftTags` state.
-// Nothing reaches the backend until "保存" is clicked; "キャンセル" (or the
-// overlay click / Escape) discards the draft unpersisted -- the next `open`
-// re-fetches a fresh draft from the currently-persisted order anyway, so
-// there's nothing to explicitly reset.
-//
-// Deleting a tag is the exception: it is applied the moment the confirmation
-// is accepted, not deferred to "保存", because a delete cannot be meaningfully
-// held as a draft. The deleted row is dropped from the draft so an unsaved
-// reorder survives it.
+// Every ↑/↓ click is saved immediately, same convention as FolderDialog's
+// handleMove. The list is re-fetched after a save rather than mirrored locally:
+// the backend resets any tag missing from the submitted order, so re-reading
+// keeps the display equal to the persisted state. On failure the displayed list
+// is left untouched, which is exactly the persisted order.
 export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Props) {
-  const [draftTags, setDraftTags] = useState<TagWithCountDto[]>([]);
-  const [saving, setSaving] = useState(false);
+  const [tags, setTags] = useState<TagWithCountDto[]>([]);
+  const [reordering, setReordering] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TagWithCountDto | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,9 +38,9 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     }
     let cancelled = false;
     listTagsWithVideoCount()
-      .then((tags) => {
+      .then((fetched) => {
         if (cancelled) return;
-        setDraftTags(tags);
+        setTags(fetched);
         setError(null);
       })
       .catch((e) => {
@@ -61,17 +55,22 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     return null;
   }
 
-  async function handleSave() {
-    setSaving(true);
+  async function handleMove(index: number, direction: "up" | "down") {
+    const next = direction === "up" ? moveUp(tags, index) : moveDown(tags, index);
+    if (next === tags) {
+      return;
+    }
     setError(null);
+    setReordering(true);
     try {
-      await setTagOrder(draftTags.map((tag) => tag.id));
+      await setTagOrder(next.map((tag) => tag.id));
+      // 並びは保存済み。後続の取り直しが失敗しても、左ペインには反映させる。
       onChanged();
-      onClose();
+      setTags(await listTagsWithVideoCount());
     } catch (e) {
       setError(errorText(e));
     } finally {
-      setSaving(false);
+      setReordering(false);
     }
   }
 
@@ -82,7 +81,7 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
     setError(null);
     try {
       await deleteTag(target.id);
-      setDraftTags((tags) => tags.filter((tag) => tag.id !== target.id));
+      setTags((current) => current.filter((tag) => tag.id !== target.id));
       onTagDeleted(target.id);
       onChanged();
     } catch (e) {
@@ -102,46 +101,48 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
         testId="tag-bar-edit-dialog"
         onDismiss={onClose}
         // 削除の確認が開いている間は、Escape で確認だけを閉じる。
-        dismissible={!saving && !deleting && deleteTarget === null}
+        dismissible={!reordering && !deleting && deleteTarget === null}
       >
         <h2>タグの編集</h2>
-        {draftTags.length === 0 ? (
+        {tags.length === 0 ? (
           <p className="tag-bar-edit-empty">タグがありません。</p>
         ) : (
           <ul className="tag-bar-edit-list" data-testid="tag-bar-edit-list">
-            {draftTags.map((tag, index) => (
+            {tags.map((tag, index) => (
               <li key={tag.id} className="tag-bar-edit-row" data-testid="tag-bar-edit-row">
+                <button
+                  type="button"
+                  className="tag-bar-edit-move-btn"
+                  aria-label="上へ移動"
+                  data-testid="tag-bar-edit-move-up-btn"
+                  onClick={() => handleMove(index, "up")}
+                  disabled={reordering || deleting || index === 0}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="tag-bar-edit-move-btn"
+                  aria-label="下へ移動"
+                  data-testid="tag-bar-edit-move-down-btn"
+                  onClick={() => handleMove(index, "down")}
+                  disabled={reordering || deleting || index === tags.length - 1}
+                >
+                  ↓
+                </button>
                 <span className="tag-bar-edit-row-name" title={tag.name}>
                   {tag.name}
                 </span>
-                <div className="tag-bar-edit-row-actions">
-                  <button
-                    type="button"
-                    aria-label="上へ移動"
-                    data-testid="tag-bar-edit-move-up-btn"
-                    onClick={() => setDraftTags((tags) => moveUp(tags, index))}
-                    disabled={saving || deleting || index === 0}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="下へ移動"
-                    data-testid="tag-bar-edit-move-down-btn"
-                    onClick={() => setDraftTags((tags) => moveDown(tags, index))}
-                    disabled={saving || deleting || index === draftTags.length - 1}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="tag-bar-edit-delete-btn"
-                    onClick={() => setDeleteTarget(tag)}
-                    disabled={saving || deleting}
-                  >
-                    削除
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="tag-bar-edit-delete-btn"
+                  aria-label="タグを削除"
+                  data-testid="tag-bar-edit-delete-btn"
+                  onClick={() => setDeleteTarget(tag)}
+                  disabled={reordering || deleting}
+                >
+                  ✕
+                </button>
               </li>
             ))}
           </ul>
@@ -151,22 +152,14 @@ export function TagBarEditDialog({ open, onClose, onChanged, onTagDeleted }: Pro
             {error}
           </p>
         )}
-        <div className="dialog-footer">
+        <div className="dialog-footer tag-bar-edit-footer">
           <button
             type="button"
-            data-testid="tag-bar-edit-cancel-btn"
+            data-testid="tag-bar-edit-close-btn"
             onClick={onClose}
-            disabled={saving || deleting}
+            disabled={reordering || deleting}
           >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            data-testid="tag-bar-edit-save-btn"
-            onClick={handleSave}
-            disabled={saving || deleting}
-          >
-            {saving ? "保存中..." : "保存"}
+            閉じる
           </button>
         </div>
       </ModalShell>

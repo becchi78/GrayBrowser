@@ -219,7 +219,7 @@ async function openTagBarEdit(): Promise<Opened> {
   const { user } = renderWithProviders(
     <TagBarEditDialog open={true} onClose={fn} onChanged={() => {}} onTagDeleted={() => {}} />,
   );
-  await screen.findByTestId("tag-bar-edit-row");
+  await screen.findAllByTestId("tag-bar-edit-row");
   return { user, dialog: screen.getByTestId("tag-bar-edit-dialog"), closed };
 }
 
@@ -427,12 +427,18 @@ const BUSY: BusyCase[] = [
     },
   },
   {
-    name: "TagBarEditDialog(保存中)",
+    name: "TagBarEditDialog(並び替えの保存中)",
     enter: async () => {
+      vi.mocked(api.listTagsWithVideoCount).mockResolvedValue([
+        { id: 1, name: "猫", video_count: 2 },
+        { id: 2, name: "犬", video_count: 1 },
+      ]);
       vi.mocked(api.setTagOrder).mockReturnValue(never());
       const { user, dialog, closed } = await openTagBarEdit();
-      await user.click(screen.getByTestId("tag-bar-edit-save-btn"));
-      await waitFor(() => expect(screen.getByTestId("tag-bar-edit-save-btn")).toBeDisabled());
+      await user.click(screen.getAllByTestId("tag-bar-edit-move-down-btn")[0]);
+      await waitFor(() =>
+        expect(screen.getAllByTestId("tag-bar-edit-move-down-btn")[0]).toBeDisabled(),
+      );
       return {
         user,
         overlays: [overlayOf(dialog)],

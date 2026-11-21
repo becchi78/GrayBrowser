@@ -337,7 +337,8 @@ button:not(
 }
 /* 行・リストの中に並べる小さなボタンと入力欄。詳細度は `.header-row-primary
    button` などの領域ごとの指定と同じで、それらは後ろの宣言が優先される。 */
-.tag-bar-edit-row-actions button,
+.tag-bar-edit-move-btn,
+.tag-bar-edit-delete-btn,
 .skipped-file-rename,
 .skipped-file-dismiss,
 .skipped-file-edit button,
@@ -561,10 +562,9 @@ button.search-box-clear {
   text-overflow: ellipsis;
 }
 
-.tag-bar-edit-row-actions {
-  display: flex;
-  flex-shrink: 0;
-  gap: var(--space-1);
+/* `.dialog-footer` is `space-between`, which would left-align a lone button. */
+.tag-bar-edit-footer {
+  justify-content: flex-end;
 }
 
 /* The `flex: 1` body row that hosts LeftPane + the video list side by side.
