@@ -76,6 +76,8 @@ export const moveTagLayoutItem = (kind: TagLayoutKind, id: number, direction: Ta
   invoke<TagLayoutItemDto[]>("move_tag_layout_item", { kind, id, direction });
 export const createTagGroup = (name: string) =>
   invoke<TagLayoutItemDto[]>("create_tag_group", { name });
+export const renameTag = (id: number, name: string) =>
+  invoke<TagLayoutItemDto[]>("rename_tag", { id, name });
 export const renameTagGroup = (id: number, name: string) =>
   invoke<TagLayoutItemDto[]>("rename_tag_group", { id, name });
 export const deleteTagGroup = (id: number) => invoke<TagLayoutItemDto[]>("delete_tag_group", { id });

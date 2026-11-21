@@ -12,6 +12,7 @@ vi.mock("../api", () => ({
   getTagLayout: vi.fn(),
   moveTagLayoutItem: vi.fn(),
   createTagGroup: vi.fn(),
+  renameTag: vi.fn(),
   renameTagGroup: vi.fn(),
   deleteTagGroup: vi.fn(),
   deleteTag: vi.fn(),
@@ -182,6 +183,7 @@ test("保存中は、移動・編集・削除・追加・閉じるのボタン�
     "tag-bar-edit-move-up-btn",
     "tag-bar-edit-move-down-btn",
     "tag-bar-edit-delete-btn",
+    "tag-bar-edit-tag-edit-btn",
     "tag-bar-edit-group-move-up-btn",
     "tag-bar-edit-group-move-down-btn",
     "tag-bar-edit-group-edit-btn",
@@ -280,6 +282,118 @@ test("改名に失敗すると、行内にエラーが出て、編集は開い�
 
   await user.click(screen.getByTestId("tag-bar-edit-group-cancel-btn"));
   expect(rows()).toEqual(["猫", "[動物]", "鳥", "魚", "犬"]);
+});
+
+test("タグの改名: ✎ で行内編集になり、保存で renameTag が呼ばれ、新しい名前が出て onChanged が呼ばれる", async () => {
+  vi.mocked(api.renameTag).mockResolvedValue([
+    tag(1, "猫", 2),
+    group(10, "動物", [
+      [3, "小鳥"],
+      [4, "魚"],
+    ]),
+    tag(2, "犬", 1),
+  ]);
+  const { user, onChanged } = await renderDialog();
+
+  // タグ行は 猫, 鳥, 魚, 犬 の順。2番目はグループ内の「鳥」
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[1]);
+  const input = screen.getByTestId("tag-bar-edit-tag-name-input");
+  expect(input).toHaveValue("鳥");
+  await user.clear(input);
+  await user.type(input, "小鳥");
+  await user.click(screen.getByTestId("tag-bar-edit-tag-save-btn"));
+
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  expect(api.renameTag).toHaveBeenCalledWith(3, "小鳥");
+  expect(screen.queryByTestId("tag-bar-edit-tag-name-input")).toBeNull();
+  expect(rows()).toEqual(["猫", "[動物]", "小鳥", "魚", "犬"]);
+});
+
+test("✎ ボタンは、名前とゴミ箱の間にあり、「タグ名を編集」の名前を持つ", async () => {
+  await renderDialog();
+
+  const row = screen.getAllByTestId("tag-bar-edit-row")[0];
+  const buttons = within(row).getAllByRole("button");
+  expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+    "上へ移動",
+    "下へ移動",
+    "タグ名を編集",
+    "タグを削除",
+  ]);
+});
+
+test("タグの改名に失敗すると、行内にエラーが出て、編集は開いたまま・onChanged は呼ばれない", async () => {
+  vi.mocked(api.renameTag).mockRejectedValue("同じ名前のタグが既にあります: 犬");
+  const { user, onChanged } = await renderDialog();
+
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  const input = screen.getByTestId("tag-bar-edit-tag-name-input");
+  await user.clear(input);
+  await user.type(input, "犬");
+  await user.click(screen.getByTestId("tag-bar-edit-tag-save-btn"));
+
+  expect(await screen.findByTestId("tag-bar-edit-tag-edit-error")).toHaveTextContent(
+    "同じ名前のタグが既にあります: 犬",
+  );
+  expect(screen.getByTestId("tag-bar-edit-tag-name-input")).toHaveValue("犬");
+  expect(onChanged).not.toHaveBeenCalled();
+
+  await user.click(screen.getByTestId("tag-bar-edit-tag-cancel-btn"));
+  expect(screen.queryByTestId("tag-bar-edit-tag-name-input")).toBeNull();
+  expect(rows()).toEqual(["猫", "[動物]", "鳥", "魚", "犬"]);
+});
+
+test("タグの改名のキャンセルで編集が閉じ、renameTag は呼ばれない", async () => {
+  const { user } = await renderDialog();
+
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  await user.click(screen.getByTestId("tag-bar-edit-tag-cancel-btn"));
+
+  expect(screen.queryByTestId("tag-bar-edit-tag-name-input")).toBeNull();
+  expect(api.renameTag).not.toHaveBeenCalled();
+});
+
+test("編集は同時に1行だけ: タグ→別のタグ→グループ→作成の順に開くと、前の編集は閉じる", async () => {
+  const { user } = await renderDialog();
+
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  expect(screen.getAllByTestId("tag-bar-edit-tag-name-input")).toHaveLength(1);
+  expect(screen.getByTestId("tag-bar-edit-tag-name-input")).toHaveValue("猫");
+
+  // 編集中の行の ✎ は消えるので、残りの行の先頭が「鳥」
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  expect(screen.getAllByTestId("tag-bar-edit-tag-name-input")).toHaveLength(1);
+  expect(screen.getByTestId("tag-bar-edit-tag-name-input")).toHaveValue("鳥");
+
+  await user.click(screen.getByTestId("tag-bar-edit-group-edit-btn"));
+  expect(screen.queryByTestId("tag-bar-edit-tag-name-input")).toBeNull();
+  expect(screen.getByTestId("tag-bar-edit-group-name-input")).toHaveValue("動物");
+
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  expect(screen.queryByTestId("tag-bar-edit-group-name-input")).toBeNull();
+  expect(screen.getAllByTestId("tag-bar-edit-tag-name-input")).toHaveLength(1);
+
+  await user.click(screen.getByTestId("tag-bar-edit-add-group-btn"));
+  expect(screen.queryByTestId("tag-bar-edit-tag-name-input")).toBeNull();
+  expect(screen.getByTestId("tag-bar-edit-create")).toBeInTheDocument();
+
+  // 作成の入力行が開いている間に ✎ を押すと、作成の入力行が閉じる
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  expect(screen.queryByTestId("tag-bar-edit-create")).toBeNull();
+  expect(screen.getAllByTestId("tag-bar-edit-tag-name-input")).toHaveLength(1);
+});
+
+test("保存中は、タグの名前の入力・保存・キャンセルが押せず、保存ボタンは「保存中...」になる", async () => {
+  vi.mocked(api.renameTag).mockReturnValue(never());
+  const { user } = await renderDialog();
+
+  await user.click(screen.getAllByTestId("tag-bar-edit-tag-edit-btn")[0]);
+  await user.click(screen.getByTestId("tag-bar-edit-tag-save-btn"));
+
+  await waitFor(() => expect(screen.getByTestId("tag-bar-edit-tag-save-btn")).toBeDisabled());
+  expect(screen.getByTestId("tag-bar-edit-tag-save-btn")).toHaveTextContent("保存中...");
+  expect(screen.getByTestId("tag-bar-edit-tag-cancel-btn")).toBeDisabled();
+  expect(screen.getByTestId("tag-bar-edit-tag-name-input")).toBeDisabled();
 });
 
 test("グループの削除: 確認文が出て、確定で deleteTagGroup が呼ばれ、返った並びになり onChanged が呼ばれる", async () => {
