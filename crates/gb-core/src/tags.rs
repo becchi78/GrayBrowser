@@ -55,7 +55,8 @@ pub fn normalize_tag_name(raw: &str) -> Result<String, TagNameError> {
 }
 
 /// Drops repeated ids, keeping each id's first occurrence and the input
-/// order. Used to turn a user-submitted tag order into one position per tag.
+/// order. Used to drop repeated ids from a user-submitted id list (e.g. the
+/// collapsed tag-group ids).
 pub fn dedup_keep_first(ids: &[i64]) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
     ids.iter().copied().filter(|id| seen.insert(*id)).collect()

@@ -64,6 +64,11 @@ pub const MIGRATIONS: &[gb_core::migrations::Migration] = &[
         description: "drop idx_videos_path, idx_videos_full_hash and idx_path_collisions_video: unused or duplicating an automatic UNIQUE index",
         sql: include_str!("../../migrations/0012_drop_unused_indexes.sql"),
     },
+    gb_core::migrations::Migration {
+        version: 13,
+        description: "add tag_groups and tags.group_id: display-only grouping of tags in the left pane",
+        sql: include_str!("../../migrations/0013_add_tag_groups.sql"),
+    },
 ];
 
 /// Applies any pending migrations to `conn` inside a single transaction.

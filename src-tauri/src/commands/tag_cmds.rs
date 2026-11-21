@@ -140,14 +140,6 @@ impl From<queries::TagWithCountRow> for TagWithCountDto {
     }
 }
 
-/// Every tag with the number of videos carrying it, in the user's tag order.
-#[tauri::command]
-pub fn list_tags_with_video_count(db: State<Db>) -> Result<Vec<TagWithCountDto>, String> {
-    queries::list_all_tags_with_video_count(&db.read_pool)
-        .map(|rows| rows.into_iter().map(TagWithCountDto::from).collect())
-        .map_err(|e| e.to_string())
-}
-
 /// Deletes a tag and detaches it from every video. Notifies a catalog change
 /// because the video list shows each video's tags.
 #[tauri::command]
@@ -160,11 +152,144 @@ pub fn delete_tag(app: tauri::AppHandle, db: State<Db>, tag_id: i64) -> Result<(
     Ok(())
 }
 
-/// Stores the order of all tags as the user arranged them. Not a catalog
-/// change (no video row is touched), so no catalog notification is sent; the
-/// caller reloads the tag list itself.
+/// A top-level entry of the left-pane tag layout.
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TagLayoutItemDto {
+    Tag(TagWithCountDto),
+    Group {
+        id: i64,
+        name: String,
+        tags: Vec<TagWithCountDto>,
+    },
+}
+
+impl From<queries::LayoutItemRow> for TagLayoutItemDto {
+    fn from(row: queries::LayoutItemRow) -> Self {
+        match row {
+            queries::LayoutItemRow::Tag(t) => TagLayoutItemDto::Tag(t.into()),
+            queries::LayoutItemRow::Group { id, name, tags } => TagLayoutItemDto::Group {
+                id,
+                name,
+                tags: tags.into_iter().map(TagWithCountDto::from).collect(),
+            },
+        }
+    }
+}
+
+fn layout_dto(rows: Vec<queries::LayoutItemRow>) -> Vec<TagLayoutItemDto> {
+    rows.into_iter().map(TagLayoutItemDto::from).collect()
+}
+
+/// Ungrouped tags and tag groups in display order, tags with their video
+/// counts.
 #[tauri::command]
-pub fn set_tag_order(db: State<Db>, tag_ids: Vec<i64>) -> Result<(), String> {
+pub fn get_tag_layout(db: State<Db>) -> Result<Vec<TagLayoutItemDto>, String> {
+    queries::get_tag_layout(&db.read_pool)
+        .map(layout_dto)
+        .map_err(|e| e.to_string())
+}
+
+/// Moves a tag (`kind` = "tag") or group (`kind` = "group") one step up or
+/// down in the visible order, and returns the resulting layout. Not a catalog
+/// change, so no notification is sent.
+#[tauri::command]
+pub fn move_tag_layout_item(
+    db: State<Db>,
+    kind: String,
+    id: i64,
+    direction: String,
+) -> Result<Vec<TagLayoutItemDto>, String> {
+    let item = gb_core::tag_layout::ItemRef::parse(&kind, id)
+        .ok_or_else(|| format!("unknown kind: {kind}"))?;
+    let direction = gb_core::tag_layout::Direction::parse(&direction)
+        .ok_or_else(|| format!("unknown direction: {direction}"))?;
     let mut conn = db.writer.lock().unwrap();
-    queries::set_tag_order(&mut conn, &tag_ids).map_err(|e| e.to_string())
+    queries::move_tag_layout_item(&mut conn, item, direction)
+        .map(layout_dto)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_tag_group(db: State<Db>, name: String) -> Result<Vec<TagLayoutItemDto>, String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::create_tag_group(&mut conn, &name)
+        .map(layout_dto)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_tag_group(
+    db: State<Db>,
+    id: i64,
+    name: String,
+) -> Result<Vec<TagLayoutItemDto>, String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::rename_tag_group(&mut conn, id, &name)
+        .map(layout_dto)
+        .map_err(|e| e.to_string())
+}
+
+/// Deletes a group; its tags stay at the top level. No video's tags change, so
+/// no catalog notification is sent.
+#[tauri::command]
+pub fn delete_tag_group(db: State<Db>, id: i64) -> Result<Vec<TagLayoutItemDto>, String> {
+    let mut conn = db.writer.lock().unwrap();
+    queries::delete_tag_group(&mut conn, id)
+        .map(layout_dto)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_collapsed_tag_groups(db: State<Db>) -> Result<Vec<i64>, String> {
+    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+    queries::get_collapsed_tag_groups(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_collapsed_tag_groups(db: State<Db>, ids: Vec<i64>) -> Result<(), String> {
+    let conn = db.writer.lock().unwrap();
+    queries::set_collapsed_tag_groups(&conn, &ids).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn count(id: i64, name: &str, video_count: i64) -> queries::TagWithCountRow {
+        queries::TagWithCountRow {
+            id,
+            name: name.to_string(),
+            video_count,
+        }
+    }
+
+    /// The frontend types mirror this exact shape.
+    #[test]
+    fn layout_dto_json_shape_is_pinned() {
+        let dto = layout_dto(vec![
+            queries::LayoutItemRow::Tag(count(1, "a", 3)),
+            queries::LayoutItemRow::Group {
+                id: 7,
+                name: "g".into(),
+                tags: vec![count(2, "b", 0), count(3, "c", 5)],
+            },
+            queries::LayoutItemRow::Group {
+                id: 8,
+                name: "empty".into(),
+                tags: vec![],
+            },
+        ]);
+        assert_eq!(
+            serde_json::to_value(dto).unwrap(),
+            serde_json::json!([
+                {"kind": "tag", "id": 1, "name": "a", "video_count": 3},
+                {"kind": "group", "id": 7, "name": "g", "tags": [
+                    {"id": 2, "name": "b", "video_count": 0},
+                    {"id": 3, "name": "c", "video_count": 5},
+                ]},
+                {"kind": "group", "id": 8, "name": "empty", "tags": []},
+            ])
+        );
+    }
 }

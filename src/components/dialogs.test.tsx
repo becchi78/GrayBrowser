@@ -46,8 +46,8 @@ vi.mock("../api", () => ({
   listWatchCheckDisabledFolders: vi.fn(),
   countVideosUnderFolder: vi.fn(),
   removeWatchFolder: vi.fn(),
-  listTagsWithVideoCount: vi.fn(),
-  setTagOrder: vi.fn(),
+  getTagLayout: vi.fn(),
+  moveTagLayoutItem: vi.fn(),
   deleteTag: vi.fn(),
   pickWbFile: vi.fn(),
   pickWbThumbnailFolder: vi.fn(),
@@ -75,7 +75,9 @@ beforeEach(() => {
   vi.mocked(api.listWatchFolders).mockResolvedValue(["A", "B"]);
   vi.mocked(api.listWatchCheckDisabledFolders).mockResolvedValue([]);
   vi.mocked(api.countVideosUnderFolder).mockResolvedValue(3);
-  vi.mocked(api.listTagsWithVideoCount).mockResolvedValue([{ id: 1, name: "猫", video_count: 2 }]);
+  vi.mocked(api.getTagLayout).mockResolvedValue([
+    { kind: "tag", id: 1, name: "猫", video_count: 2 },
+  ]);
   vi.mocked(api.pickWbFile).mockResolvedValue("C:\\a.wb");
   vi.mocked(api.pickWbThumbnailFolder).mockResolvedValue("C:\\thumbs");
 });
@@ -429,11 +431,11 @@ const BUSY: BusyCase[] = [
   {
     name: "TagBarEditDialog(並び替えの保存中)",
     enter: async () => {
-      vi.mocked(api.listTagsWithVideoCount).mockResolvedValue([
-        { id: 1, name: "猫", video_count: 2 },
-        { id: 2, name: "犬", video_count: 1 },
+      vi.mocked(api.getTagLayout).mockResolvedValue([
+        { kind: "tag", id: 1, name: "猫", video_count: 2 },
+        { kind: "tag", id: 2, name: "犬", video_count: 1 },
       ]);
-      vi.mocked(api.setTagOrder).mockReturnValue(never());
+      vi.mocked(api.moveTagLayoutItem).mockReturnValue(never());
       const { user, dialog, closed } = await openTagBarEdit();
       await user.click(screen.getAllByTestId("tag-bar-edit-move-down-btn")[0]);
       await waitFor(() =>

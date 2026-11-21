@@ -582,7 +582,7 @@ fn list_all_tags_returns_every_tag_regardless_of_assignment() {
 }
 
 #[test]
-fn list_all_tags_with_video_count_counts_videos_and_keeps_empty_tags() {
+fn tag_layout_counts_videos_and_keeps_empty_tags() {
     let (_dir, db) = init_temp_db();
     {
         let conn = db.writer.lock().unwrap();
@@ -597,46 +597,58 @@ fn list_all_tags_with_video_count_counts_videos_and_keeps_empty_tags() {
         let empty = queries::assign_tag_to_video(&mut conn, "a", "empty").unwrap();
         queries::remove_tag_from_video(&conn, "a", empty.id).unwrap();
     }
-    let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
-    let got: Vec<(&str, i64)> = rows
-        .iter()
-        .map(|t| (t.name.as_str(), t.video_count))
-        .collect();
-    // No sort_order set yet, so name order.
-    assert_eq!(got, [("empty", 0), ("popular", 3), ("rare", 1)]);
+    let got = layout_tags(&queries::get_tag_layout(&db.read_pool).unwrap());
+    // No order set yet, so name order.
+    assert_eq!(
+        got,
+        [
+            ("empty".to_string(), 0),
+            ("popular".to_string(), 3),
+            ("rare".to_string(), 1)
+        ]
+    );
+}
+
+/// Top-level tags of a layout with no groups, as (name, video_count).
+fn layout_tags(rows: &[queries::LayoutItemRow]) -> Vec<(String, i64)> {
+    rows.iter()
+        .map(|r| match r {
+            queries::LayoutItemRow::Tag(t) => (t.name.clone(), t.video_count),
+            queries::LayoutItemRow::Group { .. } => panic!("unexpected group"),
+        })
+        .collect()
 }
 
 #[test]
-fn list_all_tags_with_video_count_follows_sort_order_then_name() {
+fn tag_layout_follows_sort_order_then_name_and_matches_list_all_tags() {
     let (_dir, db) = init_temp_db();
-    let ids: Vec<i64> = {
-        let mut conn = db.writer.lock().unwrap();
-        for n in ["alpha", "beta", "gamma", "delta"] {
-            conn.execute("INSERT INTO tags (name) VALUES (?1)", params![n])
-                .unwrap();
-        }
-        let ids = conn
-            .prepare("SELECT id FROM tags ORDER BY name")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<Vec<i64>, _>>()
+    {
+        let conn = db.writer.lock().unwrap();
+        for (n, order) in [
+            ("alpha", None),
+            ("beta", None),
+            ("gamma", Some(0)),
+            ("delta", None),
+        ] {
+            conn.execute(
+                "INSERT INTO tags (name, sort_order) VALUES (?1, ?2)",
+                params![n, order],
+            )
             .unwrap();
-        // ids by name: alpha, beta, delta, gamma
-        queries::set_tag_order(&mut conn, &[ids[3], ids[0]]).unwrap();
-        ids
-    };
-    let rows = queries::list_all_tags_with_video_count(&db.read_pool).unwrap();
-    let names: Vec<&str> = rows.iter().map(|t| t.name.as_str()).collect();
-    // Ordered tags first (gamma, alpha), then the rest by name.
+        }
+        conn.execute("UPDATE tags SET sort_order = 1 WHERE name = 'alpha'", [])
+            .unwrap();
+    }
+    let rows = queries::get_tag_layout(&db.read_pool).unwrap();
+    let names: Vec<String> = layout_tags(&rows).into_iter().map(|t| t.0).collect();
+    // Placed tags first (gamma, alpha), then the rest by name.
     assert_eq!(names, ["gamma", "alpha", "beta", "delta"]);
-    let listed: Vec<i64> = queries::list_all_tags(&db.read_pool)
+    let listed: Vec<String> = queries::list_all_tags(&db.read_pool)
         .unwrap()
-        .iter()
-        .map(|t| t.id)
+        .into_iter()
+        .map(|t| t.name)
         .collect();
-    assert_eq!(listed, rows.iter().map(|t| t.id).collect::<Vec<_>>());
-    assert_eq!(rows[0].id, ids[3]);
+    assert_eq!(listed, names);
 }
 
 #[test]

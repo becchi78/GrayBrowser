@@ -644,3 +644,77 @@ const DROPPED_INDEXES: [&str; 3] = [
     "idx_videos_full_hash",
     "idx_videos_path",
 ];
+
+/// Upgrading a real v12 database adds tag_groups and tags.group_id without
+/// moving any existing tag.
+#[test]
+fn migrating_from_a_real_v12_database_adds_tag_groups_and_keeps_tag_order() {
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let db_path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        apply_up_to(&conn, 12);
+        for (id, name, order) in [(1, "a", None), (2, "b", Some(1)), (3, "c", Some(0))] {
+            conn.execute(
+                "INSERT INTO tags (id, name, sort_order) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, name, order],
+            )
+            .unwrap();
+        }
+    }
+
+    let db = db::init(&db_path).expect("db::init should upgrade a v12 database");
+    assert_eq!(tag_names(&db), ["c", "b", "a"]);
+    let conn = db.writer.lock().unwrap();
+
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, latest_schema_version());
+    assert_eq!(version, 13);
+
+    let ungrouped: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tags WHERE group_id IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ungrouped, 3, "existing tags must stay at the top level");
+    assert_eq!(
+        sort_orders(&conn),
+        vec![(1, None), (2, Some(1)), (3, Some(0))]
+    );
+
+    conn.execute("INSERT INTO tag_groups (name) VALUES ('g')", [])
+        .unwrap();
+    assert!(
+        conn.execute("INSERT INTO tag_groups (name) VALUES ('g')", [])
+            .is_err(),
+        "group names must be unique"
+    );
+    let sort: Option<i64> = conn
+        .query_row(
+            "SELECT sort_order FROM tag_groups WHERE name = 'g'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sort, None);
+}
+
+/// A deleted group's id must not be handed out again: collapsed state is
+/// stored by group id.
+#[test]
+fn tag_group_ids_are_never_reused() {
+    let (_dir, db) = init_temp_db();
+    let conn = db.writer.lock().unwrap();
+    conn.execute("INSERT INTO tag_groups (name) VALUES ('a')", [])
+        .unwrap();
+    let first = conn.last_insert_rowid();
+    conn.execute("DELETE FROM tag_groups WHERE id = ?1", [first])
+        .unwrap();
+    conn.execute("INSERT INTO tag_groups (name) VALUES ('b')", [])
+        .unwrap();
+    assert!(conn.last_insert_rowid() > first);
+}

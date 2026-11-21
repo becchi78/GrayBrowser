@@ -20,6 +20,9 @@ import type {
   SortDirection,
   SortField,
   TagDto,
+  TagLayoutItemDto,
+  TagLayoutKind,
+  TagMoveDirection,
   TagWithCountDto,
   ThumbnailProgress,
   UnmatchedThumbnailDto,
@@ -67,10 +70,18 @@ export const listTagUsageForVideos = (videoIds: string[]) =>
 export const listTagsForVideo = (videoId: string) =>
   invoke<TagDto[]>("list_tags_for_video", { videoId });
 export const listAllTags = () => invoke<TagDto[]>("list_all_tags");
-export const listTagsWithVideoCount = () =>
-  invoke<TagWithCountDto[]>("list_tags_with_video_count");
 export const deleteTag = (tagId: number) => invoke<void>("delete_tag", { tagId });
-export const setTagOrder = (tagIds: number[]) => invoke<void>("set_tag_order", { tagIds });
+export const getTagLayout = () => invoke<TagLayoutItemDto[]>("get_tag_layout");
+export const moveTagLayoutItem = (kind: TagLayoutKind, id: number, direction: TagMoveDirection) =>
+  invoke<TagLayoutItemDto[]>("move_tag_layout_item", { kind, id, direction });
+export const createTagGroup = (name: string) =>
+  invoke<TagLayoutItemDto[]>("create_tag_group", { name });
+export const renameTagGroup = (id: number, name: string) =>
+  invoke<TagLayoutItemDto[]>("rename_tag_group", { id, name });
+export const deleteTagGroup = (id: number) => invoke<TagLayoutItemDto[]>("delete_tag_group", { id });
+export const getCollapsedTagGroups = () => invoke<number[]>("get_collapsed_tag_groups");
+export const setCollapsedTagGroups = (ids: number[]) =>
+  invoke<void>("set_collapsed_tag_groups", { ids });
 export const getInfoPaneCollapsed = () => invoke<boolean>("get_info_pane_collapsed");
 export const setInfoPaneCollapsed = (collapsed: boolean) =>
   invoke<void>("set_info_pane_collapsed", { collapsed });

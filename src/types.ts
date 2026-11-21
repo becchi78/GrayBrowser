@@ -43,6 +43,14 @@ export interface TagWithCountDto extends TagDto {
   video_count: number;
 }
 
+/** 左ペインのタグ一覧の1行。グループなしのタグか、中にタグを持つグループ。 */
+export type TagLayoutItemDto =
+  | ({ kind: "tag" } & TagWithCountDto)
+  | { kind: "group"; id: number; name: string; tags: TagWithCountDto[] };
+
+export type TagLayoutKind = TagLayoutItemDto["kind"];
+export type TagMoveDirection = "up" | "down";
+
 // Mirrors src-tauri's SortFieldParam/SortDirectionParam (serde
 // rename_all = "snake_case") -- these are the only valid strings the
 // list_videos command accepts for sorting.

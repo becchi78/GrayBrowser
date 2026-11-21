@@ -2,7 +2,7 @@
 
 ## Heroicons
 
-The folder, star and tag icons in the left pane headings
+The folder, star, tag, tag group (rectangle-stack) and chevron-right icons in the left pane
 (`src/components/SidebarIcons.tsx`) are copied from the 24x24 solid set of
 [Heroicons](https://github.com/tailwindlabs/heroicons) and embedded as inline
 SVG.
