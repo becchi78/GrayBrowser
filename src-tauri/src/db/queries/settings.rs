@@ -220,6 +220,39 @@ pub fn delete_last_view_state(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+const REMEMBER_WINDOW_SIZE_ENABLED_KEY: &str = "remember_window_size_enabled";
+
+const WINDOW_STATE_KEY: &str = "window_state";
+
+/// Unset and unrecognized values both read as `true`: remembering is opt-out,
+/// and a corrupt value must not silently turn the feature off.
+pub fn get_remember_window_size_enabled(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(get_setting(conn, REMEMBER_WINDOW_SIZE_ENABLED_KEY)?.as_deref() != Some("0"))
+}
+
+pub fn set_remember_window_size_enabled(conn: &Connection, enabled: bool) -> anyhow::Result<()> {
+    set_setting(
+        conn,
+        REMEMBER_WINDOW_SIZE_ENABLED_KEY,
+        if enabled { "1" } else { "0" },
+    )?;
+    Ok(())
+}
+
+pub fn get_window_state(conn: &Connection) -> anyhow::Result<Option<String>> {
+    Ok(get_setting(conn, WINDOW_STATE_KEY)?)
+}
+
+pub fn set_window_state(conn: &Connection, json: &str) -> anyhow::Result<()> {
+    set_setting(conn, WINDOW_STATE_KEY, json)?;
+    Ok(())
+}
+
+pub fn delete_window_state(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute("DELETE FROM settings WHERE key = ?1", [WINDOW_STATE_KEY])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod watch_check_disabled_tests {
     use super::*;

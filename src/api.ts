@@ -181,6 +181,10 @@ export const reprobeMissingMetadata = () => invoke<number>("reprobe_missing_meta
 export const getRestoreViewStateEnabled = () => invoke<boolean>("get_restore_view_state_enabled");
 export const setRestoreViewStateEnabled = (enabled: boolean) =>
   invoke<void>("set_restore_view_state_enabled", { enabled });
+export const getRememberWindowSizeEnabled = () =>
+  invoke<boolean>("get_remember_window_size_enabled");
+export const setRememberWindowSizeEnabled = (enabled: boolean) =>
+  invoke<void>("set_remember_window_size_enabled", { enabled });
 /** 復元が無効なら null。有効なら、存在しない項目を除いた保存済みの状態。 */
 export const loadViewState = () => invoke<SavedViewState | null>("load_view_state");
 export const saveViewState = (state: SavedViewState) =>

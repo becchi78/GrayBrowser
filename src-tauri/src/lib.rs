@@ -15,6 +15,7 @@ pub mod thumbnail;
 pub mod watch;
 pub mod wb_import;
 
+mod main_window;
 mod menu;
 mod startup;
 
@@ -35,6 +36,7 @@ pub fn run() {
             let (app_dir, db) = startup::init_storage()?;
             let shared = startup::manage_shared_state(app, &db);
             startup::log_startup(&app_dir);
+            main_window::restore_and_show(app);
 
             let notifier = Arc::new(events::TauriCatalogNotifier::new(app.handle().clone()));
             let thumbnails_root = startup::prepare_thumbnails(&db, &app_dir)?;
@@ -68,6 +70,8 @@ pub fn run() {
             commands::view_state_cmds::set_restore_view_state_enabled,
             commands::view_state_cmds::load_view_state,
             commands::view_state_cmds::save_view_state,
+            commands::window_state_cmds::get_remember_window_size_enabled,
+            commands::window_state_cmds::set_remember_window_size_enabled,
             commands::settings_cmds::pick_watch_folders,
             commands::settings_cmds::list_watch_folders,
             commands::settings_cmds::reorder_watch_folders,

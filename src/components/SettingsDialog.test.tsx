@@ -15,6 +15,8 @@ vi.mock("../api", () => ({
   setNasPollIntervalMinutes: vi.fn(),
   setUpdateCheckOnStartup: vi.fn(),
   setRestoreViewStateEnabled: vi.fn(),
+  getRememberWindowSizeEnabled: vi.fn(),
+  setRememberWindowSizeEnabled: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -22,9 +24,11 @@ beforeEach(() => {
   vi.mocked(api.getNasPollIntervalMinutes).mockResolvedValue(5);
   vi.mocked(api.getUpdateCheckOnStartup).mockResolvedValue(false);
   vi.mocked(api.getRestoreViewStateEnabled).mockResolvedValue(false);
+  vi.mocked(api.getRememberWindowSizeEnabled).mockResolvedValue(false);
   vi.mocked(api.setNasPollIntervalMinutes).mockResolvedValue(5);
   vi.mocked(api.setUpdateCheckOnStartup).mockResolvedValue(undefined);
   vi.mocked(api.setRestoreViewStateEnabled).mockResolvedValue(undefined);
+  vi.mocked(api.setRememberWindowSizeEnabled).mockResolvedValue(undefined);
 });
 
 async function renderDialog() {
@@ -37,6 +41,7 @@ async function renderDialog() {
 const interval = () => screen.getByTestId("settings-nas-interval-input");
 const updateCheck = () => screen.getByTestId("settings-update-check-input");
 const restoreView = () => screen.getByTestId("settings-restore-view-input");
+const rememberWindowSize = () => screen.getByTestId("settings-remember-window-size-input");
 const save = () => screen.getByTestId("settings-dialog-save-btn");
 const errorText = () => screen.queryByTestId("settings-dialog-error");
 
@@ -51,6 +56,14 @@ test("開くと、保存されている設定を欄に反映する", async () =>
   expect(interval()).toHaveValue("5");
   expect(updateCheck()).not.toBeChecked();
   expect(restoreView()).not.toBeChecked();
+  expect(rememberWindowSize()).not.toBeChecked();
+});
+
+test("ウィンドウの大きさの記憶が有効なら、チェックを入れて表示する", async () => {
+  vi.mocked(api.getRememberWindowSizeEnabled).mockResolvedValue(true);
+  await renderDialog();
+
+  expect(rememberWindowSize()).toBeChecked();
 });
 
 test("設定を取得できないと、エラーを出す", async () => {
@@ -62,7 +75,7 @@ test("設定を取得できないと、エラーを出す", async () => {
   );
 });
 
-test("保存すると、3つの設定を順に書き込み、書き込めたら閉じる", async () => {
+test("保存すると、4つの設定を順に書き込み、書き込めたら閉じる", async () => {
   const order: string[] = [];
   vi.mocked(api.setNasPollIntervalMinutes).mockImplementation(async (m) => {
     order.push("nas");
@@ -72,16 +85,21 @@ test("保存すると、3つの設定を順に書き込み、書き込めたら�
   vi.mocked(api.setRestoreViewStateEnabled).mockImplementation(
     async () => void order.push("restore"),
   );
+  vi.mocked(api.setRememberWindowSizeEnabled).mockImplementation(
+    async () => void order.push("windowSize"),
+  );
   const { user, onClose } = await renderDialog();
   await setInterval(user, "30");
   await user.click(updateCheck());
+  await user.click(rememberWindowSize());
 
   await user.click(save());
 
   expect(api.setNasPollIntervalMinutes).toHaveBeenCalledWith(30);
   expect(api.setUpdateCheckOnStartup).toHaveBeenCalledWith(true);
   expect(api.setRestoreViewStateEnabled).toHaveBeenCalledWith(false);
-  expect(order).toEqual(["nas", "update", "restore"]);
+  expect(api.setRememberWindowSizeEnabled).toHaveBeenCalledWith(true);
+  expect(order).toEqual(["nas", "update", "restore", "windowSize"]);
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
@@ -112,6 +130,22 @@ test("書き込みが途中で失敗すると、後続は書き込まず、エ�
 
   expect(onClose).toHaveBeenCalledTimes(1);
   expect(api.setRestoreViewStateEnabled).toHaveBeenCalledTimes(1);
+});
+
+test("ウィンドウの大きさの記憶の書き込みが失敗すると、エラーを出し、閉じずに保存し直せる", async () => {
+  vi.mocked(api.setRememberWindowSizeEnabled).mockRejectedValueOnce(new Error("大きさを書き込めない"));
+  const { user, onClose } = await renderDialog();
+
+  await user.click(save());
+
+  expect(errorText()).toHaveTextContent("大きさを書き込めない");
+  expect(onClose).not.toHaveBeenCalled();
+  expect(save()).toBeEnabled();
+
+  await user.click(save());
+
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(api.setRememberWindowSizeEnabled).toHaveBeenCalledTimes(2);
 });
 
 test("保存中は欄とボタンを無効にする", async () => {
@@ -152,6 +186,7 @@ test("「既定に戻す」で、確認間隔 10 分・両方のチェックあ�
   expect(interval()).toHaveValue("10");
   expect(updateCheck()).toBeChecked();
   expect(restoreView()).toBeChecked();
+  expect(rememberWindowSize()).toBeChecked();
   expect(errorText()).toBeNull();
   expect(api.setNasPollIntervalMinutes).not.toHaveBeenCalled();
 
@@ -160,6 +195,7 @@ test("「既定に戻す」で、確認間隔 10 分・両方のチェックあ�
   expect(api.setNasPollIntervalMinutes).toHaveBeenCalledWith(10);
   expect(api.setUpdateCheckOnStartup).toHaveBeenCalledWith(true);
   expect(api.setRestoreViewStateEnabled).toHaveBeenCalledWith(true);
+  expect(api.setRememberWindowSizeEnabled).toHaveBeenCalledWith(true);
 });
 
 test("キャンセルすると、何も書き込まずに閉じる", async () => {

@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   getNasPollIntervalMinutes,
+  getRememberWindowSizeEnabled,
   getRestoreViewStateEnabled,
   getUpdateCheckOnStartup,
   setNasPollIntervalMinutes,
+  setRememberWindowSizeEnabled,
   setRestoreViewStateEnabled,
   setUpdateCheckOnStartup,
 } from "../api";
@@ -27,6 +29,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState("");
   const [updateCheck, setUpdateCheck] = useState(true);
   const [restoreView, setRestoreView] = useState(true);
+  const [rememberWindowSize, setRememberWindowSize] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,12 +50,14 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       getNasPollIntervalMinutes(),
       getUpdateCheckOnStartup(),
       getRestoreViewStateEnabled(),
+      getRememberWindowSizeEnabled(),
     ])
-      .then(([minutes, updateCheckOnStartup, restoreViewState]) => {
+      .then(([minutes, updateCheckOnStartup, restoreViewState, rememberSize]) => {
         if (!cancelled) {
           setText(String(minutes));
           setUpdateCheck(updateCheckOnStartup);
           setRestoreView(restoreViewState);
+          setRememberWindowSize(rememberSize);
           setLoading(false);
         }
       })
@@ -95,6 +100,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
       await setNasPollIntervalMinutes(parsed.minutes);
       await setUpdateCheckOnStartup(updateCheck);
       await setRestoreViewStateEnabled(restoreView);
+      await setRememberWindowSizeEnabled(rememberWindowSize);
       if (mountedRef.current) {
         onClose();
       }
@@ -169,6 +175,21 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
           検索語、フォルダ、並び順、タグ、レーティングの絞り込みを復元します。オフにすると、保存済みの状態も消去されます。
         </p>
       </div>
+      <div className="settings-dialog-field">
+        <label className="settings-dialog-check">
+          <input
+            type="checkbox"
+            checked={rememberWindowSize}
+            disabled={busy}
+            data-testid="settings-remember-window-size-input"
+            onChange={(e) => setRememberWindowSize(e.target.checked)}
+          />
+          前回のウィンドウの大きさを記憶する
+        </label>
+        <p className="dialog-hint">
+          オフにすると、起動のたびに、既定の大きさで開きます。
+        </p>
+      </div>
       {error !== null && (
         <p className="dialog-error dialog-error--compact" role="alert" data-testid="settings-dialog-error">
           {error}
@@ -183,6 +204,7 @@ function SettingsDialogContent({ onClose }: { onClose: () => void }) {
             setText(String(DEFAULT_MINUTES));
             setUpdateCheck(true);
             setRestoreView(true);
+            setRememberWindowSize(true);
             setError(null);
           }}
         >

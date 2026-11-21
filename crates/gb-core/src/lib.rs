@@ -38,6 +38,7 @@ pub mod wb_import_log;
 pub mod wb_sampling;
 pub mod wb_skipped_payload;
 pub mod wb_thumbnail_split;
+pub mod window_state;
 
 #[cfg(feature = "testing")]
 pub mod testing;
