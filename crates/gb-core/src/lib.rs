@@ -6,10 +6,12 @@
 pub mod appearance;
 pub mod backup;
 pub mod dedup;
+pub mod diagnostics;
 pub mod file_delete_policy;
 pub mod filename_validation;
 pub mod hash;
 pub mod image_size;
+pub mod log_level;
 pub mod log_view;
 pub mod migrations;
 pub mod nas_poll_interval;

@@ -32,13 +32,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let (app_dir, db) = match startup::init_storage() {
+            let (app_dir, db, log_control) = match startup::init_storage() {
                 Ok(v) => v,
                 Err(e) => {
                     startup::report_schema_too_new(app, e.as_ref());
                     return Err(e);
                 }
             };
+            startup::manage_log_level(app, &db, log_control);
             let shared = startup::manage_shared_state(app, &db);
             startup::log_startup(&app_dir);
             main_window::restore_and_show(app);
@@ -66,6 +67,11 @@ pub fn run() {
             commands::ffmpeg_cmds::get_ffmpeg_status,
             commands::log_cmds::read_log,
             commands::log_cmds::get_log_dir,
+            commands::log_cmds::get_log_level,
+            commands::log_cmds::set_log_level,
+            commands::log_cmds::open_log_dir,
+            commands::developer_cmds::open_devtools,
+            commands::diagnostics_cmds::get_diagnostics,
             commands::reachability_cmds::get_unreachable_folders,
             commands::reachability_cmds::check_folder_reachability,
             commands::update_cmds::get_update_check_on_startup,

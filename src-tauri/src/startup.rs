@@ -26,12 +26,12 @@ pub(crate) type SetupResult<T> = Result<T, Box<dyn std::error::Error>>;
 /// Everything up to an open database. Logging and the legacy-layout move have
 /// to happen before `db::init`, and the database is only handed out from
 /// here, so nothing can use it before they are done.
-pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db)> {
+pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db, logging::LogLevelControl)> {
     let app_dir = paths::app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
     // Before db::init so a migration failure is captured in app.log
     // too, not just wherever Tauri prints its own startup error.
-    let _ = logging::init(&app_dir);
+    let log_control = logging::LogLevelControl::new(logging::init(&app_dir));
     // Before db::init: moves any pre-existing double-nested install
     // data (see `paths::migrate_legacy_nested_app_dir`) into place
     // first, so db::init opens the real database rather than
@@ -46,7 +46,24 @@ pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db)> {
             Ok(too_new) => Box::new(too_new) as Box<dyn std::error::Error>,
             Err(other) => other.into(),
         })?;
-    Ok((app_dir, db))
+    Ok((app_dir, db, log_control))
+}
+
+/// Registers the log-level control and applies the level in force. Logging
+/// starts at `info` before the database is open, so the stored level can only
+/// be applied here.
+pub(crate) fn manage_log_level(app: &tauri::App, db: &db::Db, control: logging::LogLevelControl) {
+    match db.read_pool.get() {
+        Ok(conn) => {
+            if let Err(e) =
+                crate::commands::log_cmds::apply_effective_log_level(&conn, |l| control.apply(l))
+            {
+                log::warn!("could not apply the stored log level: {e}");
+            }
+        }
+        Err(e) => log::warn!("could not apply the stored log level: {e}"),
+    }
+    app.manage(control);
 }
 
 const SCHEMA_TOO_NEW_TITLE: &str = "GrayBrowser を起動できません";

@@ -30,6 +30,79 @@ fn hidden_command(program: &str) -> Command {
     cmd
 }
 
+/// Runs `cmd` to completion, recording at debug level what was run and how it
+/// ended. Every ffmpeg/ffprobe run goes through here so that, with the level
+/// raised in developer mode, a failure can be reproduced from the log alone.
+/// Nothing is formatted unless debug is enabled: scans call this per file.
+fn run_logged(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    let logging = log::log_enabled!(log::Level::Debug);
+    let line = logging.then(|| {
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        format_command_line(&cmd.get_program().to_string_lossy(), &args)
+    });
+    if let Some(line) = &line {
+        log::debug!("exec: {line}");
+    }
+    let result = cmd.output();
+    if let Some(line) = &line {
+        match &result {
+            Ok(output) => {
+                // Only the tail: the banner ffmpeg prints first would bury the
+                // lines that explain the outcome.
+                let tail = cap_bytes_keeping_end(
+                    &tail_lines(&String::from_utf8_lossy(&output.stderr), STDERR_TAIL_LINES),
+                    STDERR_LOG_MAX_BYTES,
+                );
+                log::debug!(
+                    "exit {} for: {line}\nstderr (tail): {tail}",
+                    output.status.code().unwrap_or(-1)
+                );
+            }
+            Err(e) => log::debug!("failed to run: {line}: {e}"),
+        }
+    }
+    result
+}
+
+/// Upper bound for the stderr text in one log record. The line limit alone does
+/// not bound it: a single very long line, or progress output separated only by
+/// a lone CR, counts as one line.
+const STDERR_LOG_MAX_BYTES: usize = 4096;
+
+/// At most `max` bytes of `s`, keeping the end (where ffmpeg states the cause)
+/// and cutting on a UTF-8 character boundary. A cut is marked with a leading
+/// "[truncated] ".
+fn cap_bytes_keeping_end(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut start = s.len() - max;
+    while !s.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("[truncated] {}", &s[start..])
+}
+
+/// The program and its arguments on one line, quoting any argument that
+/// contains whitespace or quotes so the line can be pasted into a console.
+fn format_command_line(program: &str, args: &[String]) -> String {
+    let mut line = program.to_string();
+    for arg in args {
+        line.push(' ');
+        if arg.is_empty() || arg.contains(|c: char| c.is_whitespace() || c == '"') {
+            line.push('"');
+            line.push_str(&arg.replace('"', "\\\""));
+            line.push('"');
+        } else {
+            line.push_str(arg);
+        }
+    }
+    line
+}
+
 /// Stateless; safe to construct on demand wherever it's needed.
 pub struct RealFfmpegAdapter;
 
@@ -44,18 +117,17 @@ impl FfmpegAdapter for RealFfmpegAdapter {
     fn probe_duration(&self, video_path: &Path) -> Result<Option<f64>, FfmpegError> {
         let long_video_path = long_path::to_long_path(video_path);
         let path_str = path_to_str(&long_video_path)?;
-        let output = hidden_command("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "json",
-                path_str,
-            ])
-            .output()
-            .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
+        let mut cmd = hidden_command("ffprobe");
+        cmd.args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            path_str,
+        ]);
+        let output = run_logged(&mut cmd).map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
         if !output.status.success() {
             return Err(FfmpegError::NonZeroExit {
@@ -90,32 +162,31 @@ impl FfmpegAdapter for RealFfmpegAdapter {
         // Extracts one frame at the caller-chosen `seek_secs`, scaled to
         // about width_px wide, low-quality-leaning WebP output via
         // -quality/-lossless 0.
-        let output = hidden_command("ffmpeg")
-            .args([
-                "-ss",
-                &seek_secs.to_string(),
-                "-i",
-                input_str,
-                "-frames:v",
-                "1",
-                "-vf",
-                &format!("scale={width_px}:-1"),
-                "-quality",
-                &quality.to_string(),
-                "-lossless",
-                "0",
-                // Output path is `[id].webp.tmp` (this app's atomic
-                // write scheme), so ffmpeg can't infer the muxer from the
-                // extension (it sees ".tmp", not ".webp") -- force it explicitly.
-                // Confirmed via manual repro: without this, ffmpeg refuses to
-                // open the output ("Unable to choose an output format").
-                "-f",
-                "webp",
-                "-y",
-                output_str,
-            ])
-            .output()
-            .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
+        let mut cmd = hidden_command("ffmpeg");
+        cmd.args([
+            "-ss",
+            &seek_secs.to_string(),
+            "-i",
+            input_str,
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale={width_px}:-1"),
+            "-quality",
+            &quality.to_string(),
+            "-lossless",
+            "0",
+            // Output path is `[id].webp.tmp` (this app's atomic
+            // write scheme), so ffmpeg can't infer the muxer from the
+            // extension (it sees ".tmp", not ".webp") -- force it explicitly.
+            // Confirmed via manual repro: without this, ffmpeg refuses to
+            // open the output ("Unable to choose an output format").
+            "-f",
+            "webp",
+            "-y",
+            output_str,
+        ]);
+        let output = run_logged(&mut cmd).map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
         if !output.status.success() {
             return Err(FfmpegError::NonZeroExit {
@@ -129,18 +200,17 @@ impl FfmpegAdapter for RealFfmpegAdapter {
     fn probe_metadata(&self, video_path: &Path) -> Result<VideoMetadata, FfmpegError> {
         let long_video_path = long_path::to_long_path(video_path);
         let path_str = path_to_str(&long_video_path)?;
-        let output = hidden_command("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate:format=bit_rate",
-                "-of",
-                "json",
-                path_str,
-            ])
-            .output()
-            .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
+        let mut cmd = hidden_command("ffprobe");
+        cmd.args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate:format=bit_rate",
+            "-of",
+            "json",
+            path_str,
+        ]);
+        let output = run_logged(&mut cmd).map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
         if !output.status.success() {
             return Err(FfmpegError::NonZeroExit {
@@ -334,10 +404,9 @@ fn run_image_to_webp(
 }
 
 fn run_ffmpeg_image(args: Vec<String>) -> Result<(), FfmpegError> {
-    let output = hidden_command("ffmpeg")
-        .args(args)
-        .output()
-        .map_err(|e| FfmpegError::Spawn(e.to_string()))?;
+    let mut cmd = hidden_command("ffmpeg");
+    cmd.args(args);
+    let output = run_logged(&mut cmd).map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
     if !output.status.success() {
         // Only the tail: the full stderr is ~100 lines of banner that would
@@ -372,7 +441,9 @@ fn path_to_str(path: &Path) -> Result<&str, FfmpegError> {
 /// binary was found and ran successfully; `None` otherwise (not found,
 /// failed to spawn, or non-zero exit).
 fn version_of(binary_name: &str) -> Option<String> {
-    let output = hidden_command(binary_name).arg("-version").output().ok()?;
+    let mut cmd = hidden_command(binary_name);
+    cmd.arg("-version");
+    let output = run_logged(&mut cmd).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -516,6 +587,106 @@ mod tests {
     #[test]
     fn parse_frame_rate_handles_a_fractional_ntsc_rate() {
         assert_eq!(parse_frame_rate("30000/1001"), Some(30000.0 / 1001.0));
+    }
+
+    #[test]
+    fn command_line_quotes_only_arguments_that_need_it() {
+        let args = ["-i", r"C:\my videos.mp4", "", "scale=320:-1"].map(String::from);
+        assert_eq!(
+            format_command_line("ffmpeg", &args),
+            r#"ffmpeg -i "C:\my videos.mp4" "" scale=320:-1"#
+        );
+    }
+
+    #[test]
+    fn command_line_escapes_embedded_quotes() {
+        let args = [r#"a"b"#.to_string()];
+        assert_eq!(format_command_line("ffprobe", &args), r#"ffprobe "a\"b""#);
+    }
+
+    /// Collects debug records so `run_logged` can be checked end to end with a
+    /// harmless command. Installed once per process; the assertions look for
+    /// text unique to this test because other tests may log too.
+    struct Capture(std::sync::Mutex<Vec<String>>);
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            self.0.lock().unwrap().push(record.args().to_string());
+        }
+        fn flush(&self) {}
+    }
+
+    static CAPTURE: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+
+    /// Installs the capture logger once. A failure means another test already
+    /// owns the global logger, which would make this test's assertions
+    /// meaningless, so it fails loudly instead of being ignored.
+    fn install_capture() {
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        INSTALLED.call_once(|| {
+            log::set_logger(&CAPTURE)
+                .expect("another test installed the global logger; share one capture logger");
+        });
+        log::set_max_level(log::LevelFilter::Debug);
+    }
+
+    #[test]
+    fn short_stderr_is_logged_whole() {
+        assert_eq!(cap_bytes_keeping_end("abc", 3), "abc");
+        assert_eq!(cap_bytes_keeping_end("", 3), "");
+    }
+
+    #[test]
+    fn long_stderr_keeps_the_end_and_is_marked() {
+        assert_eq!(cap_bytes_keeping_end("abcdef", 3), "[truncated] def");
+    }
+
+    #[test]
+    fn the_cut_never_splits_a_multibyte_character() {
+        // Each of these characters is 3 bytes; a 4-byte budget fits one.
+        let capped = cap_bytes_keeping_end("あいう", 4);
+        assert_eq!(capped, "[truncated] う");
+    }
+
+    #[test]
+    fn one_enormous_line_or_cr_separated_progress_stays_bounded() {
+        let long_line = "x".repeat(1_000_000);
+        assert!(cap_bytes_keeping_end(&long_line, STDERR_LOG_MAX_BYTES).len() < 4200);
+        let progress = "frame=1 size=0kB\r".repeat(100_000);
+        let tail = tail_lines(&progress, STDERR_TAIL_LINES);
+        assert!(cap_bytes_keeping_end(&tail, STDERR_LOG_MAX_BYTES).len() < 4200);
+    }
+
+    #[test]
+    fn run_logged_records_the_command_and_the_stderr_tail_at_debug() {
+        install_capture();
+
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/c", "echo marker_stderr_line 1>&2"]);
+        let output = run_logged(&mut cmd).unwrap();
+        assert!(output.status.success());
+
+        let records = CAPTURE.0.lock().unwrap();
+        assert!(
+            records
+                .iter()
+                .any(|r| r.starts_with("exec: cmd /c \"echo marker_stderr_line 1>&2\"")),
+            "{records:?}"
+        );
+        assert!(
+            records
+                .iter()
+                .any(|r| r.contains("exit 0") && r.contains("stderr (tail): marker_stderr_line")),
+            "{records:?}"
+        );
+    }
+
+    #[test]
+    fn command_line_without_arguments_is_just_the_program() {
+        assert_eq!(format_command_line("ffprobe", &[]), "ffprobe");
     }
 
     #[test]

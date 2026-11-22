@@ -147,6 +147,13 @@ export const setWatchFolderCheckEnabled = (folderPath: string, enabled: boolean)
   invoke<string[]>("set_watch_folder_check_enabled", { folderPath, enabled });
 export const readLog = (offset: number | null) => invoke<LogChunkDto>("read_log", { offset });
 export const getLogDir = () => invoke<string>("get_log_dir");
+// 以下の4つは開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
+export const getDiagnostics = () => invoke<string>("get_diagnostics");
+export const getLogLevel = () => invoke<string>("get_log_level");
+export const setLogLevel = (level: string) => invoke<void>("set_log_level", { level });
+// 開くのはバックエンドが決めた固定のログフォルダだけで、パスは渡さない。
+export const openLogDir = () => invoke<void>("open_log_dir");
+export const openDevtools = () => invoke<void>("open_devtools");
 export const startScan = () => invoke<ScanSummary>("start_scan");
 export const getThumbnails = (videoId: string) =>
   invoke<string[] | null>("get_thumbnails", { videoId });

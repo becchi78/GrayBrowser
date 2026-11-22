@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
-import { quitApp, runManualBackup } from "../api";
+import { openDevtools, quitApp, runManualBackup } from "../api";
 import {
   MODES,
   MODE_LABELS,
@@ -14,6 +14,7 @@ import {
 import { placeDropdownRightAligned, placeSubmenu, type MenuPosition } from "../lib/contextMenu";
 import { focusFirstItem, moveMenuFocus, type FocusMove } from "../lib/menuFocus";
 import type { DialogKind } from "../useActiveDialog";
+import { useDeveloperMode } from "../useDeveloperMode";
 
 interface Props {
   openDialog: (kind: DialogKind) => void;
@@ -116,6 +117,7 @@ function CheckIcon() {
 // position / overflow の効く祖先の影響を受けないようにする。
 export function AppMenu({ openDialog, appearance, onSelectTheme, onSelectMode }: Props) {
   const [open, setOpen] = useState(false);
+  const developerMode = useDeveloperMode();
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const closeAndRestoreFocus = useCallback(() => {
@@ -172,8 +174,20 @@ export function AppMenu({ openDialog, appearance, onSelectTheme, onSelectMode }:
       label: "ヘルプ",
       entries: [
         dialog("log", "動作ログ...", "log"),
+        // 開発者向けの項目は、開発者モードがオンのときだけ出す。
+        ...(developerMode ? [dialog("diagnostics", "診断情報...", "diagnostics")] : []),
         dialog("update", "更新の確認...", "update"),
         dialog("about", "バージョン情報", "about"),
+        ...(developerMode
+          ? [
+              "separator" as const,
+              {
+                id: "devtools",
+                label: "開発者ツールを開く",
+                onSelect: () => openDevtools().catch(reportFailure),
+              },
+            ]
+          : []),
       ],
     },
   ];
