@@ -1,0 +1,25 @@
+/* バッジの左に置く。右寄せの余白はこの表示が受け持つので、続くバッジ側の
+   自動余白は打ち消す。長いパスは省略表示にし、全体はツールチップで見せる。 */
+.data-dir-indicator {
+  margin-left: auto;
+  margin-right: var(--space-2);
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.data-dir-indicator-overridden {
+  padding: var(--badge-padding);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-weight: var(--weight-strong);
+}
+
+.data-dir-indicator + .dev-mode-badge {
+  margin-left: 0;
+}

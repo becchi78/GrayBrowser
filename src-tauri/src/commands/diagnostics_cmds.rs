@@ -76,6 +76,42 @@ pub(crate) fn mask_rules_from_env() -> Vec<MaskRule> {
     .collect()
 }
 
+/// The folder in use, shown beside the developer-mode badge so a session on a
+/// substitute folder is never mistaken for the real one.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DataDirInfo {
+    pub path: String,
+    pub overridden: bool,
+}
+
+/// Same developer-mode refusal and the same path masking as the diagnostics
+/// report, even though it only reads: the folder path can carry the account
+/// name.
+fn guarded_data_dir_info(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+    overridden: bool,
+    rules: &[MaskRule],
+) -> Result<DataDirInfo, String> {
+    ensure_developer_mode(conn)?;
+    Ok(DataDirInfo {
+        path: gb_core::diagnostics::mask_paths(&dir.display().to_string(), rules),
+        overridden,
+    })
+}
+
+#[tauri::command]
+pub fn get_data_dir_info(db: State<'_, Db>) -> Result<DataDirInfo, String> {
+    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
+    let dir = crate::paths::app_data_dir().map_err(|e| e.to_string())?;
+    guarded_data_dir_info(
+        &conn,
+        &dir,
+        crate::paths::data_dir_overridden(),
+        &mask_rules_from_env(),
+    )
+}
+
 /// Async because the release status is a network lookup; the FFmpeg version
 /// probes block, so they run on a blocking worker rather than the async
 /// runtime's threads. Developer mode is checked before any network access.
@@ -165,6 +201,38 @@ mod tests {
         assert!(guarded_report(&conn, &fake, env()).is_err());
         queries::set_developer_mode(&conn, true).unwrap();
         assert!(guarded_report(&conn, &fake, env()).is_ok());
+    }
+
+    #[test]
+    fn data_dir_info_is_refused_unless_developer_mode_is_on() {
+        use crate::db::{queries, test_support::init_temp_db};
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        let dir = std::path::Path::new(r"C:\Users\alice\AppData\Local\GrayBrowser");
+        assert!(guarded_data_dir_info(&conn, dir, false, &[]).is_err());
+        queries::set_developer_mode(&conn, true).unwrap();
+        assert!(guarded_data_dir_info(&conn, dir, false, &[]).is_ok());
+    }
+
+    #[test]
+    fn data_dir_info_masks_the_path_and_carries_the_override_flag() {
+        use crate::db::{queries, test_support::init_temp_db};
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        queries::set_developer_mode(&conn, true).unwrap();
+        let rules = vec![MaskRule {
+            prefix: r"C:\Users\alice\AppData\Local".into(),
+            placeholder: "%LOCALAPPDATA%".into(),
+        }];
+        let dir = std::path::Path::new(r"C:\Users\alice\AppData\Local\GrayBrowser");
+        let info = guarded_data_dir_info(&conn, dir, true, &rules).unwrap();
+        assert_eq!(
+            info,
+            DataDirInfo {
+                path: r"%LOCALAPPDATA%\GrayBrowser".into(),
+                overridden: true
+            }
+        );
     }
 
     #[test]

@@ -26,6 +26,116 @@ pub fn resolve_app_dir(exe_path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Why a requested data folder was refused. Startup shows the reason and stops
+/// rather than quietly falling back to the real data folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataDirError {
+    /// The option was given with an empty or blank value.
+    Empty,
+    /// `--data-dir` was the last argument, with nothing after it.
+    MissingValue,
+    /// Leading or trailing whitespace is most likely a quoting slip; it is
+    /// refused rather than trimmed so the folder used is never a guess.
+    SurroundingWhitespace,
+    /// Relative paths depend on the working directory, which differs by how
+    /// the app was launched.
+    NotAbsolute,
+    /// `..` could point outside the folder the user named.
+    ParentComponent,
+    /// The path names an existing file, not a folder.
+    IsFile,
+}
+
+impl std::fmt::Display for DataDirError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self {
+            DataDirError::Empty => "データフォルダの指定が空です。",
+            DataDirError::MissingValue => "--data-dir の後ろにフォルダが指定されていません。",
+            DataDirError::SurroundingWhitespace => {
+                "データフォルダの指定の前後に空白があります。引用符の位置を確認してください。"
+            }
+            DataDirError::NotAbsolute => {
+                "データフォルダは、ドライブ名から始まる絶対パスで指定してください。"
+            }
+            DataDirError::ParentComponent => "データフォルダに「..」を含めることはできません。",
+            DataDirError::IsFile => "指定された場所は、フォルダではなく既存のファイルです。",
+        };
+        f.write_str(reason)
+    }
+}
+
+impl std::error::Error for DataDirError {}
+
+/// Command-line option naming the data folder.
+pub const DATA_DIR_ARG: &str = "--data-dir";
+
+/// Finds the value of `--data-dir <path>` / `--data-dir=<path>` in `args`
+/// (the program name included or not). The first occurrence wins; other
+/// arguments are ignored. Pure string work, no validation of the value.
+pub fn find_data_dir_arg(args: &[String]) -> Result<Option<String>, DataDirError> {
+    let prefix = format!("{DATA_DIR_ARG}=");
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            return Ok(Some(value.to_string()));
+        }
+        if arg == DATA_DIR_ARG {
+            return match iter.next() {
+                Some(value) => Ok(Some(value.clone())),
+                None => Err(DataDirError::MissingValue),
+            };
+        }
+    }
+    Ok(None)
+}
+
+/// Picks the data folder override: the command-line value wins over the
+/// environment variable. `Ok(None)` means neither was given. A value that is
+/// given but invalid is an error even when the other source is valid, so a
+/// mistyped option can never silently select another folder.
+///
+/// Whether the path is an existing *file* needs the file system, so that
+/// check belongs to the caller.
+pub fn resolve_data_dir_override(
+    arg: Option<&str>,
+    env: Option<&str>,
+) -> Result<Option<PathBuf>, DataDirError> {
+    let Some(raw) = arg.or(env) else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        return Err(DataDirError::Empty);
+    }
+    if raw.trim() != raw {
+        return Err(DataDirError::SurroundingWhitespace);
+    }
+    // Device and verbatim prefixes bypass normalisation (`..`, separators),
+    // so they are not accepted as a data folder.
+    if raw.starts_with(r"\\?\") || raw.starts_with(r"\\.\") {
+        return Err(DataDirError::NotAbsolute);
+    }
+    if !is_absolute_windows_path(raw) {
+        return Err(DataDirError::NotAbsolute);
+    }
+    if raw.split(is_path_sep).any(|part| part == "..") {
+        return Err(DataDirError::ParentComponent);
+    }
+    Ok(Some(PathBuf::from(raw)))
+}
+
+/// A drive-letter path with a separator right after the colon (`D:\x`; plain
+/// `D:x` is relative to that drive's current folder) or a UNC path.
+fn is_absolute_windows_path(path: &str) -> bool {
+    if extract_drive_root(path).is_none() {
+        return false;
+    }
+    let trimmed = path.trim_start();
+    let mut chars = trimmed.chars();
+    let first = chars.next();
+    // A UNC root was already validated (server and share) by the extraction.
+    first.is_some_and(is_path_sep) || chars.nth(1).is_some_and(is_path_sep)
+}
+
 /// Characters that separate path components; Windows accepts both.
 pub(crate) const PATH_SEPARATORS: [char; 2] = ['\\', '/'];
 
@@ -191,6 +301,151 @@ pub fn replace_folder_prefix(path: &str, old_folder: &str, new_folder: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- data folder override ------------------------------------------
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn find_data_dir_arg_reads_both_spellings() {
+        assert_eq!(
+            find_data_dir_arg(&strs(&["app.exe", "--data-dir", r"D:\t"])),
+            Ok(Some(r"D:\t".to_string()))
+        );
+        assert_eq!(
+            find_data_dir_arg(&strs(&["app.exe", r"--data-dir=D:\t"])),
+            Ok(Some(r"D:\t".to_string()))
+        );
+    }
+
+    #[test]
+    fn find_data_dir_arg_returns_none_without_the_option() {
+        assert_eq!(find_data_dir_arg(&strs(&["app.exe", "--other"])), Ok(None));
+        assert_eq!(find_data_dir_arg(&[]), Ok(None));
+    }
+
+    #[test]
+    fn find_data_dir_arg_rejects_a_missing_value() {
+        assert_eq!(
+            find_data_dir_arg(&strs(&["app.exe", "--data-dir"])),
+            Err(DataDirError::MissingValue)
+        );
+    }
+
+    #[test]
+    fn find_data_dir_arg_passes_an_empty_value_through_for_validation() {
+        assert_eq!(
+            find_data_dir_arg(&strs(&["--data-dir="])),
+            Ok(Some(String::new()))
+        );
+    }
+
+    #[test]
+    fn override_is_none_when_nothing_is_given() {
+        assert_eq!(resolve_data_dir_override(None, None), Ok(None));
+    }
+
+    #[test]
+    fn override_prefers_the_argument_over_the_environment() {
+        assert_eq!(
+            resolve_data_dir_override(Some(r"D:\arg"), Some(r"D:\env")),
+            Ok(Some(PathBuf::from(r"D:\arg")))
+        );
+        assert_eq!(
+            resolve_data_dir_override(None, Some(r"D:\env")),
+            Ok(Some(PathBuf::from(r"D:\env")))
+        );
+    }
+
+    #[test]
+    fn an_invalid_argument_is_not_rescued_by_a_valid_environment_value() {
+        assert_eq!(
+            resolve_data_dir_override(Some("rel"), Some(r"D:\env")),
+            Err(DataDirError::NotAbsolute)
+        );
+    }
+
+    #[test]
+    fn override_accepts_drive_and_unc_paths() {
+        for ok in [
+            r"D:\gb-test",
+            "D:/gb-test",
+            r"D:\",
+            r"\\nas\share\gb",
+            r"D:\日本語 フォルダ",
+        ] {
+            assert_eq!(
+                resolve_data_dir_override(Some(ok), None),
+                Ok(Some(PathBuf::from(ok))),
+                "{ok}"
+            );
+        }
+    }
+
+    #[test]
+    fn override_rejects_empty_and_blank_values() {
+        for v in ["", "   "] {
+            assert_eq!(
+                resolve_data_dir_override(Some(v), None),
+                Err(DataDirError::Empty)
+            );
+            assert_eq!(
+                resolve_data_dir_override(None, Some(v)),
+                Err(DataDirError::Empty)
+            );
+        }
+    }
+
+    #[test]
+    fn override_rejects_surrounding_whitespace_without_trimming() {
+        for v in [r" D:\x", r"D:\x ", " D:\\x\t", "\tD:\\x"] {
+            assert_eq!(
+                resolve_data_dir_override(Some(v), None),
+                Err(DataDirError::SurroundingWhitespace),
+                "{v:?}"
+            );
+        }
+        // Whitespace inside a component is fine.
+        assert!(resolve_data_dir_override(Some(r"D:\my folder"), None).is_ok());
+    }
+
+    #[test]
+    fn override_rejects_verbatim_and_device_prefixes() {
+        for v in [r"\\?\D:\x", r"\\.\D:\x", r"\\?\UNC\nas\share\x"] {
+            assert_eq!(
+                resolve_data_dir_override(Some(v), None),
+                Err(DataDirError::NotAbsolute),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn override_rejects_relative_paths() {
+        for v in [
+            "gb-test", r"..\x", r".\x", "D:x", "D:", r"\x", r"\\nas", "/tmp/x",
+        ] {
+            assert_eq!(
+                resolve_data_dir_override(Some(v), None),
+                Err(DataDirError::NotAbsolute),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn override_rejects_parent_components_but_not_dotted_names() {
+        for v in [r"D:\a\..\b", "D:/a/../b", r"D:\a\.."] {
+            assert_eq!(
+                resolve_data_dir_override(Some(v), None),
+                Err(DataDirError::ParentComponent),
+                "{v}"
+            );
+        }
+        assert!(resolve_data_dir_override(Some(r"D:\a..b\.c"), None).is_ok());
+    }
 
     #[test]
     fn extract_drive_root_resolves_drive_letter_and_unc_paths() {

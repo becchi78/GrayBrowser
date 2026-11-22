@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gb_core::migrations::SchemaTooNew;
+use gb_core::paths::DataDirError;
 use tauri::Manager;
 
 use crate::{
@@ -35,8 +36,8 @@ pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db, logging::LogLevelC
     // Before db::init: moves any pre-existing double-nested install
     // data (see `paths::migrate_legacy_nested_app_dir`) into place
     // first, so db::init opens the real database rather than
-    // creating a fresh empty one.
-    paths::migrate_legacy_nested_app_dir(&app_dir)?;
+    // creating a fresh empty one. Skipped for a data folder override.
+    paths::migrate_legacy_unless_overridden(&app_dir, paths::data_dir_overridden())?;
     let db = db::init(&app_dir.join("app.db"))
         .inspect_err(|e| log::error!("failed to initialize database: {e}"))
         // An `anyhow::Error` converted straight into a `Box<dyn Error>` can no
@@ -66,7 +67,7 @@ pub(crate) fn manage_log_level(app: &tauri::App, db: &db::Db, control: logging::
     app.manage(control);
 }
 
-const SCHEMA_TOO_NEW_TITLE: &str = "GrayBrowser を起動できません";
+const STARTUP_ABORT_TITLE: &str = "GrayBrowser を起動できません";
 
 /// The text for the dialog shown when the database is newer than this app.
 /// Kept free of any dialog or path lookup so the wording can be tested.
@@ -108,10 +109,40 @@ pub(crate) fn report_schema_too_new(
     log::error!("refusing to start: {too_new}");
     app.dialog()
         .message(message)
-        .title(SCHEMA_TOO_NEW_TITLE)
+        .title(STARTUP_ABORT_TITLE)
         .kind(MessageDialogKind::Error)
         .blocking_show();
     true
+}
+
+/// The text for the dialog shown when the requested data folder is refused.
+pub(crate) fn data_dir_error_message(err: &DataDirError) -> String {
+    [
+        "指定されたデータフォルダを使えません。".to_string(),
+        err.to_string(),
+        String::new(),
+        "実データを守るため、起動を中止します。".to_string(),
+        format!(
+            "指定は、起動引数 {} <フォルダ> または環境変数 {} で行います。",
+            gb_core::paths::DATA_DIR_ARG,
+            paths::DATA_DIR_ENV
+        ),
+    ]
+    .join("\n")
+}
+
+/// Shows why the data folder request was refused. Startup is then aborted by
+/// the caller: carrying on with the real data folder would defeat the point
+/// of naming another one.
+pub(crate) fn report_data_dir_error(app: &tauri::App, err: &DataDirError) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    log::error!("refusing to start: invalid data folder request: {err}");
+    app.dialog()
+        .message(data_dir_error_message(err))
+        .title(STARTUP_ABORT_TITLE)
+        .kind(MessageDialogKind::Error)
+        .blocking_show();
 }
 
 /// State shared with the commands, created and registered together so the
@@ -406,6 +437,16 @@ mod tests {
         assert!(msg.contains("版13"));
         assert!(msg.contains(&db::backup::backups_dir(dir).display().to_string()));
         assert!(msg.contains("docs/backup.md"));
+        assert!(msg.lines().all(|l| l == l.trim_start()));
+    }
+
+    #[test]
+    fn data_dir_error_message_gives_the_reason_and_how_to_specify() {
+        let msg = data_dir_error_message(&DataDirError::NotAbsolute);
+        assert!(msg.contains(&DataDirError::NotAbsolute.to_string()));
+        assert!(msg.contains("--data-dir"));
+        assert!(msg.contains("GB_DATA_DIR"));
+        assert!(msg.contains("起動を中止"));
         assert!(msg.lines().all(|l| l == l.trim_start()));
     }
 

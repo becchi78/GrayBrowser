@@ -156,6 +156,13 @@ export const readLog = (offset: number | null) => invoke<LogChunkDto>("read_log"
 export const getLogDir = () => invoke<string>("get_log_dir");
 // 以下は開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
 export const getDiagnostics = () => invoke<string>("get_diagnostics");
+// 使用中のデータフォルダ。path は診断情報と同じ置き換えを通した表示用の文字列。
+// overridden は、起動引数・環境変数で既定と違うフォルダを指定しているとき true。
+export interface DataDirInfo {
+  path: string;
+  overridden: boolean;
+}
+export const getDataDirInfo = () => invoke<DataDirInfo>("get_data_dir_info");
 // データベースツール。SQL もパスも渡さず、バックエンドが固定の操作だけを行う。
 // run_vacuum だけは変更を伴うため、バックエンドも開発者モードを確認する。
 export interface IntegrityResult {
