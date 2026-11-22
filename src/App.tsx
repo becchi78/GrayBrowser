@@ -4,6 +4,7 @@ import "./App.css";
 import { FilterBar } from "./components/FilterBar";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
+import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { LogViewerDialog } from "./components/LogViewerDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { LeftPane } from "./components/LeftPane";
@@ -271,6 +272,10 @@ function AppContent({
       <SettingsDialog open={activeDialog === "settings"} onClose={() => closeDialog("settings")} />
       <LogViewerDialog open={activeDialog === "log"} onClose={() => closeDialog("log")} />
       <UpdateDialog open={activeDialog === "update"} onClose={() => closeDialog("update")} />
+      <DiagnosticsDialog
+        open={activeDialog === "diagnostics"}
+        onClose={() => closeDialog("diagnostics")}
+      />
       <AboutDialog open={activeDialog === "about"} onClose={() => closeDialog("about")} />
       {editMenu && (
         <EditContextMenu

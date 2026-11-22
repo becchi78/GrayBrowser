@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { getLogDir, readLog } from "../api";
+import { getLogDir, getLogLevel, openLogDir, readLog, setLogLevel } from "../api";
 import {
   LOG_LEVELS,
   entryMatches,
@@ -11,6 +11,7 @@ import {
 import type { LogEntryDto } from "../types";
 import { ModalShell } from "./ModalShell";
 import { errorText } from "../lib/errorText";
+import { useDeveloperMode } from "../useDeveloperMode";
 
 interface Props {
   open: boolean;
@@ -28,6 +29,81 @@ interface Row extends LogEntryDto {
   id: number;
 }
 
+// バックエンドの LogLevel と同じ値。表示は値のまま(開発者向けの項目なので)。
+const DEVELOPER_LOG_LEVELS = ["info", "debug", "trace"] as const;
+
+// 開発者モードのときだけ出す、ログレベルの切り替えとログフォルダを開く操作。
+// 選択肢の表示だけに頼らず、バックエンドも開発者モードを確認して拒否する。
+function LogDeveloperControls() {
+  const [level, setLevel] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLogLevel()
+      .then((value) => {
+        if (!cancelled) setLevel(value);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) setError(errorText(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changeLevel(next: string) {
+    setLogLevel(next)
+      .then(() => {
+        setLevel(next);
+        setError(null);
+      })
+      .catch((e) => {
+        console.error(e);
+        setError(errorText(e));
+      });
+  }
+
+  function openFolder() {
+    openLogDir()
+      .then(() => setError(null))
+      .catch((e) => {
+        console.error(e);
+        setError(errorText(e));
+      });
+  }
+
+  return (
+    <div className="log-viewer-developer" data-testid="log-viewer-developer">
+      <label>
+        ログレベル
+        <select
+          value={level ?? ""}
+          disabled={level === null}
+          onChange={(e) => changeLevel(e.target.value)}
+          data-testid="log-viewer-log-level"
+        >
+          {level === null && <option value="" />}
+          {DEVELOPER_LOG_LEVELS.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" onClick={openFolder} data-testid="log-viewer-open-dir-btn">
+        ログフォルダを開く
+      </button>
+      {error !== null && (
+        <span className="log-viewer-error" role="alert" data-testid="log-viewer-developer-error">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // 開くたびに内側を作り直し、ポーリングと保持データを閉じた時点で必ず破棄する。
 export function LogViewerDialog({ open, onClose }: Props) {
   return open ? <LogViewerContent onClose={onClose} /> : null;
@@ -40,6 +116,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
   const [levels, setLevels] = useState<ReadonlySet<string>>(() => new Set(LOG_LEVELS));
   const [query, setQuery] = useState("");
   const [follow, setFollow] = useState(true);
+  const developerMode = useDeveloperMode();
   const closeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
@@ -222,6 +299,7 @@ function LogViewerContent({ onClose }: { onClose: () => void }) {
         <span className="log-viewer-dir" data-testid="log-viewer-dir">
           ログフォルダ: {logDir ?? "..."}
         </span>
+        {developerMode && <LogDeveloperControls />}
         <button type="button" ref={closeRef} data-testid="log-viewer-close-btn" onClick={onClose}>
           閉じる
         </button>

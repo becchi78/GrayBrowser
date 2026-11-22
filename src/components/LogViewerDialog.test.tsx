@@ -13,6 +13,10 @@ import { LogViewerDialog } from "./LogViewerDialog";
 vi.mock("../api", () => ({
   readLog: vi.fn(),
   getLogDir: vi.fn(),
+  getDeveloperMode: vi.fn(),
+  getLogLevel: vi.fn(),
+  setLogLevel: vi.fn(),
+  openLogDir: vi.fn(),
 }));
 
 const entry = (level: string, message: string, target = "gb::scan"): LogEntryDto => ({
@@ -40,6 +44,10 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.mocked(api.readLog).mockResolvedValue(chunk(SAMPLE));
   vi.mocked(api.getLogDir).mockResolvedValue("C:\\logs");
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(false);
+  vi.mocked(api.getLogLevel).mockResolvedValue("info");
+  vi.mocked(api.setLogLevel).mockResolvedValue(undefined);
+  vi.mocked(api.openLogDir).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -300,4 +308,64 @@ test("追従を切っている間のスクロール位置も覚えており、�
   s.scrollTo(300);
 
   expect(follow()).toBeChecked();
+});
+
+test("開発者モードがオフなら、ログレベルとログフォルダの操作を出さず、取得もしない", async () => {
+  await renderDialog();
+
+  expect(screen.queryByTestId("log-viewer-developer")).toBeNull();
+  expect(api.getLogLevel).not.toHaveBeenCalled();
+});
+
+test("開発者モードがオンなら、いまのログレベルを選択済みで出す", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  vi.mocked(api.getLogLevel).mockResolvedValue("debug");
+  await renderDialog();
+
+  expect(screen.getByTestId("log-viewer-log-level")).toHaveValue("debug");
+});
+
+test("ログレベルを選ぶと保存を依頼し、成功したら選択を更新する", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  await renderDialog();
+
+  fireEvent.change(screen.getByTestId("log-viewer-log-level"), { target: { value: "trace" } });
+  await settle();
+
+  expect(api.setLogLevel).toHaveBeenCalledWith("trace");
+  expect(screen.getByTestId("log-viewer-log-level")).toHaveValue("trace");
+});
+
+test("ログレベルの保存に失敗したら、選択を変えずにエラーを出す", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  vi.mocked(api.setLogLevel).mockRejectedValue(new Error("拒否されました"));
+  await renderDialog();
+
+  fireEvent.change(screen.getByTestId("log-viewer-log-level"), { target: { value: "trace" } });
+  await settle();
+
+  expect(screen.getByTestId("log-viewer-log-level")).toHaveValue("info");
+  expect(screen.getByTestId("log-viewer-developer-error")).toHaveTextContent("拒否されました");
+});
+
+test("「ログフォルダを開く」でバックエンドの専用コマンドを呼ぶ(パスは渡さない)", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  await renderDialog();
+
+  fireEvent.click(screen.getByTestId("log-viewer-open-dir-btn"));
+  await settle();
+
+  expect(api.openLogDir).toHaveBeenCalledTimes(1);
+  expect(api.openLogDir).toHaveBeenCalledWith();
+});
+
+test("ログフォルダを開けなかったら、エラーを出す", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  vi.mocked(api.openLogDir).mockRejectedValue(new Error("開けません"));
+  await renderDialog();
+
+  fireEvent.click(screen.getByTestId("log-viewer-open-dir-btn"));
+  await settle();
+
+  expect(screen.getByTestId("log-viewer-developer-error")).toHaveTextContent("開けません");
 });

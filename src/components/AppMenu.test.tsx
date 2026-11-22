@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import type { Appearance, Mode, Theme } from "../lib/appearance";
 import manifest from "../themes/manifest.json";
+import { settle } from "../testing/async";
 import { registerUndismissibleModal } from "../undismissibleModals";
 import { useActiveDialog, type DialogKind } from "../useActiveDialog";
 import { AppMenu } from "./AppMenu";
@@ -12,6 +13,8 @@ import { AppMenu } from "./AppMenu";
 vi.mock("../api", () => ({
   runManualBackup: vi.fn(),
   quitApp: vi.fn(),
+  getDeveloperMode: vi.fn(),
+  openDevtools: vi.fn(),
 }));
 
 const DEFAULT_APPEARANCE: Appearance = { theme: "graphite", mode: "system" };
@@ -64,6 +67,8 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.mocked(api.runManualBackup).mockResolvedValue(undefined);
   vi.mocked(api.quitApp).mockResolvedValue(undefined);
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(false);
+  vi.mocked(api.openDevtools).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -229,6 +234,61 @@ test.each<[string, string, DialogKind]>([
   expect(openDialog).toHaveBeenCalledWith(kind);
   expect(queryTopMenu()).toBeNull();
   expect(button()).toHaveFocus();
+});
+
+// ---- 開発者モードの項目 ----
+
+const DEVELOPER_ITEMS = ["診断情報...", "開発者ツールを開く"];
+
+test("開発者モードがオフなら、ヘルプに開発者向けの項目を出さない", async () => {
+  renderMenu();
+  await settle();
+  await openGroup("help");
+
+  expect(labelsOf(submenu("help"))).toEqual(["動作ログ...", "更新の確認...", "バージョン情報"]);
+});
+
+test("開発者モードがオンなら、ヘルプに診断情報と開発者ツールを出す", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  renderMenu();
+  await settle();
+  await openGroup("help");
+
+  const labels = labelsOf(submenu("help"));
+  for (const item of DEVELOPER_ITEMS) {
+    expect(labels).toContain(item);
+  }
+});
+
+test("開発者モードがオンの「診断情報...」は diagnostics のダイアログを開く", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  const { openDialog } = renderMenu();
+  await settle();
+  await openGroup("help");
+
+  await userEvent.click(screen.getByRole("menuitem", { name: "診断情報..." }));
+
+  expect(openDialog).toHaveBeenCalledWith("diagnostics");
+});
+
+test("「開発者ツールを開く」は専用のコマンドを呼ぶ", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  renderMenu();
+  await settle();
+  await openGroup("help");
+
+  await userEvent.click(screen.getByRole("menuitem", { name: "開発者ツールを開く" }));
+
+  expect(api.openDevtools).toHaveBeenCalledTimes(1);
+});
+
+test("開発者モードの取得に失敗したら、開発者向けの項目を出さない", async () => {
+  vi.mocked(api.getDeveloperMode).mockRejectedValue(new Error("読めない"));
+  renderMenu();
+  await settle();
+  await openGroup("help");
+
+  expect(labelsOf(submenu("help"))).not.toContain("診断情報...");
 });
 
 test("「データベースをバックアップ」はバックアップのコマンドを呼ぶ", async () => {

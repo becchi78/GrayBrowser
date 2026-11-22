@@ -6,7 +6,9 @@ use serde::Serialize;
 use tauri::{Manager, State, Webview};
 use tauri_plugin_updater::UpdaterExt;
 
+use super::log_cmds::apply_effective_log_level;
 use crate::db::{queries, Db};
+use crate::logging::LogLevelControl;
 
 /// Upper bound for the update check request. Without it a stalled connection
 /// would leave the manual-check dialog on "checking" forever.
@@ -49,10 +51,17 @@ pub fn get_developer_mode(db: State<Db>) -> Result<bool, String> {
     queries::get_developer_mode(&conn).map_err(|e| e.to_string())
 }
 
+/// Turning the mode off also drops the log level back to `info` right away,
+/// so a verbose level chosen earlier does not keep running unseen.
 #[tauri::command]
-pub fn set_developer_mode(db: State<Db>, enabled: bool) -> Result<(), String> {
+pub fn set_developer_mode(
+    db: State<Db>,
+    control: State<LogLevelControl>,
+    enabled: bool,
+) -> Result<(), String> {
     let conn = db.writer.lock().unwrap();
-    queries::set_developer_mode(&conn, enabled).map_err(|e| e.to_string())
+    queries::set_developer_mode(&conn, enabled).map_err(|e| e.to_string())?;
+    apply_effective_log_level(&conn, |l| control.apply(l)).map_err(|e| e.to_string())
 }
 
 /// Checks for a newer release. Own command instead of the plugin's JS

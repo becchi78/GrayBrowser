@@ -145,6 +145,22 @@ pub fn set_developer_mode(conn: &Connection, enabled: bool) -> anyhow::Result<()
     Ok(())
 }
 
+const LOG_LEVEL_KEY: &str = "log_level";
+
+/// Unset and unrecognized values both read as `info`: a corrupt value must
+/// never leave verbose logging on without the user having chosen it.
+pub fn get_log_level(conn: &Connection) -> anyhow::Result<gb_core::log_level::LogLevel> {
+    Ok(get_setting(conn, LOG_LEVEL_KEY)?
+        .as_deref()
+        .and_then(gb_core::log_level::LogLevel::parse)
+        .unwrap_or_default())
+}
+
+pub fn set_log_level(conn: &Connection, level: gb_core::log_level::LogLevel) -> anyhow::Result<()> {
+    set_setting(conn, LOG_LEVEL_KEY, level.as_str())?;
+    Ok(())
+}
+
 const SIDEBAR_SECTIONS_COLLAPSED_KEY: &str = "sidebar_sections_collapsed";
 
 /// Collapsed flags of the left-pane sections. `true` means collapsed; every
@@ -404,6 +420,33 @@ mod boolean_flag_tests {
         )
         .unwrap();
         assert!(!get_developer_mode(&conn).unwrap());
+    }
+
+    #[test]
+    fn log_level_defaults_to_info_and_round_trips() {
+        use gb_core::log_level::LogLevel;
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        assert_eq!(get_log_level(&conn).unwrap(), LogLevel::Info);
+        for level in LogLevel::ALL {
+            set_log_level(&conn, level).unwrap();
+            assert_eq!(get_log_level(&conn).unwrap(), level);
+        }
+    }
+
+    #[test]
+    fn an_unrecognized_stored_log_level_reads_as_info() {
+        let (_d, db) = init_temp_db();
+        let conn = db.writer.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('log_level', 'verbose')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            get_log_level(&conn).unwrap(),
+            gb_core::log_level::LogLevel::Info
+        );
     }
 
     #[test]

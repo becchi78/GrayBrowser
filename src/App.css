@@ -1847,6 +1847,39 @@ button.link-button:active {
   justify-content: center;
 }
 
+.diagnostics-dialog {
+  width: min(44em, 92vw);
+}
+
+.diagnostics-dialog-note {
+  margin: 0;
+  font-size: var(--font-sm);
+  opacity: var(--opacity-muted);
+}
+
+.diagnostics-dialog-text {
+  min-height: 14em;
+  resize: vertical;
+  font-family: monospace;
+  font-size: var(--font-sm);
+  white-space: pre;
+}
+
+.diagnostics-dialog-error {
+  overflow-wrap: anywhere;
+  color: var(--error-text);
+}
+
+.diagnostics-dialog-buttons {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.diagnostics-dialog-status {
+  align-self: center;
+  font-size: var(--font-sm);
+}
+
 .settings-dialog-field {
   display: flex;
   flex-direction: column;
@@ -2534,6 +2567,13 @@ button.link-button:active {
   font-size: var(--font-xs);
   opacity: var(--opacity-muted);
   overflow-wrap: anywhere;
+}
+
+.log-viewer-developer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-sm);
 }
 
 /* 素の `select` はブラウザ既定の配色だと入力欄・ボタンと揃わないので、

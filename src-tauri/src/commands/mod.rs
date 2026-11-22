@@ -2,6 +2,8 @@ pub mod app_cmds;
 pub mod appearance_cmds;
 pub mod catalog_cmds;
 pub mod dedup_cmds;
+pub mod developer_cmds;
+pub mod diagnostics_cmds;
 pub mod ffmpeg_cmds;
 pub mod generation_retry_cmds;
 pub mod info_pane_cmds;

@@ -46,7 +46,10 @@ required-features = ["testing"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# devtools: lets release builds open the web inspector. The main window is
+# configured with the inspector disabled, so it opens only through the
+# developer-mode-gated `open_devtools` command.
+tauri = { version = "2", features = ["devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gb-core = { path = "../crates/gb-core" }
