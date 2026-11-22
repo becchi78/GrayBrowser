@@ -4,10 +4,15 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEV_NOTES, extractChangelogSection, installerFileName, isDevVersion, versionFromTag } from "./release-notes.mjs";
+import { extractChangelogSection, installerFileName, versionFromTag } from "./release-notes.mjs";
 
 const REPOSITORY = "becchi78/GrayBrowser";
 const PLATFORM = "windows-x86_64";
+
+// The preview channel is a fixed release whose tag never changes; the app
+// reads its latest.json from a hardcoded URL, so the tag name is part of the
+// contract with already-distributed clients.
+export const PREVIEW_TAG = "dev";
 
 export function installerUrl(tag, version) {
   return `https://github.com/${REPOSITORY}/releases/download/${tag}/${installerFileName(version)}`;
@@ -33,22 +38,22 @@ export function normalizeSignature(raw) {
 }
 
 /** Assembles the manifest. Throws when the CHANGELOG has no (or an empty) section for the version. */
-export function buildManifest({ tag, changelog, signature, pubDate }) {
+export function buildManifest({ tag, changelog, signature, pubDate, channel = "stable" }) {
+  if (channel !== "stable" && channel !== "preview") {
+    throw new Error(`channel "${channel}" は stable または preview ではありません`);
+  }
   const version = versionFromTag(tag);
   if (version === null) {
-    throw new Error(`タグ "${tag}" は vX.Y.Z または vX.Y.Z-dev.N 形式ではありません`);
+    throw new Error(`タグ "${tag}" は vX.Y.Z 形式ではありません`);
   }
-  let notes;
-  if (isDevVersion(version)) {
-    notes = DEV_NOTES;
-  } else {
-    notes = extractChangelogSection(changelog, version);
-    if (notes === null) {
-      throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
-    }
-    if (notes === "") {
-      throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
-    }
+  // Same CHANGELOG section for both channels: the preview build is the very
+  // build that becomes the stable release.
+  const notes = extractChangelogSection(changelog, version);
+  if (notes === null) {
+    throw new Error(`CHANGELOG.md に "## [${version}]" の項がありません`);
+  }
+  if (notes === "") {
+    throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
   }
   return {
     version,
@@ -57,18 +62,36 @@ export function buildManifest({ tag, changelog, signature, pubDate }) {
     platforms: {
       [PLATFORM]: {
         signature: normalizeSignature(signature),
-        url: installerUrl(tag, version),
+        url: installerUrl(channel === "preview" ? PREVIEW_TAG : tag, version),
       },
     },
   };
 }
 
+const USAGE = "usage: node update-manifest.mjs vX.Y.Z <installer.sig path> [--channel stable|preview]";
+
+/**
+ * Parses `<tag> <sig path> [--channel stable|preview]`. Returns null for anything
+ * else (missing positionals, a bare `--channel`, an unknown value, other order),
+ * so a typo cannot silently fall back to the stable URL.
+ */
+export function parseArgs(argv) {
+  const [tag, signaturePath, ...rest] = argv;
+  if (!tag || !signaturePath) return null;
+  if (rest.length === 0) return { tag, signaturePath, channel: "stable" };
+  if (rest.length === 2 && rest[0] === "--channel" && (rest[1] === "stable" || rest[1] === "preview")) {
+    return { tag, signaturePath, channel: rest[1] };
+  }
+  return null;
+}
+
 function main(argv) {
-  const [tag, signaturePath] = argv;
-  if (!tag || !signaturePath) {
-    console.error("usage: node update-manifest.mjs vX.Y.Z[-dev.N] <installer.sig path>");
+  const args = parseArgs(argv);
+  if (args === null) {
+    console.error(USAGE);
     return 2;
   }
+  const { tag, signaturePath, channel } = args;
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
   try {
     const manifest = buildManifest({
@@ -77,6 +100,7 @@ function main(argv) {
       signature: readFileSync(signaturePath, "utf8"),
       // toISOString() is RFC 3339 in UTC, which is what the updater parses.
       pubDate: new Date().toISOString(),
+      channel,
     });
     process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
     return 0;

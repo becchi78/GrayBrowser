@@ -72,6 +72,7 @@ pub fn run() {
             commands::log_cmds::open_log_dir,
             commands::developer_cmds::open_devtools,
             commands::diagnostics_cmds::get_diagnostics,
+            commands::update_cmds::get_release_status,
             commands::reachability_cmds::get_unreachable_folders,
             commands::reachability_cmds::check_folder_reachability,
             commands::update_cmds::get_update_check_on_startup,

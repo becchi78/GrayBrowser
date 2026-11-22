@@ -91,23 +91,27 @@ test("更新があると新しいバージョンと現在のバージョン、�
   expect(text("update-dialog-apply-btn")).toHaveFocus();
 });
 
-test("提示された版が開発版なら、開発版であることを明示する", async () => {
+test("提示された版がDraft版の先行配信のものなら、チャネル名と公開前であることを目立つ形で明示する", async () => {
   vi.mocked(api.checkForUpdate).mockResolvedValue(
-    fakeUpdate(() => never(), { version: "2.1.0-dev.3" }),
+    fakeUpdate(() => never(), { channel: "preview" }),
   );
 
   renderDialog();
 
-  expect(await screen.findByTestId("update-dialog-dev-notice")).toHaveTextContent("開発版");
+  expect(await screen.findByTestId("update-dialog-dev-notice")).toHaveTextContent(
+    "Draft版です。公開前の確認中のビルドで、問題がなければ、このビルドが安定版として公開されます。動作確認用のため、不安定な場合があります。",
+  );
+  expect(screen.getByTestId("update-dialog-channel")).toHaveTextContent("Draft版");
 });
 
-test("提示された版が安定版なら、開発版の表示は出さない", async () => {
+test("提示された版が安定版なら、Draft版の表示は出さない", async () => {
   vi.mocked(api.checkForUpdate).mockResolvedValue(fakeUpdate(() => never()));
 
   renderDialog();
 
   await screen.findByTestId("update-dialog-available");
   expect(screen.queryByTestId("update-dialog-dev-notice")).toBeNull();
+  expect(screen.getByTestId("update-dialog-channel")).toHaveTextContent("安定版");
 });
 
 test.each([

@@ -1,12 +1,15 @@
 //! The diagnostics report a developer pastes into a bug report. Paths inside
 //! it are masked so the user's Windows account name does not leak.
 
+use crate::release_status::ReleaseStatus;
+
 /// Everything the report shows. Values that could not be determined are
 /// `None` and printed as "unknown" rather than left out, so the report always
 /// has the same lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsInfo {
     pub app_version: String,
+    pub release_status: ReleaseStatus,
     pub schema_version: Option<i64>,
     pub ffmpeg_version: Option<String>,
     pub ffprobe_version: Option<String>,
@@ -118,6 +121,14 @@ fn mask_by_rules(text: &str, rules: &[MaskRule]) -> String {
     out
 }
 
+fn describe_release_status(status: ReleaseStatus) -> &'static str {
+    match status {
+        ReleaseStatus::Preview => "draft (not yet published)",
+        ReleaseStatus::Published => "published stable",
+        ReleaseStatus::Unknown => "unknown",
+    }
+}
+
 fn or_unknown(value: Option<&str>) -> &str {
     value.unwrap_or("unknown")
 }
@@ -131,6 +142,10 @@ pub fn format_report(info: &DiagnosticsInfo, rules: &[MaskRule]) -> String {
     let lines = [
         "GrayBrowser diagnostics".to_string(),
         format!("App version: {}", info.app_version),
+        format!(
+            "Release status: {}",
+            describe_release_status(info.release_status)
+        ),
         format!("DB schema version: {schema}"),
         format!("FFmpeg: {}", or_unknown(info.ffmpeg_version.as_deref())),
         format!("FFprobe: {}", or_unknown(info.ffprobe_version.as_deref())),
@@ -157,6 +172,7 @@ mod tests {
     fn info() -> DiagnosticsInfo {
         DiagnosticsInfo {
             app_version: "0.18.1".into(),
+            release_status: ReleaseStatus::Published,
             schema_version: Some(17),
             ffmpeg_version: Some("ffmpeg version 7.0".into()),
             ffprobe_version: Some("ffprobe version 7.0".into()),
@@ -166,6 +182,17 @@ mod tests {
             data_dir: r"C:\Users\alice\AppData\Local\GrayBrowser".into(),
             log_dir: r"C:\Users\alice\AppData\Local\GrayBrowser\logs".into(),
         }
+    }
+
+    #[test]
+    fn the_report_states_the_release_status() {
+        let mut preview = info();
+        preview.release_status = ReleaseStatus::Preview;
+        assert!(format_report(&preview, &[]).contains("Release status: draft (not yet published)"));
+        assert!(format_report(&info(), &[]).contains("Release status: published stable"));
+        let mut unknown = info();
+        unknown.release_status = ReleaseStatus::Unknown;
+        assert!(format_report(&unknown, &[]).contains("Release status: unknown"));
     }
 
     fn rules() -> Vec<MaskRule> {

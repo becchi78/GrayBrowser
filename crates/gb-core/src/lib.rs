@@ -21,6 +21,7 @@ pub mod ports;
 pub mod presence;
 pub mod rating;
 pub mod reconcile;
+pub mod release_status;
 pub mod rename_validation;
 pub mod retry;
 pub mod scan_pipeline;

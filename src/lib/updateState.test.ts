@@ -10,7 +10,7 @@ import {
 } from "./updateState.ts";
 import type { AvailableUpdate, UpdateAction, UpdateState } from "./updateState.ts";
 
-const UPDATE: AvailableUpdate = { version: "0.9.0", currentVersion: "0.8.5", notes: "## 追加\n- a" };
+const UPDATE: AvailableUpdate = { version: "0.9.0", currentVersion: "0.8.5", notes: "## 追加\n- a", channel: "stable" };
 
 function run(actions: UpdateAction[], from: UpdateState = INITIAL_UPDATE_STATE): UpdateState {
   return actions.reduce(updateReducer, from);

@@ -1921,6 +1921,24 @@ button.link-button:active {
   justify-content: flex-end;
 }
 
+/* 提示された版の出どころ(安定版/Draft版)。色だけに頼らず、文言で区別する。 */
+.update-dialog-channel {
+  align-self: flex-start;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+}
+
+/* 公開前の版であることは見落とされないよう、リリースノートより先に、枠付きで出す。 */
+.update-dialog-preview-notice {
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--accent);
+  background-color: var(--notes-bg);
+  border-radius: var(--radius-md);
+  font-weight: bold;
+}
+
 .update-dialog-progress {
   width: 100%;
 }
