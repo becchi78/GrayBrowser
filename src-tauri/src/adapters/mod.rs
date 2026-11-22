@@ -1,5 +1,6 @@
 pub mod dialog;
 pub mod dir_lister;
+pub mod disk_space;
 pub mod drive_type;
 pub mod ffmpeg;
 pub mod file_probe;

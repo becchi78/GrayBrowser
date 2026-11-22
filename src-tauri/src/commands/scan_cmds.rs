@@ -151,6 +151,7 @@ pub async fn start_scan(
     queue: State<'_, ThumbnailQueueHandle>,
     dedup_state: State<'_, DuplicateGroupsState>,
     reachability: State<'_, ReachabilityRegistry>,
+    last_report: State<'_, scan::last_report::LastScanReport>,
 ) -> Result<scan::ScanSummary, String> {
     let folders = {
         let conn = db.writer.lock().unwrap();
@@ -158,8 +159,17 @@ pub async fn start_scan(
     };
     let thumbnails_root =
         crate::thumbnail::paths::resolve_thumbnails_root().map_err(|e| e.to_string())?;
+    // The worker tallies cover the work this scan triggers, so they start from zero.
+    scan::last_report::THUMBNAIL_WORK.reset();
+    scan::last_report::METADATA_WORK.reset();
     let summary = scan_reachable_folders(&folders, &reachability, &db, &thumbnails_root)
         .map_err(|e| e.to_string())?;
+    last_report.store(scan::last_report::report_from_summary(
+        &summary,
+        folders
+            .len()
+            .saturating_sub(summary.unreachable_folders.len()),
+    ));
     // Cloned before `app` moves into `TauriCatalogNotifier` below --
     // `TauriDedupNotifier` needs its own `AppHandle` for the fire-and-forget
     // dedup refresh further down.

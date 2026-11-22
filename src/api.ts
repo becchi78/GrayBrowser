@@ -154,8 +154,34 @@ export const setWatchFolderCheckEnabled = (folderPath: string, enabled: boolean)
   invoke<string[]>("set_watch_folder_check_enabled", { folderPath, enabled });
 export const readLog = (offset: number | null) => invoke<LogChunkDto>("read_log", { offset });
 export const getLogDir = () => invoke<string>("get_log_dir");
-// 以下の5つは開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
+// 以下は開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
 export const getDiagnostics = () => invoke<string>("get_diagnostics");
+// データベースツール。SQL もパスも渡さず、バックエンドが固定の操作だけを行う。
+// run_vacuum だけは変更を伴うため、バックエンドも開発者モードを確認する。
+export interface IntegrityResult {
+  ok: boolean;
+  messages: string[];
+}
+export interface DbStats {
+  file_size: number;
+  file_size_text: string;
+  page_count: number;
+  freelist_count: number;
+  page_size: number;
+  reclaimable_text: string;
+}
+export interface VacuumResult {
+  size_before: number;
+  size_after: number | null;
+  size_before_text: string;
+  size_after_text: string;
+  backup_file: string;
+}
+export const runIntegrityCheck = () => invoke<IntegrityResult>("run_integrity_check");
+export const getDbStats = () => invoke<DbStats>("get_db_stats");
+export const runVacuum = () => invoke<VacuumResult>("run_vacuum");
+// 直近の手動スキャンの報告(テキスト)。まだスキャンしていなければ null。
+export const getScanReport = () => invoke<string | null>("get_scan_report");
 /** 実行中の版が、公開済みの最新の安定版に対してどういう状態か。取得できなければ unknown。 */
 export type ReleaseStatus = "preview" | "published" | "unknown";
 export const getReleaseStatus = () => invoke<ReleaseStatus>("get_release_status");

@@ -1306,3 +1306,59 @@ fn a_manual_scan_keeps_the_only_video_online_when_the_os_says_it_exists() {
     assert_eq!(summary.went_offline, 0);
     assert_eq!(fx.rows(), vec![(path_str(&old), "online".to_string())]);
 }
+
+#[test]
+fn a_scan_times_each_stage_and_the_stages_fit_inside_the_whole_call() {
+    let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..5 {
+        fs::write(dir.path().join(format!("v{i}.mp4")), format!("content {i}")).unwrap();
+    }
+    let folder = dir.path().to_string_lossy().to_string();
+
+    let started = std::time::Instant::now();
+    let summary = scan_folders(&[folder], &db, thumbs_root.path(), &AssumeReachable).unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(summary.registered, 5);
+    assert!(!summary.timings.register.is_zero());
+    assert!(!summary.timings.enumeration.is_zero());
+    assert!(!summary.timings.reconcile.is_zero());
+    assert!(summary.timings.total() <= elapsed);
+    assert!(summary.unreadable.items.is_empty());
+}
+
+/// Holding a file open with no sharing makes the scan's hash step fail while
+/// the walk still sees the file, which is how a locked file shows up.
+#[cfg(windows)]
+#[test]
+fn unreadable_files_are_listed_up_to_the_cap_and_the_rest_only_counted() {
+    use gb_core::scan_report::MAX_LISTED_FILES;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
+    let dir = tempfile::tempdir().unwrap();
+    let total = MAX_LISTED_FILES + 3;
+    let _locks: Vec<File> = (0..total)
+        .map(|i| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .share_mode(0)
+                .open(dir.path().join(format!("locked{i:03}.mp4")))
+                .unwrap()
+        })
+        .collect();
+    let folder = dir.path().to_string_lossy().to_string();
+
+    let summary = scan_folders(&[folder], &db, thumbs_root.path(), &AssumeReachable).unwrap();
+
+    assert_eq!(summary.scanned as usize, total);
+    assert_eq!(summary.registered, 0);
+    assert_eq!(summary.unreadable.items.len(), MAX_LISTED_FILES);
+    assert_eq!(summary.unreadable.overflow, 3);
+    assert!(summary.unreadable.items[0].ends_with(".mp4"));
+}

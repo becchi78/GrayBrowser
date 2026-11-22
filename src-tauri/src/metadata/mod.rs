@@ -8,6 +8,7 @@ pub mod worker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 
@@ -108,7 +109,10 @@ fn run_metadata_queue<F, N>(
                 log::info!("metadata worker: skipping {id}, its folder is unreachable right now");
                 continue;
             }
-            match worker::probe_metadata_for_video(ffmpeg.as_ref(), &db, &id, &path) {
+            let started = Instant::now();
+            let result = worker::probe_metadata_for_video(ffmpeg.as_ref(), &db, &id, &path);
+            crate::scan::last_report::METADATA_WORK.record(started.elapsed(), result.is_ok());
+            match result {
                 Ok(()) => notifier.notify_changed(),
                 Err(e) if reachability.confirm_path_unreachable(&path_str, &watch_folders) => {
                     // The share went away during the attempt, so the

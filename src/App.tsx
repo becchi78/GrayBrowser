@@ -4,10 +4,12 @@ import "./App.css";
 import { FilterBar } from "./components/FilterBar";
 import { FfmpegNotice } from "./components/FfmpegNotice";
 import { AboutDialog } from "./components/AboutDialog";
+import { DbToolsDialog } from "./components/DbToolsDialog";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { LogViewerDialog } from "./components/LogViewerDialog";
 import { FolderDialog } from "./components/FolderDialog";
 import { LeftPane } from "./components/LeftPane";
+import { ScanReportDialog } from "./components/ScanReportDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { AppMenu } from "./components/AppMenu";
 import { SearchBox } from "./components/SearchBox";
@@ -275,6 +277,11 @@ function AppContent({
       <DiagnosticsDialog
         open={activeDialog === "diagnostics"}
         onClose={() => closeDialog("diagnostics")}
+      />
+      <DbToolsDialog open={activeDialog === "dbTools"} onClose={() => closeDialog("dbTools")} />
+      <ScanReportDialog
+        open={activeDialog === "scanReport"}
+        onClose={() => closeDialog("scanReport")}
       />
       <AboutDialog open={activeDialog === "about"} onClose={() => closeDialog("about")} />
       {editMenu && (

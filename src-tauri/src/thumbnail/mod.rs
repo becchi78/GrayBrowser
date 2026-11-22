@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
+use std::time::Instant;
 
 use gb_core::ports::ffmpeg::FfmpegAdapter;
 use gb_core::thumbnail_progress::{FinishOutcome, ProgressSnapshot, ThumbnailProgress};
@@ -400,7 +401,11 @@ where
         log::info!("thumbnail worker: skipping {id}, its folder is unreachable right now");
         return FinishOutcome::SkippedUnreachable;
     }
-    match worker::generate_thumbnail_for_video(ctx.ffmpeg.as_ref(), &ctx.db, &video_dir, id, path) {
+    let started = Instant::now();
+    let result =
+        worker::generate_thumbnail_for_video(ctx.ffmpeg.as_ref(), &ctx.db, &video_dir, id, path);
+    crate::scan::last_report::THUMBNAIL_WORK.record(started.elapsed(), result.is_ok());
+    match result {
         Ok(()) => {
             ctx.notifier.notify_changed();
             FinishOutcome::Generated
