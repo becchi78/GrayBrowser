@@ -4,17 +4,6 @@
 
 > **注意**: このファイルは、リデザイン時の設計資料です。実装は `src/themes/` にあり(`light-dark()` で、ライトとダークの値を1つのトークンに持ちます)、テーマの追加・変更の手順は `.claude/skills/theme-change/SKILL.md` にあります。下のCSSは、仕様の値の原典として、そのまま残しています。
 
-## モック画像
-
-見た目の正にする画像です(同じフォルダにあります)。
-
-| 案 | テーマ | メイン(ダーク) | メイン(ライト) | ダイアログ | トークン仕様 |
-|---|---|---|---|---|---|
-| A | Fluent Mica | [fluent-main-dark](fluent-main-dark.png) | [fluent-main-light](fluent-main-light.png) | [設定](fluent-settings-dialog-dark.png) | [fluent-token-spec](fluent-token-spec.png) |
-| B | Dark Cinema | [cinema-main-dark](cinema-main-dark.png) | [cinema-main-light](cinema-main-light.png) | [タグ編集](cinema-tag-edit-dialog-dark.png) | [cinema-token-spec](cinema-token-spec.png) |
-| C | Navy Console | [console-main-dark](console-main-dark.png) | [console-main-light](console-main-light.png) | [タグ編集](console-tag-edit-dialog-dark.png) | [console-token-spec](console-token-spec.png) |
-| D | Graphite | [graphite-main-dark](graphite-main-dark.png) | [graphite-main-light](graphite-main-light.png) | [設定](graphite-settings-dialog-dark.png) | [graphite-token-spec](graphite-token-spec.png) |
-
 ## 案A · Fluent / Mica
 
 Windows 11 標準アプリと地続きの見た目。Mica の地に、角丸 8px のレイヤー面を 1 枚載せて階層を作る。
@@ -23,7 +12,7 @@ Windows 11 標準アプリと地続きの見た目。Mica の地に、角丸 8px
 - 短所: 個性は弱め。行をカード化するので、1 画面あたりの行数が約 3% 減る。
 - DOM構造の変更:
   - タグバーを「絞り込み中バー」に置き換える。選択中のフォルダ・タグ・★をチップで並べ、×で個別に解除、「すべて解除」で一括解除する。何も絞り込んでいないときはバーごと非表示にする（その分だけ一覧が広がる）。
-  - 本物の Mica にするなら tauri.conf の windows に transparent: true と windowEffects: { effects: ["mica"] } を設定し、--page-bg を半透明（例: rgba(28,31,38,.72)）にする。設定を変えずにトークンだけ差し替える場合は、モックのように不透明色で近似する。
+  - 本物の Mica にするなら tauri.conf の windows に transparent: true と windowEffects: { effects: ["mica"] } を設定し、--page-bg を半透明（例: rgba(28,31,38,.72)）にする。設定を変えずにトークンだけ差し替える場合は、不透明色で近似する。
   - 一覧エリアをレイヤー面として包む要素（左上だけ角丸のラッパー div）を 1 つ追加する。
   - 左ペイン見出しに SVG アイコンを入れる（既存の絵文字や色付きアイコンを置き換える）。
 
