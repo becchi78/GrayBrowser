@@ -175,7 +175,13 @@ export function AppMenu({ openDialog, appearance, onSelectTheme, onSelectMode }:
       entries: [
         dialog("log", "動作ログ...", "log"),
         // 開発者向けの項目は、開発者モードがオンのときだけ出す。
-        ...(developerMode ? [dialog("diagnostics", "診断情報...", "diagnostics")] : []),
+        ...(developerMode
+          ? [
+              dialog("diagnostics", "診断情報...", "diagnostics"),
+              dialog("dbTools", "データベースツール...", "dbTools"),
+              dialog("scanReport", "スキャン診断...", "scanReport"),
+            ]
+          : []),
         dialog("update", "更新の確認...", "update"),
         dialog("about", "バージョン情報", "about"),
         ...(developerMode

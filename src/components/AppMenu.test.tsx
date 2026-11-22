@@ -238,7 +238,12 @@ test.each<[string, string, DialogKind]>([
 
 // ---- 開発者モードの項目 ----
 
-const DEVELOPER_ITEMS = ["診断情報...", "開発者ツールを開く"];
+const DEVELOPER_ITEMS = [
+  "診断情報...",
+  "データベースツール...",
+  "スキャン診断...",
+  "開発者ツールを開く",
+];
 
 test("開発者モードがオフなら、ヘルプに開発者向けの項目を出さない", async () => {
   renderMenu();
@@ -269,6 +274,28 @@ test("開発者モードがオンの「診断情報...」は diagnostics のダ�
   await userEvent.click(screen.getByRole("menuitem", { name: "診断情報..." }));
 
   expect(openDialog).toHaveBeenCalledWith("diagnostics");
+});
+
+test("開発者モードがオンの「データベースツール...」は dbTools のダイアログを開く", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  const { openDialog } = renderMenu();
+  await settle();
+  await openGroup("help");
+
+  await userEvent.click(screen.getByRole("menuitem", { name: "データベースツール..." }));
+
+  expect(openDialog).toHaveBeenCalledWith("dbTools");
+});
+
+test("開発者モードがオンの「スキャン診断...」は scanReport のダイアログを開く", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  const { openDialog } = renderMenu();
+  await settle();
+  await openGroup("help");
+
+  await userEvent.click(screen.getByRole("menuitem", { name: "スキャン診断..." }));
+
+  expect(openDialog).toHaveBeenCalledWith("scanReport");
 });
 
 test("「開発者ツールを開く」は専用のコマンドを呼ぶ", async () => {

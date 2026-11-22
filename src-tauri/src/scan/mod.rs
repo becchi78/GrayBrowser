@@ -9,11 +9,12 @@
 //! `FolderReachability` so a moved file can be told apart from a copy.
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gb_core::ports::path_existence::PathExistence;
 use gb_core::reconcile;
 use gb_core::scan_pipeline;
+use gb_core::scan_report::{CappedList, StageTimings};
 use walkdir::WalkDir;
 
 use crate::adapters::long_path;
@@ -21,6 +22,7 @@ use crate::adapters::path_existence::RealPathExistence;
 use crate::db::{queries, Db};
 use crate::reachability::ReachabilityRegistry;
 
+pub(crate) mod last_report;
 mod process;
 pub(crate) mod reachable;
 
@@ -111,6 +113,12 @@ pub struct ScanSummary {
     /// about reachability); the caller that filtered them out does, so the
     /// screen can say why fewer folders were scanned than are registered.
     pub unreachable_folders: Vec<String>,
+    /// Per-stage wall-clock time and the files that could not be read, for the
+    /// developer-mode scan report. Never sent to the screen with the summary.
+    #[serde(skip_serializing)]
+    pub timings: StageTimings,
+    #[serde(skip_serializing)]
+    pub unreadable: CappedList,
 }
 
 /// `scan_folders_with_existence` asking the real filesystem about withheld
@@ -158,6 +166,10 @@ pub fn scan_folders_with_existence(
         // way, per-folder).
         let mut discovered_paths = Vec::new();
         let mut inaccessible_dirs = Vec::new();
+        // The walk and the per-file work alternate in one loop, so the walk's
+        // share is what is left of the loop's time after the per-file work.
+        let folder_started = Instant::now();
+        let mut register_time = Duration::ZERO;
 
         // The root is prefixed so the walk itself succeeds past MAX_PATH on
         // a deep watch folder; every path handed back by a `WalkDir`
@@ -214,19 +226,25 @@ pub fn scan_folders_with_existence(
             discovered_paths.push(file_path.clone());
             summary.scanned += 1;
 
-            match process_detected_file(
+            // Two clock reads per file are what separates the walk's time from
+            // the per-file work, since the two alternate in one loop; they cost
+            // nanoseconds against the hashing and database write timed here.
+            let register_started = Instant::now();
+            let outcome = process_detected_file(
                 db,
                 thumbnails_root,
                 &entry_path,
                 file_size,
                 mtime,
                 reachability,
-            )? {
+            )?;
+            register_time += register_started.elapsed();
+            match outcome {
                 ProcessOutcome::Registered => summary.registered += 1,
                 ProcessOutcome::Reconciled => summary.reconciled += 1,
                 ProcessOutcome::Unchanged => summary.unchanged += 1,
                 ProcessOutcome::SkippedInvalidName { .. } => summary.skipped += 1,
-                ProcessOutcome::SkippedUnreadable => {}
+                ProcessOutcome::SkippedUnreadable => summary.unreadable.push(file_path),
                 ProcessOutcome::PathFollowed { .. } => summary.reactivated += 1,
                 // The WARN log is already emitted on the
                 // process_detected_file (register_new_path) side. Because of
@@ -239,8 +257,13 @@ pub fn scan_folders_with_existence(
             }
         }
 
+        summary.timings.enumeration += folder_started.elapsed().saturating_sub(register_time);
+        summary.timings.register += register_time;
+
+        let reconcile_started = Instant::now();
         summary.went_offline +=
             reconcile_missing_videos(db, folder, discovered_paths, inaccessible_dirs, existence)?;
+        summary.timings.reconcile += reconcile_started.elapsed();
     }
 
     log::info!(

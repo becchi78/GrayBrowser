@@ -5,6 +5,7 @@
 
 pub mod appearance;
 pub mod backup;
+pub mod db_tools;
 pub mod dedup;
 pub mod diagnostics;
 pub mod file_delete_policy;
@@ -25,6 +26,7 @@ pub mod release_status;
 pub mod rename_validation;
 pub mod retry;
 pub mod scan_pipeline;
+pub mod scan_report;
 pub mod search;
 pub mod sort;
 pub mod stderr_tail;

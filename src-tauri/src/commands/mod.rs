@@ -1,6 +1,7 @@
 pub mod app_cmds;
 pub mod appearance_cmds;
 pub mod catalog_cmds;
+pub mod db_tools_cmds;
 pub mod dedup_cmds;
 pub mod developer_cmds;
 pub mod diagnostics_cmds;
@@ -15,6 +16,7 @@ pub mod rating_cmds;
 pub mod reachability_cmds;
 pub mod reveal_cmds;
 pub mod scan_cmds;
+pub mod scan_report_cmds;
 pub mod settings_cmds;
 pub mod sidebar_cmds;
 pub mod skipped_cmds;

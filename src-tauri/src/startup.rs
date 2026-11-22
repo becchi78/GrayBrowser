@@ -131,6 +131,8 @@ pub(crate) fn manage_shared_state(app: &tauri::App, db: &db::Db) -> SharedState 
     let dedup_state = dedup::DuplicateGroupsState::default();
     app.manage(dedup_state.clone());
 
+    app.manage(crate::scan::last_report::LastScanReport::default());
+
     // Which watch folders cannot be reached right now. Nothing is
     // probed here: the first probe of a folder happens on whichever
     // background thread needs the answer first, because a dead

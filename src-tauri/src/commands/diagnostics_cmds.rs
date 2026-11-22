@@ -60,7 +60,7 @@ fn build_report(adapter: &impl FfmpegAdapter, env: DiagnosticsEnv) -> String {
 
 /// Folders under the user's profile are replaced by the variable that names
 /// them, so a report pasted into an issue does not reveal the account name.
-fn mask_rules_from_env() -> Vec<MaskRule> {
+pub(crate) fn mask_rules_from_env() -> Vec<MaskRule> {
     [
         ("LOCALAPPDATA", "%LOCALAPPDATA%"),
         ("APPDATA", "%APPDATA%"),
