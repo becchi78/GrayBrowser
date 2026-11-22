@@ -32,6 +32,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // Before anything resolves the data folder.
+            if let Err(e) = paths::init_data_dir_override() {
+                startup::report_data_dir_error(app, &e);
+                return Err(e.into());
+            }
             let (app_dir, db, log_control) = match startup::init_storage() {
                 Ok(v) => v,
                 Err(e) => {
@@ -72,6 +77,7 @@ pub fn run() {
             commands::log_cmds::open_log_dir,
             commands::developer_cmds::open_devtools,
             commands::diagnostics_cmds::get_diagnostics,
+            commands::diagnostics_cmds::get_data_dir_info,
             commands::db_tools_cmds::run_integrity_check,
             commands::db_tools_cmds::get_db_stats,
             commands::db_tools_cmds::run_vacuum,
