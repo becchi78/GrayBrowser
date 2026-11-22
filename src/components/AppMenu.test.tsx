@@ -242,6 +242,7 @@ const DEVELOPER_ITEMS = [
   "診断情報...",
   "データベースツール...",
   "スキャン診断...",
+  "バージョンを指定してインストール...",
   "開発者ツールを開く",
 ];
 
@@ -285,6 +286,17 @@ test("開発者モードがオンの「データベースツール...」は dbTo
   await userEvent.click(screen.getByRole("menuitem", { name: "データベースツール..." }));
 
   expect(openDialog).toHaveBeenCalledWith("dbTools");
+});
+
+test("開発者モードがオンの「バージョンを指定してインストール...」は versionPin のダイアログを開く", async () => {
+  vi.mocked(api.getDeveloperMode).mockResolvedValue(true);
+  const { openDialog } = renderMenu();
+  await settle();
+  await openGroup("help");
+
+  await userEvent.click(screen.getByRole("menuitem", { name: "バージョンを指定してインストール..." }));
+
+  expect(openDialog).toHaveBeenCalledWith("versionPin");
 });
 
 test("開発者モードがオンの「スキャン診断...」は scanReport のダイアログを開く", async () => {

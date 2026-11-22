@@ -45,6 +45,25 @@ pub struct UpdateMetadata {
     channel: &'static str,
 }
 
+impl UpdateMetadata {
+    /// Registers `update` as a resource of the webview, which is what lets the
+    /// frontend later call `downloadAndInstall` on it.
+    pub(crate) fn register(
+        webview: &Webview,
+        update: tauri_plugin_updater::Update,
+        channel: gb_core::update_channel::Channel,
+    ) -> Self {
+        Self {
+            channel: channel.as_str(),
+            current_version: update.current_version.clone(),
+            version: update.version.clone(),
+            body: update.body.clone(),
+            raw_json: update.raw_json.clone(),
+            rid: webview.resources_table().add(update),
+        }
+    }
+}
+
 /// Manifest of the preview channel. A compile-time constant on purpose:
 /// the frontend can only toggle developer mode, never choose where updates
 /// come from. Updates from it are verified against the same public key.
@@ -89,14 +108,14 @@ pub async fn check_for_update(
         queries::get_developer_mode(&conn).map_err(|e| e.to_string())?
     };
 
-    let stable = check_channel(&webview, None).await?;
+    let stable = check_channel(&webview, None, false).await?;
     let preview = if developer_mode {
         let endpoint = DEV_CHANNEL_ENDPOINT
             .parse::<tauri::Url>()
             .map_err(|e| e.to_string())?;
         // A missing or unreachable preview channel must not hide a stable
         // update, so its failure is logged and treated as "no update".
-        check_channel(&webview, Some(endpoint))
+        check_channel(&webview, Some(endpoint), false)
             .await
             .unwrap_or_else(|e| {
                 log::warn!("preview channel update check failed: {e}");
@@ -124,14 +143,7 @@ pub async fn check_for_update(
         Some(Channel::Preview) => (preview, Channel::Preview),
         None => (None, Channel::Stable),
     };
-    Ok(update.map(|update| UpdateMetadata {
-        channel: channel.as_str(),
-        current_version: update.current_version.clone(),
-        version: update.version.clone(),
-        body: update.body.clone(),
-        raw_json: update.raw_json.clone(),
-        rid: webview.resources_table().add(update),
-    }))
+    Ok(update.map(|update| UpdateMetadata::register(&webview, update, channel)))
 }
 
 /// Version of the latest published stable release, or `None` when it cannot be
@@ -185,13 +197,19 @@ pub async fn get_release_status(
 }
 
 /// `endpoint: None` uses the endpoints from the build-time configuration. The
-/// debug override is applied last so it redirects both channels' checks to the
-/// same local server.
-async fn check_channel(
+/// debug override is applied last so it redirects every check to the same
+/// local server. `any_version` accepts a manifest whatever its version, which
+/// installing a chosen (older) release needs; the update check keeps the
+/// plugin's "only newer" rule.
+pub(crate) async fn check_channel(
     webview: &Webview,
     endpoint: Option<tauri::Url>,
+    any_version: bool,
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
     let mut builder = webview.updater_builder().timeout(CHECK_TIMEOUT);
+    if any_version {
+        builder = builder.version_comparator(|_, _| true);
+    }
     if let Some(url) = endpoint {
         builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
     }

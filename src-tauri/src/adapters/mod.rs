@@ -11,6 +11,7 @@ pub mod log_source;
 pub mod long_path;
 pub mod path_existence;
 pub mod player;
+pub mod release_source;
 pub mod trash;
 pub mod volume_label;
 pub mod watcher;

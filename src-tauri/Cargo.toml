@@ -1,6 +1,6 @@
 [package]
 name = "graybrowser"
-version = "0.18.2"
+version = "0.18.3"
 description = "GrayBrowser - local video cataloging desktop app"
 edition = "2021"
 # Disambiguates `cargo run` (with no `--bin`) in favor of the main app binary
@@ -69,6 +69,11 @@ trash = "5.2.6"
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Console", "Win32_System_Com", "Win32_System_SystemInformation", "Win32_System_Diagnostics_Debug"] }
 # zip feature off: we ship the raw NSIS exe (createUpdaterArtifacts), and the zip crate it pulls in carries known advisories.
 tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+# Same TLS setup as the updater (rustls without a bundled provider, system proxy), so the release-list lookup
+# behaves like the update check on the same network. `rustls` is a direct dependency only to install the ring
+# provider when the updater has not yet done so.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 gb-core = { path = "../crates/gb-core", features = ["testing"] }

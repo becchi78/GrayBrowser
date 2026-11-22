@@ -13,6 +13,7 @@ pub mod folder_probe;
 pub mod log_source;
 pub mod path_existence;
 pub mod player;
+pub mod release_source;
 pub mod trash;
 pub mod volume_label;
 pub mod watcher;

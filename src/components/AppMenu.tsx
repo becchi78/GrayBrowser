@@ -183,6 +183,9 @@ export function AppMenu({ openDialog, appearance, onSelectTheme, onSelectMode }:
             ]
           : []),
         dialog("update", "更新の確認...", "update"),
+        ...(developerMode
+          ? [dialog("versionPin", "バージョンを指定してインストール...", "versionPin")]
+          : []),
         dialog("about", "バージョン情報", "about"),
         ...(developerMode
           ? [

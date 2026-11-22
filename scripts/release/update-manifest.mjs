@@ -37,8 +37,40 @@ export function normalizeSignature(raw) {
   return signature;
 }
 
-/** Assembles the manifest. Throws when the CHANGELOG has no (or an empty) section for the version. */
-export function buildManifest({ tag, changelog, signature, pubDate, channel = "stable" }) {
+/**
+ * Highest migration version defined in the Rust migration list. The source of
+ * truth is `MIGRATIONS` itself (a version missing from it is never applied),
+ * so it is read from there instead of from the SQL file names, which could be
+ * ahead of the list. Only the text before the test module is scanned, and zero
+ * matches is an error: a silent 0 would publish "schema version 0", which the
+ * app would read as "every database is too new for this release".
+ */
+export function latestMigrationVersion(rustSource) {
+  const production = rustSource.split("#[cfg(test)]")[0];
+  const versions = [...production.matchAll(/Migration\s*\{\s*version:\s*(\d+)\s*,/g)].map((m) => Number(m[1]));
+  if (versions.length === 0) {
+    throw new Error("migrations.rs からマイグレーションの版を読み取れませんでした");
+  }
+  return Math.max(...versions);
+}
+
+/** Migration file numbers in `src-tauri/migrations` (`0013_*.sql` -> 13); used to cross-check the list. */
+export function migrationFileVersions(fileNames) {
+  return fileNames.flatMap((name) => {
+    const m = /^(\d+)_.*\.sql$/.exec(name);
+    return m ? [Number(m[1])] : [];
+  });
+}
+
+/**
+ * Assembles the manifest. Throws when the CHANGELOG has no (or an empty) section for the version.
+ *
+ * `schemaVersion` is the DB schema version this release's app migrates to. It
+ * lives under a `graybrowser` key of its own because the updater ignores
+ * unknown fields (and keeps them in `raw_json`), so the app can warn before a
+ * downgrade to a build that cannot open the current database.
+ */
+export function buildManifest({ tag, changelog, signature, pubDate, schemaVersion, channel = "stable" }) {
   if (channel !== "stable" && channel !== "preview") {
     throw new Error(`channel "${channel}" は stable または preview ではありません`);
   }
@@ -55,10 +87,14 @@ export function buildManifest({ tag, changelog, signature, pubDate, channel = "s
   if (notes === "") {
     throw new Error(`CHANGELOG.md の "## [${version}]" の項が空です`);
   }
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 1) {
+    throw new Error(`schemaVersion "${schemaVersion}" は 1 以上の整数ではありません`);
+  }
   return {
     version,
     notes,
     pub_date: pubDate,
+    graybrowser: { schemaVersion },
     platforms: {
       [PLATFORM]: {
         signature: normalizeSignature(signature),
@@ -100,6 +136,7 @@ function main(argv) {
       signature: readFileSync(signaturePath, "utf8"),
       // toISOString() is RFC 3339 in UTC, which is what the updater parses.
       pubDate: new Date().toISOString(),
+      schemaVersion: latestMigrationVersion(readFileSync(join(root, "src-tauri", "src", "db", "migrations.rs"), "utf8")),
       channel,
     });
     process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);

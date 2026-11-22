@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { hasUndismissibleModal } from "./undismissibleModals";
 
-export type DialogKind = "folder" | "wbImport" | "tagBar" | "about" | "log" | "settings" | "update" | "diagnostics" | "dbTools" | "scanReport";
+export type DialogKind = "folder" | "wbImport" | "tagBar" | "about" | "log" | "settings" | "update" | "diagnostics" | "dbTools" | "scanReport" | "versionPin";
 
 // メニューなどから開くダイアログは同時に1つだけ。別のダイアログを開くと、開いていたものは
 // 閉じる。ただし閉じられないダイアログ(処理中など)が開いている間は、差し替えると
