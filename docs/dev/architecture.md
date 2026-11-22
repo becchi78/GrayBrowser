@@ -42,7 +42,7 @@ flowchart TB
 
 ルート`Cargo.toml`は3クレートのワークスペース:
 
-- `crates/gb-core` — OS非依存ロジック。依存は`xxhash-rust`・`blake3`・`thiserror`・`regex`のみ(`cargo tree`で確認済み、`tauri`/`rusqlite`/`notify`/`windows-sys`は一切含まれない)。
+- `crates/gb-core` — OS非依存ロジック。依存は純粋ロジックに必要な小さなクレート(ハッシュ・正規表現・シリアライズ・バージョン比較など)に限り、`tauri`/`rusqlite`/`notify`/`windows-sys`は含めない。実際の依存は`crates/gb-core/Cargo.toml`、混入の有無は`cargo tree -p gb-core`で確認する。
 - `src-tauri` — Tauriアプリ本体。`tauri`(v2)・`rusqlite`(bundled)・`r2d2`/`r2d2_sqlite`・`notify`・`windows-sys`・`gb-core`(path依存)などを持つ。
 - `crates/wb-anonymize-tool` — 旧`.wb`形式DBを読み取り、テスト用フィクスチャとして匿名化したデータを書き出す独立CLI。こちらも`tauri`には依存しない。
 
@@ -52,27 +52,26 @@ flowchart TB
 
 `crates/gb-core/src/lib.rs`冒頭のドキュメントコメントが原則そのもの: *「このクレートは`tauri`・`rusqlite`・プロセス起動系クレートに依存してはならず、`#[cfg(windows)]`を含んではならない」*。
 
-`gb-core/src/`の主なモジュール:
+`gb-core/src/`の主なモジュール(全一覧は`lib.rs`を参照):
 
 | モジュール | 役割 |
 | --- | --- |
 | `hash.rs` | `quick_hash`(xxHash64、先頭/末尾1MB+サイズ)、`full_hash`(BLAKE3全体) |
 | `dedup.rs` | quick_hash一致 → full_hash一致、の二段階重複グルーピング |
 | `filename_validation.rs` | 機種依存文字の検出(Unicode範囲の純粋関数) |
-| `scan_pipeline.rs` | `validate()` → `build_new_video()` の二段階スキャン判定 |
-| `reconcile.rs` | スキャン結果と既知データの突合(新規/既知/パス追従/オフライン化) |
+| `scan_pipeline.rs` / `reconcile.rs` | スキャン判定、スキャン結果と既知データの突合 |
 | `thumbnail_policy.rs` | 動画長に対する6フレーム等間隔シーク位置ポリシー |
-| `retry.rs` | サムネイル/メタデータ生成の再試行可否判定 |
 | `migrations.rs` | マイグレーション適用順序を決める純粋ロジック |
 | `sort.rs` | `ORDER BY`を生成してよい唯一の場所(`SortField`/`SortDirection`) |
-| `search.rs` / `tags.rs` / `rating.rs` / `watch_folders.rs` | 検索語分割、タグ名正規化、評価値レンジ検証、監視フォルダのマージ |
-| `wb_import.rs` / `wb_sampling.rs` / `wb_anonymize.rs` | `.wb`インポート変換・フィクスチャ用サンプリング・匿名化 |
+| `wb_*.rs` | `.wb`インポート変換・フィクスチャ用サンプリング・匿名化 |
+
+上記以外(検索・タグ・評価・外観・バックアップ・診断など)も、機能ごとに1モジュール1責務で置かれている。
 
 これらはすべて`impl Read`/`Read+Seek`等の抽象や純粋な値に対して動作するため、実ファイル・実DB無しで単体テスト可能。
 
 ## 4. Ports・Adapters・Fakeパターン
 
-OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → `src-tauri/src/adapters/`に実装 → `gb-core/src/testing/`にFake」の三点セットになる。現在7つのport(`dialog`, `drive_type`, `ffmpeg`, `player`, `watcher`, `wb_file`, `wb_source`)がこの形を踏襲している。
+OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → `src-tauri/src/adapters/`に実装 → `gb-core/src/testing/`にFake」の三点セットになる。port一覧は`gb-core/src/ports/`を参照(ファイルシステム・外部プロセス・ダイアログ・監視など、OSや外部に触れるものがこの形を踏襲している)。
 
 例: `FfmpegAdapter`
 
@@ -92,8 +91,8 @@ OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → 
 ## 6. データベース層
 
 - **接続/プール**: `src-tauri/src/db/mod.rs`の`Db`構造体は書き込み用`Arc<Mutex<Connection>>`と読み取り用`r2d2::Pool`を持つ(単一ライター・複数リーダー)。`init()`はFK制約を無効化(`bundled` SQLiteがデフォルトでFKをONにするため、参照整合性はアプリ層で担保する方針)、`PRAGMA journal_mode=WAL`を設定、マイグレーションを実行してからプールを構築する。
-- **マイグレーション**: SQLファイルは`src-tauri/migrations/0001_initial.sql`〜`0008_add_thumbnail_ready.sql`。`src-tauri/src/db/migrations.rs`が`include_str!`で埋め込み、適用順序の判定自体は`gb-core::migrations`の純粋ロジックに委譲、全マイグレーションを1トランザクションで適用する。
-- **スキーマ**: `videos`(`id` TEXT PRIMARY KEY = UUID v4)・`tags`・`video_tags`・`schema_version`・`skipped_files`・`settings`・`path_collisions`(0006で追加)。0002以降、`mtime`列(変更検知)、ffprobeメタデータ列、`created_at`/`rating`インデックス(実測ベース、`sort_index_usage.rs`で検証)、再試行カウンタ、`thumbnail_ready`キャッシュフラグ(10万件規模でのファイル`stat()`コスト対策)などが段階的に追加されている。
+- **マイグレーション**: SQLファイルは`src-tauri/migrations/`に連番で置く。`src-tauri/src/db/migrations.rs`が`include_str!`で埋め込み、適用順序の判定自体は`gb-core::migrations`の純粋ロジックに委譲、全マイグレーションを1トランザクションで適用する。
+- **スキーマ**: 中心は`videos`(`id` TEXT PRIMARY KEY = UUID v4)で、タグ・設定・スキップ記録などの表が周りにある。現在の定義は`src-tauri/migrations/`の連番SQLを順に適用した結果が正であり、列挙はここに書かない。
 - 詳細な変更手順は`db-schema-change`スキルを参照。
 
 ## 7. 動画取り込みパイプライン
@@ -108,7 +107,7 @@ OS依存処理を足す箇所は必ず「`gb-core/src/ports/`にtrait定義 → 
 
 ## 8. フロントエンド構成
 
-- エントリポイント: `src/main.tsx` → `src/App.tsx`。ルーティングライブラリは使わず、単一ビュー+モーダルダイアログ(`FolderDialog`, `WbImportDialog`)というシンプルな構成。状態管理はReactの`useState`/`useEffect`のみ(Redux等は不使用)。
+- エントリポイント: `src/main.tsx` → `src/App.tsx`。ルーティングライブラリは使わず、単一ビュー+モーダルダイアログというシンプルな構成(ダイアログは`src/components/`の`*Dialog.tsx`)。状態管理はReactの`useState`/`useEffect`のみ(Redux等は不使用)。
 - `src/api.ts`が唯一のIPC境界: すべての`invoke()`呼び出しをここに集約し、コマンド名とRustの`snake_case`→JSの`camelCase`変換をこの1箇所だけで扱う。
 - `src/events.ts`: `catalog:changed`等のTauriイベント(Rustからフロントへの通知)の購読ラッパー。
 - `src/components/`: 機能単位のReactコンポーネント群(`ThumbnailGrid`, `TagEditor`, `DuplicateGroupsPanel`等)。

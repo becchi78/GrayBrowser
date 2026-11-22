@@ -50,7 +50,7 @@ pub fn run() {
             main_window::restore_and_show(app);
 
             let notifier = Arc::new(events::TauriCatalogNotifier::new(app.handle().clone()));
-            let thumbnails_root = startup::prepare_thumbnails(&db, &app_dir)?;
+            let thumbnails_root = startup::prepare_thumbnails(&app_dir)?;
             let services =
                 startup::Services::new(app.handle().clone(), db, shared, notifier, thumbnails_root);
             startup::start_resume_passes(&services);

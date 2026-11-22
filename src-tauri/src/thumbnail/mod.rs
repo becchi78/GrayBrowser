@@ -3,7 +3,6 @@
 //! rows still missing any of their 6
 //! `thumbnails/<folder-subdir>/[id]_<slot>.webp` files every time this runs.
 
-pub mod migration;
 pub mod paths;
 pub(crate) mod publish;
 pub mod reassign;
