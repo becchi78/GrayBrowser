@@ -29,6 +29,24 @@ pub struct Db {
 /// handed out to readers.
 pub fn init(db_path: &Path) -> anyhow::Result<Db> {
     let existed = db_path.is_file();
+    // Before anything that writes (the WAL switch, the backup, migrations):
+    // a database newer than this app must be left byte-for-byte untouched.
+    // The check uses its own read-only connection, closed before the writer
+    // opens: a read-write open of a WAL database can checkpoint on close and
+    // rewrite the main file. `immutable=1` is not an option because it would
+    // ignore uncheckpointed WAL content and read a stale version.
+    if existed {
+        let probe = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let current = backup::current_schema_version(&probe)?;
+        gb_core::migrations::check_schema_compat(
+            current,
+            gb_core::migrations::latest_version(migrations::MIGRATIONS),
+        )
+        .map_err(anyhow::Error::new)?;
+    }
     let mut conn = rusqlite::Connection::open(db_path)?;
     disable_foreign_keys(&mut conn)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -123,5 +141,90 @@ pub mod test_support {
             rusqlite::params![id, file_path],
         )
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gb_core::migrations::SchemaTooNew;
+
+    fn newer_db(dir: &Path, version: i64) -> std::path::PathBuf {
+        let path = dir.join("app.db");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO schema_version (version) VALUES (?1)",
+            [version],
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn init_refuses_a_newer_database_without_touching_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let latest = gb_core::migrations::latest_version(migrations::MIGRATIONS);
+        let path = newer_db(dir.path(), latest + 1);
+        let before = std::fs::read(&path).unwrap();
+        let files_before: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+
+        let err = init(&path).err().expect("must refuse");
+        let too_new = err.downcast_ref::<SchemaTooNew>().expect("SchemaTooNew");
+        assert_eq!(too_new.db_version, latest + 1);
+        assert_eq!(too_new.app_version, latest);
+
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let files_after: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(files_after, files_before);
+        assert!(!backup::backups_dir(dir.path()).exists());
+    }
+
+    #[test]
+    fn init_refuses_a_newer_wal_database_without_touching_the_main_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        let latest = gb_core::migrations::latest_version(migrations::MIGRATIONS);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        // Keep the connection open so the version row stays in the -wal file.
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO schema_version (version) VALUES (?1)", [999])
+            .unwrap();
+        std::mem::forget(conn);
+        let before = std::fs::read(&path).unwrap();
+
+        let err = init(&path).err().expect("must refuse");
+        let too_new = err.downcast_ref::<SchemaTooNew>().expect("SchemaTooNew");
+        assert_eq!(too_new.db_version, 999);
+        assert_eq!(too_new.app_version, latest);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!backup::backups_dir(dir.path()).exists());
+    }
+
+    #[test]
+    fn init_opens_current_and_empty_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        init(&path).unwrap();
+        // Reopening a database at the latest version is still fine.
+        init(&path).unwrap();
+
+        let empty = dir.path().join("empty.db");
+        rusqlite::Connection::open(&empty).unwrap();
+        init(&empty).unwrap();
     }
 }
