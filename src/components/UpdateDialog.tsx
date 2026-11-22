@@ -7,12 +7,11 @@ import { createLatestOnlyGuard } from "../lib/latestRequest";
 import {
   type AvailableUpdate,
   canDismiss,
-  formatBytes,
   INITIAL_UPDATE_STATE,
-  progressPercent,
   updateReducer,
 } from "../lib/updateState";
 import { ModalShell } from "./ModalShell";
+import { DownloadProgressBody } from "./DownloadProgressBody";
 
 interface Props {
   open: boolean;
@@ -152,33 +151,9 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
         </div>
       );
       break;
-    case "downloading": {
-      const percent = progressPercent(state.downloaded, state.total);
-      body = (
-        <>
-          <p>バージョン {state.update.version} をダウンロードしています...</p>
-          <progress
-            className="update-dialog-progress"
-            data-testid="update-dialog-progress"
-            max={100}
-            value={percent ?? undefined}
-          />
-          <p className="dialog-hint" data-testid="update-dialog-progress-text">
-            {percent === null
-              ? formatBytes(state.downloaded)
-              : `${percent}%(${formatBytes(state.downloaded)}${state.total !== null ? ` / ${formatBytes(state.total)}` : ""})`}
-          </p>
-        </>
-      );
-      footer = null;
-      break;
-    }
+    case "downloading":
     case "installing":
-      body = (
-        <p data-testid="update-dialog-installing">
-          署名を検証し、インストーラーを起動しています。アプリは自動的に終了し、更新後に再起動します。
-        </p>
-      );
+      body = <DownloadProgressBody state={state} />;
       footer = null;
       break;
     case "error":

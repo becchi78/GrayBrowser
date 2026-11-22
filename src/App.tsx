@@ -17,6 +17,7 @@ import { SortControl } from "./components/SortControl";
 import { StatusBar } from "./components/StatusBar";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { UpdateNotice } from "./components/UpdateNotice";
+import { VersionPinDialog } from "./components/VersionPinDialog";
 import { TagBarEditDialog } from "./components/TagBarEditDialog";
 import { ThumbnailGrid } from "./components/ThumbnailGrid";
 import { WbImportDialog } from "./components/WbImportDialog";
@@ -279,6 +280,7 @@ function AppContent({
         onClose={() => closeDialog("diagnostics")}
       />
       <DbToolsDialog open={activeDialog === "dbTools"} onClose={() => closeDialog("dbTools")} />
+      <VersionPinDialog open={activeDialog === "versionPin"} onClose={() => closeDialog("versionPin")} />
       <ScanReportDialog
         open={activeDialog === "scanReport"}
         onClose={() => closeDialog("scanReport")}

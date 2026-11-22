@@ -28,7 +28,7 @@ use crate::db::{backup, Db};
 /// other writers hold it only for one statement or one small transaction at a
 /// time, so a wait of this length means something is stuck; giving up with a
 /// message beats a dialog that never returns.
-const WRITER_WAIT: Duration = Duration::from_secs(30);
+pub(crate) const WRITER_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize)]
 pub struct IntegrityDto {
@@ -94,7 +94,7 @@ fn get_db_stats_impl(conn: &Connection, file_size: u64) -> Result<DbStatsDto, St
     })
 }
 
-fn lock_within(
+pub(crate) fn lock_within(
     writer: &Mutex<Connection>,
     wait: Duration,
 ) -> Result<MutexGuard<'_, Connection>, String> {
@@ -214,10 +214,27 @@ fn run_vacuum_with_sizes(
     })
 }
 
-fn db_file() -> Result<PathBuf, String> {
+pub(crate) fn db_file() -> Result<PathBuf, String> {
     Ok(crate::paths::app_data_dir()
         .map_err(|e| e.to_string())?
         .join("app.db"))
+}
+
+/// The manual-kind backup into the `backups` folder next to `db_file`. Shared
+/// by every command that must snapshot the database before a risky change, so
+/// they all produce the same verified, pruned generations.
+pub(crate) fn manual_backup_step(
+    db_file: &Path,
+) -> impl FnOnce(&Connection) -> anyhow::Result<PathBuf> {
+    let backups = backup::backups_dir(db_file.parent().unwrap_or(Path::new(".")));
+    move |conn| {
+        backup::create_backup(
+            conn,
+            &backups,
+            gb_core::backup::BackupKind::Manual,
+            backup::unix_now(),
+        )
+    }
 }
 
 /// Read-only, on a pooled connection; a large database makes this slow, so it
@@ -250,15 +267,8 @@ pub async fn run_vacuum(db: State<'_, Db>) -> Result<VacuumDto, String> {
     let writer = db.writer.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let file = db_file()?;
-        let backups = backup::backups_dir(file.parent().unwrap_or(Path::new(".")));
-        run_vacuum_impl(&writer, WRITER_WAIT, &file, &RealDiskSpace, |conn| {
-            backup::create_backup(
-                conn,
-                &backups,
-                gb_core::backup::BackupKind::Manual,
-                backup::unix_now(),
-            )
-        })
+        let backup_step = manual_backup_step(&file);
+        run_vacuum_impl(&writer, WRITER_WAIT, &file, &RealDiskSpace, backup_step)
     })
     .await
     .map_err(|e| e.to_string())?

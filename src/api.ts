@@ -121,6 +121,41 @@ export async function checkForUpdate(): Promise<CheckedUpdate | null> {
   // Update's constructor ignores fields it does not know, so the channel is attached afterwards.
   return metadata === null ? null : Object.assign(new Update(metadata), { channel: metadata.channel });
 }
+/** 公開済みで、バージョンを指定してインストールできるリリース。 */
+export interface InstallableRelease {
+  version: string;
+  publishedAt: string | null;
+}
+/** tooNew: その版は今のDBを開けない。unknown: その版の配布情報にスキーマ版が無く、判定できない。 */
+export type SchemaWarning = "tooNew" | "unknown";
+export interface PreparedInstall {
+  /** ダウンロード・インストールに使う。適用しない場合は close() を呼ぶこと。 */
+  update: CheckedUpdate;
+  isDowngrade: boolean;
+  backupRequired: boolean;
+  schemaWarning: SchemaWarning | null;
+  currentSchemaVersion: number;
+  targetSchemaVersion: number | null;
+}
+
+export const listInstallableReleases = () => invoke<InstallableRelease[]>("list_installable_releases");
+
+/**
+ * 指定した版の配布情報を取得し、インストールに使う Update を登録する(まだインストールはしない)。
+ * 配布元はバージョン番号から Rust 側が決めるため、フロントは URL を渡さない。
+ */
+export async function prepareVersionInstall(version: string): Promise<PreparedInstall> {
+  const raw = await invoke<
+    Omit<PreparedInstall, "update"> & {
+      update: ConstructorParameters<typeof Update>[0] & { channel: UpdateChannel };
+    }
+  >("prepare_version_install", { version });
+  const update = Object.assign(new Update(raw.update), { channel: raw.update.channel });
+  return { ...raw, update };
+}
+
+/** ダウングレードの前に、データベースのバックアップを取る。失敗したら reject する(インストールに進まないこと)。 */
+export const backupBeforeInstall = () => invoke<string>("backup_before_install");
 export const getNasPollIntervalMinutes = () => invoke<number>("get_nas_poll_interval_minutes");
 export const setNasPollIntervalMinutes = (minutes: number) =>
   invoke<number>("set_nas_poll_interval_minutes", { minutes });

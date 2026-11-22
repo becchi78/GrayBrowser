@@ -36,6 +36,7 @@ pub mod thumbnail_paths;
 pub mod thumbnail_policy;
 pub mod thumbnail_progress;
 pub mod update_channel;
+pub mod version_pin;
 pub mod view_state;
 pub mod volume_label;
 pub mod watch_folders;
