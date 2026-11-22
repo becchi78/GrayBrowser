@@ -26,7 +26,7 @@ export function nextFocusIndex(current: number, count: number, move: FocusMove):
 
 // Items of a submenu nested inside `menu` belong to that submenu, not to `menu`:
 // arrow keys must only walk the level that currently has focus.
-export function enabledItems(menu: HTMLElement | null): HTMLElement[] {
+function enabledItems(menu: HTMLElement | null): HTMLElement[] {
   if (!menu) return [];
   return Array.from(menu.querySelectorAll<HTMLElement>(ENABLED_ITEM_SELECTOR)).filter((el) => {
     const owner = el.closest('[role="menu"]');

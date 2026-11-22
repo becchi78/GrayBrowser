@@ -24,20 +24,15 @@ use crate::{
 /// when it was written directly in `setup`.
 pub(crate) type SetupResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-/// Everything up to an open database. Logging and the legacy-layout move have
-/// to happen before `db::init`, and the database is only handed out from
-/// here, so nothing can use it before they are done.
+/// Everything up to an open database. Logging has to start before
+/// `db::init`, and the database is only handed out from here, so nothing can
+/// use it before that is done.
 pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db, logging::LogLevelControl)> {
     let app_dir = paths::app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
     // Before db::init so a migration failure is captured in app.log
     // too, not just wherever Tauri prints its own startup error.
     let log_control = logging::LogLevelControl::new(logging::init(&app_dir));
-    // Before db::init: moves any pre-existing double-nested install
-    // data (see `paths::migrate_legacy_nested_app_dir`) into place
-    // first, so db::init opens the real database rather than
-    // creating a fresh empty one. Skipped for a data folder override.
-    paths::migrate_legacy_unless_overridden(&app_dir, paths::data_dir_overridden())?;
     let db = db::init(&app_dir.join("app.db"))
         .inspect_err(|e| log::error!("failed to initialize database: {e}"))
         // An `anyhow::Error` converted straight into a `Box<dyn Error>` can no
@@ -186,7 +181,7 @@ pub(crate) fn log_startup(app_dir: &Path) {
     log::info!("graybrowser starting; app dir: {}", app_dir.display());
 }
 
-/// The thumbnail root once `prepare_thumbnails` has migrated it and cleared
+/// The thumbnail root once `prepare_thumbnails` has created it and cleared
 /// its leftovers. The field is private, so code outside this module cannot
 /// make one, and here only `prepare_thumbnails` does; a path built some other
 /// way cannot stand in for it.
@@ -198,28 +193,12 @@ impl PreparedThumbnailsRoot {
     }
 }
 
-/// Brings the thumbnail directory into its current layout and clears what an
-/// earlier run left half-written. The root is only handed out from here, so
-/// the resume passes cannot start on a layout that is still being migrated.
-pub(crate) fn prepare_thumbnails(
-    db: &db::Db,
-    app_dir: &Path,
-) -> SetupResult<PreparedThumbnailsRoot> {
-    // One-time migration from the old flat thumbnail layout (every
-    // `<video_id>_<slot>.webp` directly under `thumbnails/`) to
-    // per-registered-folder subdirectories. Runs after db::init
-    // (needs the DB to look up each leftover file's owning video)
-    // and before enqueue_missing_thumbnails (which must see the
-    // post-migration layout, not race it). Thumbnails are
-    // regenerable, so a failure here is logged and startup
-    // continues -- never `?`, unlike the DB migration in `init_storage`.
+/// Creates the thumbnail directory and clears what an earlier run left
+/// half-written. The root is only handed out from here, so the resume passes
+/// cannot start before the leftovers are cleared.
+pub(crate) fn prepare_thumbnails(app_dir: &Path) -> SetupResult<PreparedThumbnailsRoot> {
     let thumbnails_root = thumbnail::paths::thumbnails_root(app_dir);
     std::fs::create_dir_all(&thumbnails_root)?;
-    if let Err(e) =
-        thumbnail::migration::migrate_flat_thumbnails_to_folder_subdirs(db, &thumbnails_root)
-    {
-        log::error!("thumbnail layout migration failed: {e}");
-    }
 
     // Nothing is generating yet, so every leftover .tmp is an orphan.
     // Clearing them before the queue starts keeps stalled videos from
