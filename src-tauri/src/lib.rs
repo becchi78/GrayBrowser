@@ -32,7 +32,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let (app_dir, db) = startup::init_storage()?;
+            let (app_dir, db) = match startup::init_storage() {
+                Ok(v) => v,
+                Err(e) => {
+                    startup::report_schema_too_new(app, e.as_ref());
+                    return Err(e);
+                }
+            };
             let shared = startup::manage_shared_state(app, &db);
             startup::log_startup(&app_dir);
             main_window::restore_and_show(app);

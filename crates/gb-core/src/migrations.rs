@@ -16,6 +16,33 @@ pub fn pending_migrations(current_version: i64, all: &[Migration]) -> Vec<&Migra
     pending
 }
 
+/// The database was written by a newer app than this one. Migrations cannot be
+/// rolled back, so opening it anyway could corrupt data this app does not
+/// understand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("database schema version {db_version} is newer than this app supports ({app_version})")]
+pub struct SchemaTooNew {
+    pub db_version: i64,
+    pub app_version: i64,
+}
+
+/// Fails only when `db_version` is above `latest_known`. 0 (an empty
+/// database), an equal version and an older one are all fine.
+pub fn check_schema_compat(db_version: i64, latest_known: i64) -> Result<(), SchemaTooNew> {
+    if db_version > latest_known {
+        return Err(SchemaTooNew {
+            db_version,
+            app_version: latest_known,
+        });
+    }
+    Ok(())
+}
+
+/// Highest version in `all`, or 0 for an empty list.
+pub fn latest_version(all: &[Migration]) -> i64 {
+    all.iter().map(|m| m.version).max().unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +98,27 @@ mod tests {
     fn returns_empty_for_an_empty_migration_list() {
         let all: [Migration; 0] = [];
         assert!(pending_migrations(0, &all).is_empty());
+    }
+
+    #[test]
+    fn compat_rejects_only_a_newer_database() {
+        assert_eq!(
+            check_schema_compat(14, 13),
+            Err(SchemaTooNew {
+                db_version: 14,
+                app_version: 13
+            })
+        );
+        assert!(check_schema_compat(13, 13).is_ok());
+        assert!(check_schema_compat(12, 13).is_ok());
+        assert!(check_schema_compat(0, 13).is_ok());
+        assert!(check_schema_compat(1, 0).is_err());
+    }
+
+    #[test]
+    fn latest_version_is_the_max_regardless_of_order() {
+        assert_eq!(latest_version(&[V3, V1, V2]), 3);
+        assert_eq!(latest_version(&[V1]), 1);
+        assert_eq!(latest_version(&[]), 0);
     }
 }

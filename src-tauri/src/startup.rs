@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use gb_core::migrations::SchemaTooNew;
 use tauri::Manager;
 
 use crate::{
@@ -37,8 +38,63 @@ pub(crate) fn init_storage() -> SetupResult<(PathBuf, db::Db)> {
     // creating a fresh empty one.
     paths::migrate_legacy_nested_app_dir(&app_dir)?;
     let db = db::init(&app_dir.join("app.db"))
-        .inspect_err(|e| log::error!("failed to initialize database: {e}"))?;
+        .inspect_err(|e| log::error!("failed to initialize database: {e}"))
+        // An `anyhow::Error` converted straight into a `Box<dyn Error>` can no
+        // longer be downcast to its inner type, so the one error `setup`
+        // reports specially is unwrapped here.
+        .map_err(|e| match e.downcast::<SchemaTooNew>() {
+            Ok(too_new) => Box::new(too_new) as Box<dyn std::error::Error>,
+            Err(other) => other.into(),
+        })?;
     Ok((app_dir, db))
+}
+
+const SCHEMA_TOO_NEW_TITLE: &str = "GrayBrowser を起動できません";
+
+/// The text for the dialog shown when the database is newer than this app.
+/// Kept free of any dialog or path lookup so the wording can be tested.
+pub(crate) fn schema_too_new_message(err: &SchemaTooNew, app_dir: &Path) -> String {
+    [
+        format!(
+            "データベースがこのアプリより新しい版で作られています(データベース: 版{}、このアプリ: 版{})。",
+            err.db_version, err.app_version
+        ),
+        "データを守るため、起動を中止します。".to_string(),
+        String::new(),
+        "アプリを最新の版に更新してください。".to_string(),
+        "開発版から安定版へ戻した場合は、移行前のバックアップから復元できます。".to_string(),
+        format!(
+            "バックアップフォルダ: {}",
+            db::backup::backups_dir(app_dir).display()
+        ),
+        "復元の手順は docs/backup.md を参照してください。".to_string(),
+    ]
+    .join("
+")
+}
+
+/// Shows the guidance when `err` is a too-new database. Returns whether it
+/// was one; other startup errors are left to the caller's usual handling.
+pub(crate) fn report_schema_too_new(
+    app: &tauri::App,
+    err: &(dyn std::error::Error + 'static),
+) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    let Some(too_new) = err.downcast_ref::<SchemaTooNew>() else {
+        return false;
+    };
+    let message = match paths::app_data_dir() {
+        Ok(dir) => schema_too_new_message(too_new, &dir),
+        Err(_) => schema_too_new_message(too_new, Path::new("")),
+    };
+    log::error!("refusing to start: {too_new}");
+    app.dialog()
+        .message(message)
+        .title(SCHEMA_TOO_NEW_TITLE)
+        .kind(MessageDialogKind::Error)
+        .blocking_show();
+    true
 }
 
 /// State shared with the commands, created and registered together so the
@@ -313,4 +369,37 @@ pub(crate) fn start_watching(
         nas_poll_interval_secs,
     );
     Ok(watch_manager)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_too_new_message_names_both_versions_and_the_backup_folder() {
+        let err = SchemaTooNew {
+            db_version: 20,
+            app_version: 13,
+        };
+        let dir = Path::new("data");
+        let msg = schema_too_new_message(&err, dir);
+        assert!(msg.contains("版20"));
+        assert!(msg.contains("版13"));
+        assert!(msg.contains(&db::backup::backups_dir(dir).display().to_string()));
+        assert!(msg.contains("docs/backup.md"));
+        assert!(msg.lines().all(|l| l == l.trim_start()));
+    }
+
+    #[test]
+    fn schema_too_new_survives_the_conversion_init_storage_applies() {
+        let err = anyhow::Error::new(SchemaTooNew {
+            db_version: 2,
+            app_version: 1,
+        });
+        let boxed: Box<dyn std::error::Error> = match err.downcast::<SchemaTooNew>() {
+            Ok(t) => Box::new(t),
+            Err(o) => o.into(),
+        };
+        assert!(boxed.downcast_ref::<SchemaTooNew>().is_some());
+    }
 }
