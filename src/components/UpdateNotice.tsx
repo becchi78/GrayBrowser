@@ -53,7 +53,7 @@ export function UpdateNotice({ onOpenDetails }: Props) {
   return (
     <div className="update-notice" role="status" data-testid="update-notice">
       <span>
-        新しいバージョン {version} があります{preview && "(先行版)"}
+        新しいバージョン {version} があります{preview && "(Draft版)"}
       </span>
       <button
         type="button"

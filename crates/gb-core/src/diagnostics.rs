@@ -123,7 +123,7 @@ fn mask_by_rules(text: &str, rules: &[MaskRule]) -> String {
 
 fn describe_release_status(status: ReleaseStatus) -> &'static str {
     match status {
-        ReleaseStatus::Preview => "preview (not yet published)",
+        ReleaseStatus::Preview => "draft (not yet published)",
         ReleaseStatus::Published => "published stable",
         ReleaseStatus::Unknown => "unknown",
     }
@@ -188,9 +188,7 @@ mod tests {
     fn the_report_states_the_release_status() {
         let mut preview = info();
         preview.release_status = ReleaseStatus::Preview;
-        assert!(
-            format_report(&preview, &[]).contains("Release status: preview (not yet published)")
-        );
+        assert!(format_report(&preview, &[]).contains("Release status: draft (not yet published)"));
         assert!(format_report(&info(), &[]).contains("Release status: published stable"));
         let mut unknown = info();
         unknown.release_status = ReleaseStatus::Unknown;

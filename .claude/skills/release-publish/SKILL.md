@@ -61,19 +61,19 @@ Windows向けインストーラーはNSIS形式(`.exe`)をメインで配布す�
 
    問題があった場合は公開せず、Draftとタグを削除して修正し、やり直す(Draftの削除・タグの削除も他者から見える操作のため、承認を得てから行う)。
 
-## 先行配信(開発者モード向け)
+## Draft版の先行配信(開発者モード向け)
 
-安定版のタグ`vX.Y.Z`をpushすると、同じビルドのインストーラーと署名が、Draftと固定タグ`dev`のPre-releaseの両方に自動で載る(別の版数や追加のコミットは不要)。上の手順のDraftの確認と公開は従来どおりで、先行配信のための追加操作はない。仕組みと信頼境界は`docs/dev/release-process.md`の「先行配信」を参照。
+安定版のタグ`vX.Y.Z`をpushすると、同じビルドのインストーラーと署名が、Draftと固定タグ`dev`のPre-releaseの両方に自動で載る(別の版数や追加のコミットは不要)。上の手順のDraftの確認と公開は従来どおりで、Draft版の先行配信のための追加操作はない。仕組みと信頼境界は`docs/dev/release-process.md`の「Draft版の先行配信」を参照。
 
-- 先行配信は、人がDraftを確認して公開するより前に行われる(開発者モードがオンの利用者だけが対象)。この点を承知のうえで、タグのpushを承認する。
-- Draftのジョブが成功した場合だけ、先行配信のジョブが動く。前の版の先行配信のジョブが終わる前に、次のタグをpushしない(待機は最新の1件だけで、古い待機は取り消される)。
-- Actionsの先行配信ジョブを確認するときは、`dev`のReleaseに今回のインストーラーだけが残り、`latest.json`の`version`がタグと一致し`url`が`releases/download/dev/<インストーラー名>`であることを見る。
+- Draft版の先行配信は、人がDraftを確認して公開するより前に行われる(開発者モードがオンの利用者だけが対象)。この点を承知のうえで、タグのpushを承認する。
+- Draftのジョブが成功した場合だけ、Draft版の先行配信のジョブが動く。前の版のDraft版の先行配信のジョブが終わる前に、次のタグをpushしない(待機は最新の1件だけで、古い待機は取り消される)。
+- ActionsのDraft版の先行配信ジョブを確認するときは、`dev`のReleaseに今回のインストーラーだけが残り、`latest.json`の`version`がタグと一致し`url`が`releases/download/dev/<インストーラー名>`であることを見る。
 
 ### 手動での復旧
 
 承認を得てから行う。`dev`タグ・Releaseは`v*`のRulesetの対象外で、更新の確認先とインストーラーを置いているだけ。信頼は署名検証による。
 
-- **Draftを取りやめる場合**: `dev`に載った今回のインストーラーと`latest.json`を取り下げる(`gh release delete-asset dev <name> --yes`)。古い版のインストーラーは先行配信のたびに削除済みのため、`dev`には何も残らず(`latest.json`が無い状態になり)、開発者モードのアプリは先行版なしとして扱う(安定版の確認には影響しない)。
+- **Draftを取りやめる場合**: `dev`に載った今回のインストーラーと`latest.json`を取り下げる(`gh release delete-asset dev <name> --yes`)。古い版のインストーラーはDraft版の先行配信のたびに削除済みのため、`dev`には何も残らず(`latest.json`が無い状態になり)、開発者モードのアプリはDraft版なしとして扱う(安定版の確認には影響しない)。
 - **`dev`の更新だけが失敗した場合**(Draftは作成済み): 次の2通りに分ける。
   - Actionsの「失敗したジョブのみ再実行(Re-run failed jobs)」: 成功済みの`draft-release`は再実行されず`preview-channel`だけが再実行されるので、手動復旧は不要。
   - 全体の再実行(Re-run all jobs): Draftの作成で「既存のReleaseがある」ことにより失敗するため、手動で復旧する。Draftから取得したインストーラーと`latest.json`を使い、`latest.json`の`url`だけを`https://github.com/becchi78/GrayBrowser/releases/download/dev/<インストーラー名>`に書き換えたものを用意し、先にインストーラー、次に`latest.json`の順で`gh release upload dev <ファイル> --clobber`する。古いインストーラーは、そのあと`gh release delete-asset dev <name> --yes`で消す。署名はインストーラーの中身にかかるため、`url`の書き換えで無効にならない。

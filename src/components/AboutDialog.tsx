@@ -40,7 +40,7 @@ function releaseStatusText(status: ReleaseStatus | null): string {
     case null:
       return "確認中...";
     case "preview":
-      return "先行版(公開前)";
+      return "Draft版";
     case "published":
       return "公開済みの安定版";
     case "unknown":

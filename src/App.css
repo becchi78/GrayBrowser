@@ -1921,7 +1921,7 @@ button.link-button:active {
   justify-content: flex-end;
 }
 
-/* 提示された版の出どころ(安定版/先行版)。色だけに頼らず、文言で区別する。 */
+/* 提示された版の出どころ(安定版/Draft版)。色だけに頼らず、文言で区別する。 */
 .update-dialog-channel {
   align-self: flex-start;
   padding: 0 var(--space-2);

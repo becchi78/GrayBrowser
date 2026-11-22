@@ -153,7 +153,7 @@ mod tests {
         let fake = FakeFfmpegAdapter::default();
         let mut e = env();
         e.release_status = ReleaseStatus::Preview;
-        assert!(build_report(&fake, e).contains("Release status: preview (not yet published)"));
+        assert!(build_report(&fake, e).contains("Release status: draft (not yet published)"));
     }
 
     #[test]

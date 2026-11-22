@@ -35,12 +35,12 @@ test("開発者モードがオフなら、この版の状態を出さず、取�
   expect(api.getReleaseStatus).not.toHaveBeenCalled();
 });
 
-test("開発者モードがオンで、公開前の版なら「先行版(公開前)」と出す", async () => {
+test("開発者モードがオンで、公開前の版なら「Draft版」と出す", async () => {
   vi.mocked(api.getReleaseStatus).mockResolvedValue("preview");
 
   await renderDialog();
 
-  expect(status()).toHaveTextContent("この版の状態: 先行版(公開前)");
+  expect(status()).toHaveTextContent("この版の状態: Draft版");
 });
 
 test("開発者モードがオンで、公開済みの版なら「公開済みの安定版」と出す", async () => {

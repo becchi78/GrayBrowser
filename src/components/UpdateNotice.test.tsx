@@ -53,21 +53,21 @@ test("5 秒経って更新があれば、新しいバージョンを知らせ、
   expect(update.close).toHaveBeenCalledTimes(1);
 });
 
-test("先行版の更新なら、通知に「先行版」と出す", async () => {
+test("Draft版の更新なら、通知に「Draft版」と出す", async () => {
   vi.mocked(api.checkForUpdate).mockResolvedValue(fakeUpdate(() => never(), { channel: "preview" }));
   render(<UpdateNotice onOpenDetails={vi.fn()} />);
 
   await advance(5000);
 
-  expect(notice()).toHaveTextContent("新しいバージョン 2.0.0 があります(先行版)");
+  expect(notice()).toHaveTextContent("新しいバージョン 2.0.0 があります(Draft版)");
 });
 
-test("安定版の更新なら、通知に「先行版」とは出さない", async () => {
+test("安定版の更新なら、通知に「Draft版」とは出さない", async () => {
   render(<UpdateNotice onOpenDetails={vi.fn()} />);
 
   await advance(5000);
 
-  expect(notice()).not.toHaveTextContent("先行版");
+  expect(notice()).not.toHaveTextContent("Draft版");
 });
 
 test("起動時の確認を切る設定なら、更新を確認せず何も出さない", async () => {

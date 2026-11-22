@@ -3,7 +3,7 @@ name: Release
 # v* タグのpushでのみ起動し、インストーラーをビルドしてReleaseを作る。
 # 安定版のDraftまでしか作らない。公開（Draft解除）は取り消しにくく、
 # 公開した瞬間にアプリ内アップデートの配信も始まるため、人が内容を確認してから行う。
-# 同じビルドを、開発者モードの利用者だけが受け取る先行配信（固定タグ dev の
+# 同じビルドを、開発者モードの利用者だけが受け取るDraft版の先行配信（固定タグ dev の
 # Pre-release）にも載せる（下の preview-channel ジョブ）。
 on:
   push:
@@ -105,7 +105,7 @@ jobs:
           mkdir release-out
           cp "$installer" release-out/
           node scripts/release/update-manifest.mjs "$TAG" "$signature" > release-out/latest.json
-          # 先行配信用。署名とインストーラーは同一で、url だけが dev の Release 内を指す。
+          # Draft版の先行配信用。署名とインストーラーは同一で、url だけが dev の Release 内を指す。
           # Draft には載せない（draft-release は載せるファイルを名指しする）。
           node scripts/release/update-manifest.mjs "$TAG" "$signature" --channel preview > release-out/latest-preview.json
           node scripts/release/release-notes.mjs "$TAG" "release-out/$(basename "$installer")" > release-out/notes.md
@@ -149,7 +149,7 @@ jobs:
             --title "$TAG" \
             --notes-file release-out/notes.md
 
-  # 開発者モード向けの先行配信。Draft は認証なしでは取得できず開発者モードの
+  # 開発者モード向けのDraft版の先行配信。Draft は認証なしでは取得できず開発者モードの
   # 利用者に配れないため、同じインストーラーと署名を固定タグ dev の Pre-release
   # にも置く。Pre-release は releases/latest の対象外なので、安定版の利用者の
   # 更新確認には影響しない。署名鍵のゲート（build ジョブの Environment 承認）は
@@ -207,7 +207,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-          DEV_NOTES: 開発者モード向けの先行配信の置き場です。公開前の版で、動作確認用です。不安定な場合があります。安定版は Releases の最新版を参照してください。
+          DEV_NOTES: 開発者モード向けのDraft版の先行配信の置き場です。公開前の版で、動作確認用です。不安定な場合があります。安定版は Releases の最新版を参照してください。
         run: |
           set -o pipefail
           version="${TAG#v}"

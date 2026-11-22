@@ -221,7 +221,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       <h2>更新の確認</h2>
       {channel !== null && (
         <p className="update-dialog-channel" data-testid="update-dialog-channel">
-          {channel === "preview" ? "先行版" : "安定版"}
+          {channel === "preview" ? "Draft版" : "安定版"}
         </p>
       )}
       {body}
@@ -238,7 +238,7 @@ function AvailableBody({ update }: { update: AvailableUpdate }) {
       </p>
       {update.channel === "preview" && (
         <p className="update-dialog-preview-notice" role="note" data-testid="update-dialog-dev-notice">
-          公開前の確認中のビルドです。問題がなければ、このビルドが安定版として公開されます。動作確認用のため、不安定な場合があります。
+          Draft版です。公開前の確認中のビルドで、問題がなければ、このビルドが安定版として公開されます。動作確認用のため、不安定な場合があります。
         </p>
       )}
       {update.notes !== null && (

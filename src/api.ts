@@ -104,7 +104,7 @@ export const setDeveloperMode = async (enabled: boolean) => {
   await invoke<void>("set_developer_mode", { enabled });
   window.dispatchEvent(new Event(DEVELOPER_MODE_CHANGED_EVENT));
 };
-/** 提示された版の出どころ。preview は安定版として公開する前の、開発者モード向けの先行配信。 */
+/** 提示された版の出どころ。preview は安定版として公開する前の、開発者モード向けのDraft版の先行配信。 */
 export type UpdateChannel = "stable" | "preview";
 export type CheckedUpdate = Update & { channel: UpdateChannel };
 

@@ -79,7 +79,7 @@ pub(crate) fn schema_too_new_message(err: &SchemaTooNew, app_dir: &Path) -> Stri
         "データを守るため、起動を中止します。".to_string(),
         String::new(),
         "アプリを最新の版に更新してください。".to_string(),
-        "先行版から安定版へ戻した場合は、移行前のバックアップから復元できます。".to_string(),
+        "Draft版から安定版へ戻した場合は、移行前のバックアップから復元できます。".to_string(),
         format!(
             "バックアップフォルダ: {}",
             db::backup::backups_dir(app_dir).display()
