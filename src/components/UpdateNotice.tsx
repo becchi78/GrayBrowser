@@ -12,6 +12,7 @@ interface Props {
 // 通知は起動中に一度だけ。「あとで」を押したら、その起動中は再び出さない。
 export function UpdateNotice({ onOpenDetails }: Props) {
   const [version, setVersion] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -27,10 +28,12 @@ export function UpdateNotice({ onOpenDetails }: Props) {
             return;
           }
           const found = update.version;
+          const foundPreview = update.channel === "preview";
           // 適用はダイアログ側で確認し直すため、ここでは Rust 側のリソースを手放す。
           await update.close().catch(() => {});
           if (!cancelled) {
             setVersion(found);
+            setPreview(foundPreview);
           }
         } catch (e) {
           console.warn("startup update check failed", e);
@@ -49,7 +52,9 @@ export function UpdateNotice({ onOpenDetails }: Props) {
 
   return (
     <div className="update-notice" role="status" data-testid="update-notice">
-      <span>新しいバージョン {version} があります</span>
+      <span>
+        新しいバージョン {version} があります{preview && "(先行版)"}
+      </span>
       <button
         type="button"
         data-testid="update-notice-details-btn"

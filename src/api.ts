@@ -104,15 +104,22 @@ export const setDeveloperMode = async (enabled: boolean) => {
   await invoke<void>("set_developer_mode", { enabled });
   window.dispatchEvent(new Event(DEVELOPER_MODE_CHANGED_EVENT));
 };
+/** 提示された版の出どころ。preview は安定版として公開する前の、開発者モード向けの先行配信。 */
+export type UpdateChannel = "stable" | "preview";
+export type CheckedUpdate = Update & { channel: UpdateChannel };
+
 /**
  * 新しい版があれば、ダウンロード・インストールに使う Update を返す(無ければ null)。
  * プラグインの check() ではなく自前のコマンドを使うのは、フロントに check の許可を
  * 与えず、配信元と公開鍵をビルド時の設定に固定したままにするため。
  * 使い終わって適用しない場合は close() を呼ぶこと。
  */
-export async function checkForUpdate(): Promise<Update | null> {
-  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>("check_for_update");
-  return metadata === null ? null : new Update(metadata);
+export async function checkForUpdate(): Promise<CheckedUpdate | null> {
+  const metadata = await invoke<(ConstructorParameters<typeof Update>[0] & { channel: UpdateChannel }) | null>(
+    "check_for_update",
+  );
+  // Update's constructor ignores fields it does not know, so the channel is attached afterwards.
+  return metadata === null ? null : Object.assign(new Update(metadata), { channel: metadata.channel });
 }
 export const getNasPollIntervalMinutes = () => invoke<number>("get_nas_poll_interval_minutes");
 export const setNasPollIntervalMinutes = (minutes: number) =>
@@ -147,8 +154,11 @@ export const setWatchFolderCheckEnabled = (folderPath: string, enabled: boolean)
   invoke<string[]>("set_watch_folder_check_enabled", { folderPath, enabled });
 export const readLog = (offset: number | null) => invoke<LogChunkDto>("read_log", { offset });
 export const getLogDir = () => invoke<string>("get_log_dir");
-// 以下の4つは開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
+// 以下の5つは開発者モードのときだけ使う。バックエンドも開発者モードを確認し、オフなら拒否する。
 export const getDiagnostics = () => invoke<string>("get_diagnostics");
+/** 実行中の版が、公開済みの最新の安定版に対してどういう状態か。取得できなければ unknown。 */
+export type ReleaseStatus = "preview" | "published" | "unknown";
+export const getReleaseStatus = () => invoke<ReleaseStatus>("get_release_status");
 export const getLogLevel = () => invoke<string>("get_log_level");
 export const setLogLevel = (level: string) => invoke<void>("set_log_level", { level });
 // 開くのはバックエンドが決めた固定のログフォルダだけで、パスは渡さない。

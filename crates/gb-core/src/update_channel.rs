@@ -1,14 +1,26 @@
-//! Choosing between the stable and the development update channel.
+//! Choosing between the stable and the preview update channel.
 //!
 //! With developer mode on, both channels are checked and only the newer
-//! release is offered. Looking at the development channel alone would hide a
-//! newer stable patch release (e.g. 0.17.1 while `dev` holds 0.18.0-dev.1).
+//! release is offered. The preview channel holds the build that is waiting as
+//! a draft; once that build is published as stable, both channels carry the
+//! same version and stable must win.
 
 /// Which channel's update to offer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Stable,
-    Dev,
+    Preview,
+}
+
+impl Channel {
+    /// Name the frontend receives. Fixed strings rather than a derived
+    /// serialization so renaming a variant cannot silently change the contract.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Preview => "preview",
+        }
+    }
 }
 
 /// Picks the channel whose version is newer by semver precedence, so
@@ -24,11 +36,15 @@ pub fn pick_newer(
     match (stable, dev) {
         (None, None) => Ok(None),
         (Some(_), None) => Ok(Some(Channel::Stable)),
-        (None, Some(_)) => Ok(Some(Channel::Dev)),
+        (None, Some(_)) => Ok(Some(Channel::Preview)),
         (Some(s), Some(d)) => {
             let s = semver::Version::parse(s)?;
             let d = semver::Version::parse(d)?;
-            Ok(Some(if d > s { Channel::Dev } else { Channel::Stable }))
+            Ok(Some(if d > s {
+                Channel::Preview
+            } else {
+                Channel::Stable
+            }))
         }
     }
 }
@@ -41,7 +57,7 @@ mod tests {
     fn dev_newer_than_stable_picks_dev() {
         assert_eq!(
             pick_newer(Some("0.17.1"), Some("0.18.0-dev.1")).unwrap(),
-            Some(Channel::Dev)
+            Some(Channel::Preview)
         );
     }
 
@@ -61,12 +77,18 @@ mod tests {
     fn higher_dev_number_is_newer() {
         assert_eq!(
             pick_newer(Some("0.17.0"), Some("0.18.0-dev.10")).unwrap(),
-            Some(Channel::Dev)
+            Some(Channel::Preview)
         );
         assert_eq!(
             pick_newer(Some("0.18.0-dev.2"), Some("0.18.0-dev.10")).unwrap(),
-            Some(Channel::Dev)
+            Some(Channel::Preview)
         );
+    }
+
+    #[test]
+    fn channel_names_are_the_frontend_contract() {
+        assert_eq!(Channel::Stable.as_str(), "stable");
+        assert_eq!(Channel::Preview.as_str(), "preview");
     }
 
     #[test]
@@ -77,7 +99,7 @@ mod tests {
         );
         assert_eq!(
             pick_newer(None, Some("0.18.0-dev.1")).unwrap(),
-            Some(Channel::Dev)
+            Some(Channel::Preview)
         );
     }
 

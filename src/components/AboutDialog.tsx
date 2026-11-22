@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { getReleaseStatus, type ReleaseStatus } from "../api";
+import { useDeveloperMode } from "../useDeveloperMode";
 import { ModalShell } from "./ModalShell";
 
 interface Props {
@@ -33,10 +35,25 @@ export function AboutDialog({ open, onClose }: Props) {
   return open ? <AboutDialogContent onClose={onClose} /> : null;
 }
 
+function releaseStatusText(status: ReleaseStatus | null): string {
+  switch (status) {
+    case null:
+      return "確認中...";
+    case "preview":
+      return "先行版(公開前)";
+    case "published":
+      return "公開済みの安定版";
+    case "unknown":
+      return "確認できません";
+  }
+}
+
 function AboutDialogContent({ onClose }: { onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [versionFailed, setVersionFailed] = useState(false);
+  const developerMode = useDeveloperMode();
+  const [releaseStatus, setReleaseStatus] = useState<ReleaseStatus | null>(null);
 
   useEffect(() => {
     // 閉じた後に取得結果が遅れて反映されないようにする。
@@ -58,6 +75,29 @@ function AboutDialogContent({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  // 開くたびに取得する(再確認のボタンは設けない)。開発者モードがオフの間は取得しない。
+  useEffect(() => {
+    if (!developerMode) {
+      return;
+    }
+    let cancelled = false;
+    getReleaseStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setReleaseStatus(status);
+        }
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) {
+          setReleaseStatus("unknown");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode]);
+
   useEffect(() => {
     closeRef.current?.focus();
   }, []);
@@ -75,6 +115,11 @@ function AboutDialogContent({ onClose }: { onClose: () => void }) {
       <p className="about-dialog-version" data-testid="about-dialog-version">
         {versionText}
       </p>
+      {developerMode && (
+        <p className="about-dialog-text" data-testid="about-dialog-release-status">
+          この版の状態: {releaseStatusText(releaseStatus)}
+        </p>
+      )}
       <p className="about-dialog-text">ローカル動画管理アプリ</p>
       <p className="about-dialog-text">Copyright (c) 2026 becchi78</p>
       <p className="about-dialog-text">MIT License</p>

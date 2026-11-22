@@ -39,6 +39,7 @@ vi.mock("../api", () => ({
   getRememberWindowSizeEnabled: vi.fn(),
   setRememberWindowSizeEnabled: vi.fn(),
   getDeveloperMode: vi.fn(),
+  getReleaseStatus: vi.fn(),
   setDeveloperMode: vi.fn(),
   checkForUpdate: vi.fn(),
   listAllTags: vi.fn(),

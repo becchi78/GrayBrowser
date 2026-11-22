@@ -6,6 +6,8 @@ export interface AvailableUpdate {
   currentVersion: string;
   /** リリースノート(CHANGELOG の該当項)。無ければ null。 */
   notes: string | null;
+  /** preview は、安定版として公開する前の先行配信(開発者モード向け)。 */
+  channel: "stable" | "preview";
 }
 
 export type UpdateState =

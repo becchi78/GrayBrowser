@@ -44,6 +44,19 @@ test("取得した診断情報を表示し、貼り付ける前に確認する�
   expect(screen.getByTestId("diagnostics-dialog")).toHaveTextContent("貼り付ける前に内容を確認");
 });
 
+test("診断情報の「この版の状態」の行を、そのまま表示する", async () => {
+  for (const line of ["Release status: preview (not yet published)", "Release status: unknown"]) {
+    vi.mocked(api.getDiagnostics).mockResolvedValue(`GrayBrowser diagnostics
+App version: 0.18.2
+${line}`);
+    const { unmount } = render(<DiagnosticsDialog open={true} onClose={vi.fn()} />);
+    await settle();
+
+    expect(text().value).toContain(line);
+    unmount();
+  }
+});
+
 test("取得中は、コピーを押せない", async () => {
   const pending = deferred<string>();
   vi.mocked(api.getDiagnostics).mockReturnValue(pending.promise);

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEV_NOTES } from "./release-notes.mjs";
-import { buildManifest, installerUrl, normalizeSignature } from "./update-manifest.mjs";
+import { buildManifest, installerUrl, normalizeSignature, parseArgs, PREVIEW_TAG } from "./update-manifest.mjs";
 
 const CHANGELOG = [
   "# Changelog",
@@ -85,23 +84,55 @@ test("normalizeSignature refuses text that is not base64", () => {
   }
 });
 
-test("buildManifest for a dev tag uses the dev version, fixed notes and the tagged installer URL", () => {
-  const manifest = buildManifest({
-    tag: "v0.3.0-dev.2",
-    changelog: CHANGELOG,
-    signature: SIG,
-    pubDate: "2026-01-02T03:04:05.000Z",
-  });
-  assert.equal(manifest.version, "0.3.0-dev.2");
-  assert.equal(manifest.notes, DEV_NOTES);
+test("buildManifest rejects dev tags", () => {
+  for (const tag of ["v0.3.0-dev.2", "v0.3.0-dev", "v0.3.0-dev.01"]) {
+    assert.throws(() => buildManifest({ tag, changelog: CHANGELOG, signature: SIG, pubDate: "x" }), /vX\.Y\.Z/, tag);
+  }
+});
+
+test("buildManifest for the preview channel points into the fixed dev release", () => {
+  const args = { tag: "v0.2.0", changelog: CHANGELOG, signature: SIG, pubDate: "2026-01-02T03:04:05.000Z" };
+  const stable = buildManifest(args);
+  const preview = buildManifest({ ...args, channel: "preview" });
+  assert.equal(PREVIEW_TAG, "dev");
   assert.equal(
-    manifest.platforms["windows-x86_64"].url,
-    "https://github.com/becchi78/GrayBrowser/releases/download/v0.3.0-dev.2/GrayBrowser_0.3.0-dev.2_x64-setup.exe",
+    preview.platforms["windows-x86_64"].url,
+    "https://github.com/becchi78/GrayBrowser/releases/download/dev/GrayBrowser_0.2.0_x64-setup.exe",
+  );
+  // Everything except the URL is identical, so the signature stays valid.
+  assert.equal(preview.version, stable.version);
+  assert.equal(preview.notes, stable.notes);
+  assert.equal(preview.platforms["windows-x86_64"].signature, stable.platforms["windows-x86_64"].signature);
+});
+
+test("buildManifest rejects an unknown channel", () => {
+  assert.throws(
+    () => buildManifest({ tag: "v0.2.0", changelog: CHANGELOG, signature: SIG, pubDate: "x", channel: "beta" }),
+    /channel/,
   );
 });
 
-test("buildManifest rejects dev-like tags in other spellings", () => {
-  for (const tag of ["v0.3.0-dev", "v0.3.0-dev.01", "v0.3.0-rc1"]) {
-    assert.throws(() => buildManifest({ tag, changelog: CHANGELOG, signature: SIG, pubDate: "x" }), /vX\.Y\.Z/, tag);
-  }
+test("parseArgs defaults to stable and accepts --channel after the positionals", () => {
+  assert.deepEqual(parseArgs(["v1.0.0", "a.sig"]), { tag: "v1.0.0", signaturePath: "a.sig", channel: "stable" });
+  assert.deepEqual(parseArgs(["v1.0.0", "a.sig", "--channel", "preview"]), {
+    tag: "v1.0.0",
+    signaturePath: "a.sig",
+    channel: "preview",
+  });
+  assert.equal(parseArgs(["v1.0.0", "a.sig", "--channel", "stable"]).channel, "stable");
+});
+
+test("parseArgs rejects a bare --channel, unknown values, wrong order and extra arguments", () => {
+  const bad = [
+    [],
+    ["v1.0.0"],
+    ["v1.0.0", "a.sig", "--channel"],
+    ["v1.0.0", "a.sig", "--channel", "beta"],
+    ["v1.0.0", "a.sig", "--channel", ""],
+    ["--channel", "preview", "v1.0.0", "a.sig"],
+    ["v1.0.0", "--channel", "preview", "a.sig"],
+    ["v1.0.0", "a.sig", "preview"],
+    ["v1.0.0", "a.sig", "--channel", "preview", "x"],
+  ];
+  for (const argv of bad) assert.equal(parseArgs(argv), null, JSON.stringify(argv));
 });

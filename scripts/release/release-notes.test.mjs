@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildReleaseNotes,
-  DEV_NOTES,
   extractChangelogSection,
   installerFileName,
-  isDevTag,
   promoteHeadings,
   sha256Hex,
   versionFromTag,
@@ -99,29 +97,10 @@ test("sha256Hex is uppercase hex of the bytes", () => {
   assert.equal(sha256Hex(Buffer.from("abc")), "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD");
 });
 
-test("versionFromTag accepts vX.Y.Z-dev.N and nothing else with a suffix", () => {
-  assert.equal(versionFromTag("v0.18.0-dev.1"), "0.18.0-dev.1");
-  assert.equal(versionFromTag("v0.18.0-dev.12"), "0.18.0-dev.12");
-  const bad = ["v0.18.0-dev", "v0.18.0-dev.", "v0.18.0-dev.01", "v0.18.0-dev.0x", "v0.18.0-dev.1.2", "v0.18.0-dev.1-x", "v0.18.0-DEV.1", "v0.18.0-rc.1", "v0.18.0-dev.1+b", "v0.18-dev.1", "0.18.0-dev.1"];
+test("versionFromTag rejects every suffixed form", () => {
+  const bad = ["v0.18.0-dev.1", "v0.18.0-dev", "v0.18.0-rc.1", "v0.18.0+b", "v0.18", "0.18.0", ""];
   for (const tag of bad) {
     assert.equal(versionFromTag(tag), null, tag);
   }
-});
-
-test("isDevTag distinguishes dev tags from stable and invalid tags", () => {
-  assert.equal(isDevTag("v0.18.0-dev.1"), true);
-  assert.equal(isDevTag("v0.18.0"), false);
-  assert.equal(isDevTag("v0.18.0-rc1"), false);
-  assert.equal(isDevTag("dev"), false);
-});
-
-test("buildReleaseNotes for a dev version uses fixed notes and needs no CHANGELOG section", () => {
-  const notes = buildReleaseNotes({
-    changelog: "",
-    version: "0.18.0-dev.1",
-    installerName: installerFileName("0.18.0-dev.1"),
-    sha256: "ABC123",
-  });
-  assert.ok(notes.startsWith(`${DEV_NOTES}\n\n## インストール時の注意(Windows SmartScreen)\n`));
-  assert.ok(notes.endsWith("`GrayBrowser_0.18.0-dev.1_x64-setup.exe`: `ABC123`\n"));
+  assert.equal(versionFromTag("v0.18.0"), "0.18.0");
 });

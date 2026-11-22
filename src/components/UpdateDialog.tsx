@@ -2,10 +2,10 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate } from "../api";
-import { isDevVersion } from "../lib/developerMode";
 import { errorText } from "../lib/errorText";
 import { createLatestOnlyGuard } from "../lib/latestRequest";
 import {
+  type AvailableUpdate,
   canDismiss,
   formatBytes,
   INITIAL_UPDATE_STATE,
@@ -67,6 +67,7 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
             version: update.version,
             currentVersion: update.currentVersion,
             notes: update.body && update.body.trim() !== "" ? update.body : null,
+            channel: update.channel,
           },
         });
       })
@@ -89,6 +90,8 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
   }, [runCheck, releaseUpdate]);
 
   const dismissible = canDismiss(state);
+  // 提示された版が分かる状態(ダウンロード中・エラーを含む)でだけ、出どころを示す。
+  const channel = "update" in state && state.update !== null ? state.update.channel : null;
 
   // 状態が変わって主ボタンが現れたら、キーボードですぐ押せるようにする。
   useEffect(() => {
@@ -216,21 +219,26 @@ function UpdateDialogContent({ onClose }: { onClose: () => void }) {
       dismissible={dismissible}
     >
       <h2>更新の確認</h2>
+      {channel !== null && (
+        <p className="update-dialog-channel" data-testid="update-dialog-channel">
+          {channel === "preview" ? "先行版" : "安定版"}
+        </p>
+      )}
       {body}
       {footer !== null && <div className="dialog-footer update-dialog-footer">{footer}</div>}
     </ModalShell>
   );
 }
 
-function AvailableBody({ update }: { update: { version: string; currentVersion: string; notes: string | null } }) {
+function AvailableBody({ update }: { update: AvailableUpdate }) {
   return (
     <>
       <p data-testid="update-dialog-available">
         新しいバージョン {update.version} があります(現在のバージョン {update.currentVersion})。
       </p>
-      {isDevVersion(update.version) && (
-        <p className="dialog-hint" data-testid="update-dialog-dev-notice">
-          開発版です。動作確認用のため、不安定な場合があります。
+      {update.channel === "preview" && (
+        <p className="update-dialog-preview-notice" role="note" data-testid="update-dialog-dev-notice">
+          公開前の確認中のビルドです。問題がなければ、このビルドが安定版として公開されます。動作確認用のため、不安定な場合があります。
         </p>
       )}
       {update.notes !== null && (

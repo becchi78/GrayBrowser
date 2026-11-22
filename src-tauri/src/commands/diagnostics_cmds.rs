@@ -5,7 +5,8 @@
 
 use gb_core::diagnostics::{format_report, DiagnosticsInfo, MaskRule};
 use gb_core::ports::ffmpeg::FfmpegAdapter;
-use tauri::State;
+use gb_core::release_status::ReleaseStatus;
+use tauri::{State, Webview};
 
 use super::developer_cmds::ensure_developer_mode;
 use crate::adapters;
@@ -14,6 +15,7 @@ use crate::db::{backup, Db};
 /// What the report needs from the running app, collected by the wrapper.
 struct DiagnosticsEnv {
     app_version: String,
+    release_status: ReleaseStatus,
     schema_version: Option<i64>,
     webview_version: Option<String>,
     os: String,
@@ -43,6 +45,7 @@ fn build_report(adapter: &impl FfmpegAdapter, env: DiagnosticsEnv) -> String {
     };
     let info = DiagnosticsInfo {
         app_version: env.app_version,
+        release_status: env.release_status,
         schema_version: env.schema_version,
         ffmpeg_version,
         ffprobe_version,
@@ -73,25 +76,37 @@ fn mask_rules_from_env() -> Vec<MaskRule> {
     .collect()
 }
 
-/// `async` so the FFmpeg version probes run on a worker thread, not the UI
-/// thread.
-#[tauri::command(async)]
-pub fn get_diagnostics(db: State<Db>) -> Result<String, String> {
-    let app_dir = crate::paths::app_data_dir().map_err(|e| e.to_string())?;
-    let conn = db.read_pool.get().map_err(|e| e.to_string())?;
-    ensure_developer_mode(&conn)?;
-    let schema_version = backup::current_schema_version(&conn).ok();
-    let env = DiagnosticsEnv {
-        app_version: env!("CARGO_PKG_VERSION").to_string(),
-        schema_version,
-        webview_version: tauri::webview_version().ok(),
-        os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
-        db_path: app_dir.join("app.db").display().to_string(),
-        data_dir: app_dir.display().to_string(),
-        log_dir: app_dir.join("logs").display().to_string(),
-        mask_rules: mask_rules_from_env(),
-    };
-    guarded_report(&conn, &adapters::ffmpeg::RealFfmpegAdapter, env)
+/// Async because the release status is a network lookup; the FFmpeg version
+/// probes block, so they run on a blocking worker rather than the async
+/// runtime's threads. Developer mode is checked before any network access.
+#[tauri::command]
+pub async fn get_diagnostics(webview: Webview, db: State<'_, Db>) -> Result<String, String> {
+    let pool = db.read_pool.clone();
+    {
+        let conn = pool.get().map_err(|e| e.to_string())?;
+        ensure_developer_mode(&conn)?;
+    }
+    let release_status = super::update_cmds::current_release_status(&webview).await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_dir = crate::paths::app_data_dir().map_err(|e| e.to_string())?;
+        let conn = pool.get().map_err(|e| e.to_string())?;
+        ensure_developer_mode(&conn)?;
+        let schema_version = backup::current_schema_version(&conn).ok();
+        let env = DiagnosticsEnv {
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            release_status,
+            schema_version,
+            webview_version: tauri::webview_version().ok(),
+            os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+            db_path: app_dir.join("app.db").display().to_string(),
+            data_dir: app_dir.display().to_string(),
+            log_dir: app_dir.join("logs").display().to_string(),
+            mask_rules: mask_rules_from_env(),
+        };
+        guarded_report(&conn, &adapters::ffmpeg::RealFfmpegAdapter, env)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -103,6 +118,7 @@ mod tests {
     fn env() -> DiagnosticsEnv {
         DiagnosticsEnv {
             app_version: "0.18.1".into(),
+            release_status: ReleaseStatus::Published,
             schema_version: Some(17),
             webview_version: Some("130.0".into()),
             os: "windows x86_64".into(),
@@ -130,6 +146,14 @@ mod tests {
         assert!(report.contains("FFprobe: ffprobe version 7.0"));
         assert!(report.contains(r"Log folder: %LOCALAPPDATA%\GrayBrowser\logs"));
         assert!(!report.contains("alice"));
+    }
+
+    #[test]
+    fn the_report_carries_the_release_status() {
+        let fake = FakeFfmpegAdapter::default();
+        let mut e = env();
+        e.release_status = ReleaseStatus::Preview;
+        assert!(build_report(&fake, e).contains("Release status: preview (not yet published)"));
     }
 
     #[test]
