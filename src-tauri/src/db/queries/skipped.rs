@@ -97,13 +97,22 @@ fn skipped_row_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SkippedFileRo
     })
 }
 
+/// Lists the unregistered files the user still has to deal with. A row whose
+/// path is already a registered video is left out: it was recorded under an
+/// earlier, stricter naming rule (or by a .wb import) and the file has since
+/// been registered, so listing it would offer to register a video twice. The
+/// row itself is kept; only the listing hides it. The status bar count is
+/// the length of this list, so the badge and the panel always agree.
 pub fn list_skipped_files(
     pool: &r2d2::Pool<SqliteConnectionManager>,
 ) -> anyhow::Result<Vec<SkippedFileRow>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
         "SELECT id, file_path, file_name, reason, detected_char, detected_at, wb_payload
-         FROM skipped_files WHERE dismissed = 0 ORDER BY detected_at DESC",
+         FROM skipped_files
+         WHERE dismissed = 0
+           AND NOT EXISTS (SELECT 1 FROM videos v WHERE v.file_path = skipped_files.file_path)
+         ORDER BY detected_at DESC",
     )?;
     let rows = stmt
         .query_map([], skipped_row_from_row)?
@@ -228,6 +237,53 @@ mod skipped_file_tests {
         assert!(get_skipped_file(&db.read_pool, id + 1000)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn a_row_whose_path_is_already_a_registered_video_is_not_listed() {
+        let (_d, db) = init_temp_db();
+        {
+            let conn = db.writer.lock().unwrap();
+            upsert_skipped_file(&conn, &skipped("C:/v/a.mp4")).unwrap();
+            upsert_skipped_file(&conn, &skipped("C:/v/b.mp4")).unwrap();
+            insert_video(
+                &conn,
+                &NewVideo {
+                    id: "11111111-1111-4111-8111-111111111111".to_string(),
+                    file_path: "C:/v/a.mp4".to_string(),
+                    file_name: "a.mp4".to_string(),
+                    file_size: 1,
+                    quick_hash: "h".to_string(),
+                    status: "online",
+                    mtime: 0,
+                },
+            )
+            .unwrap();
+        }
+
+        let listed = list_skipped_files(&db.read_pool).unwrap();
+
+        // The status bar count is the length of this list.
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].file_path, "C:/v/b.mp4");
+        let kept: i64 = db
+            .read_pool
+            .get()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM skipped_files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 2, "the record is hidden, not deleted");
+    }
+
+    #[test]
+    fn a_row_without_a_video_at_its_path_is_listed_as_before() {
+        let (_d, db) = init_temp_db();
+        upsert_skipped_file(&db.writer.lock().unwrap(), &skipped("C:/v/a.mp4")).unwrap();
+
+        let listed = list_skipped_files(&db.read_pool).unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].file_path, "C:/v/a.mp4");
     }
 
     #[test]
