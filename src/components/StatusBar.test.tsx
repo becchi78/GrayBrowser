@@ -275,6 +275,41 @@ test("進捗イベントで表示が更新され、total が 0 になると消�
   expect(progressText()).toBeNull();
 });
 
+test("進捗イベントは 250ms に1回に間引き、中間値は捨て、完了値と total 0 は即反映する", async () => {
+  const { emit } = captureProgressListener();
+  await renderBar();
+  // 描画の待機(findBy)が偽タイマーで止まらないよう、描画後に差し替える。
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    await emit(progress(1, 10));
+    expect(progressText()).toHaveTextContent("サムネイル生成（1/10件）");
+
+    await emit(progress(2, 10));
+    await emit(progress(3, 10));
+    expect(progressText()).toHaveTextContent("サムネイル生成（1/10件）");
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(progressText()).toHaveTextContent("サムネイル生成（3/10件）");
+
+    await emit(progress(4, 10));
+    await emit(progress(10, 10));
+    expect(progressText()).toHaveTextContent("サムネイル生成（10/10件）");
+
+    await emit(progress(0, 0));
+    expect(progressText()).toBeNull();
+
+    // 即反映で捨てられた保留値が、後から出てこない。
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(progressText()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("イベントの後に遅れて解決した初回の読み取りは、新しい進捗を上書きしない", async () => {
   const { emit } = captureProgressListener();
   const initial = deferred<ThumbnailProgress | null>();
