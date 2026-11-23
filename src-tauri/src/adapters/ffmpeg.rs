@@ -20,14 +20,56 @@ use crate::adapters::long_path;
 /// called during a large folder scan, that destabilizes the whole desktop.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Builds a `Command` for `program` with `CREATE_NO_WINDOW` set. **All**
-/// ffmpeg/ffprobe invocations in this file must go through this helper --
-/// see the `no_bare_command_new_for_ffmpeg_or_ffprobe` test below, which
-/// guards against a future call site bypassing it.
-fn hidden_command(program: &str) -> Command {
+/// `BELOW_NORMAL_PRIORITY_CLASS` (winbase.h): lets the interactive UI and the
+/// user-awaited import steps win the CPU over long-running background work.
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+
+/// Upper bound on decoder threads for one background thumbnail extraction.
+/// Several extractions run in parallel, and by default each ffmpeg decoder
+/// spawns about one thread per core, which saturates the CPU for hours during a
+/// large library's thumbnail generation. One frame is decoded per run, so a
+/// small cap costs little. A single constant so it can be retuned by measurement.
+const THUMBNAIL_FFMPEG_THREADS: u32 = 2;
+
+/// Scheduling class of a spawned ffmpeg/ffprobe process.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProcessPriority {
+    /// The OS default; used by everything a user waits on.
+    Normal,
+    /// Background thumbnail generation only.
+    BelowNormal,
+}
+
+/// The creation flags for a child of the given priority. Always includes
+/// `CREATE_NO_WINDOW`.
+fn creation_flags_for(priority: ProcessPriority) -> u32 {
+    match priority {
+        ProcessPriority::Normal => CREATE_NO_WINDOW,
+        ProcessPriority::BelowNormal => CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+    }
+}
+
+fn command_with_priority(program: &str, priority: ProcessPriority) -> Command {
     let mut cmd = Command::new(program);
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.creation_flags(creation_flags_for(priority));
     cmd
+}
+
+/// Builds a `Command` for `program` with `CREATE_NO_WINDOW` set and the default
+/// priority. Every ffmpeg/ffprobe invocation in this file must go through this
+/// helper or `background_command` -- see the
+/// `no_bare_command_new_for_ffmpeg_or_ffprobe` test below, which guards against
+/// a future call site bypassing them.
+fn hidden_command(program: &str) -> Command {
+    command_with_priority(program, ProcessPriority::Normal)
+}
+
+/// Like `hidden_command` but below-normal priority. Only for the background
+/// thumbnail generation path (`probe_duration`, `extract_thumbnail`); import
+/// linking and metadata probing keep the default priority because the user
+/// waits on them and their worker counts were tuned at that priority.
+fn background_command(program: &str) -> Command {
+    command_with_priority(program, ProcessPriority::BelowNormal)
 }
 
 /// Runs `cmd` to completion, recording at debug level what was run and how it
@@ -117,7 +159,7 @@ impl FfmpegAdapter for RealFfmpegAdapter {
     fn probe_duration(&self, video_path: &Path) -> Result<Option<f64>, FfmpegError> {
         let long_video_path = long_path::to_long_path(video_path);
         let path_str = path_to_str(&long_video_path)?;
-        let mut cmd = hidden_command("ffprobe");
+        let mut cmd = background_command("ffprobe");
         cmd.args([
             "-v",
             "error",
@@ -159,33 +201,10 @@ impl FfmpegAdapter for RealFfmpegAdapter {
         let input_str = path_to_str(&long_input)?;
         let output_str = path_to_str(&long_output)?;
 
-        // Extracts one frame at the caller-chosen `seek_secs`, scaled to
-        // about width_px wide, low-quality-leaning WebP output via
-        // -quality/-lossless 0.
-        let mut cmd = hidden_command("ffmpeg");
-        cmd.args([
-            "-ss",
-            &seek_secs.to_string(),
-            "-i",
-            input_str,
-            "-frames:v",
-            "1",
-            "-vf",
-            &format!("scale={width_px}:-1"),
-            "-quality",
-            &quality.to_string(),
-            "-lossless",
-            "0",
-            // Output path is `[id].webp.tmp` (this app's atomic
-            // write scheme), so ffmpeg can't infer the muxer from the
-            // extension (it sees ".tmp", not ".webp") -- force it explicitly.
-            // Confirmed via manual repro: without this, ffmpeg refuses to
-            // open the output ("Unable to choose an output format").
-            "-f",
-            "webp",
-            "-y",
-            output_str,
-        ]);
+        let mut cmd = background_command("ffmpeg");
+        cmd.args(extract_thumbnail_args(
+            input_str, output_str, seek_secs, width_px, quality,
+        ));
         let output = run_logged(&mut cmd).map_err(|e| FfmpegError::Spawn(e.to_string()))?;
 
         if !output.status.success() {
@@ -307,6 +326,48 @@ impl FfmpegAdapter for RealFfmpegAdapter {
 
         run_ffmpeg_image(split_image_to_webp_args(input_str, &targets, quality))
     }
+}
+
+/// Argument list extracting one frame at `seek_secs`, scaled to about
+/// `width_px` wide, as a low-quality-leaning WebP (`-quality`/`-lossless 0`).
+///
+/// `-threads` is an input option here (before `-i`), so it caps the decoder,
+/// which is where the CPU goes for a single-frame grab. As an output option it
+/// would only reach the encoder, and libwebp encodes one small frame
+/// single-threaded anyway.
+fn extract_thumbnail_args(
+    input: &str,
+    output: &str,
+    seek_secs: f64,
+    width_px: u32,
+    quality: u8,
+) -> Vec<String> {
+    [
+        "-ss",
+        &seek_secs.to_string(),
+        "-threads",
+        &THUMBNAIL_FFMPEG_THREADS.to_string(),
+        "-i",
+        input,
+        "-frames:v",
+        "1",
+        "-vf",
+        &format!("scale={width_px}:-1"),
+        "-quality",
+        &quality.to_string(),
+        "-lossless",
+        "0",
+        // Output path is `[id].webp.tmp` (this app's atomic write scheme), so
+        // ffmpeg can't infer the muxer from the extension (it sees ".tmp", not
+        // ".webp") -- force it explicitly. Without this, ffmpeg refuses to open
+        // the output ("Unable to choose an output format").
+        "-f",
+        "webp",
+        "-y",
+        output,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// Input options shared by every still-image conversion. The input is forced
@@ -488,6 +549,80 @@ mod tests {
                 "out.webp.tmp"
             ]
         );
+    }
+
+    #[test]
+    fn extract_thumbnail_args_cap_the_decoder_threads_before_the_input() {
+        let args = extract_thumbnail_args("in.mp4", "out.webp.tmp", 12.5, 320, 40);
+        assert_eq!(
+            args,
+            [
+                "-ss",
+                "12.5",
+                "-threads",
+                &THUMBNAIL_FFMPEG_THREADS.to_string(),
+                "-i",
+                "in.mp4",
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=320:-1",
+                "-quality",
+                "40",
+                "-lossless",
+                "0",
+                "-f",
+                "webp",
+                "-y",
+                "out.webp.tmp"
+            ]
+        );
+        let threads = args.iter().position(|a| a == "-threads").unwrap();
+        let input = args.iter().position(|a| a == "-i").unwrap();
+        assert!(threads < input, "-threads must be an input option");
+    }
+
+    #[test]
+    fn image_conversion_args_never_carry_a_thread_cap() {
+        let single = image_to_webp_args("in.jpg", "o.webp.tmp", 55);
+        let split = split_image_to_webp_args("in.jpg", &[("o.webp.tmp", rect(0))], 55);
+        assert!(!single.iter().any(|a| a == "-threads"));
+        assert!(!split.iter().any(|a| a == "-threads"));
+    }
+
+    #[test]
+    fn only_the_background_priority_adds_below_normal() {
+        assert_eq!(
+            creation_flags_for(ProcessPriority::Normal),
+            CREATE_NO_WINDOW
+        );
+        assert_eq!(
+            creation_flags_for(ProcessPriority::BelowNormal),
+            CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        );
+        assert_eq!(
+            creation_flags_for(ProcessPriority::Normal) & BELOW_NORMAL_PRIORITY_CLASS,
+            0
+        );
+    }
+
+    /// `background_command` is reserved for thumbnail generation: exactly the
+    /// ffprobe duration probe and the ffmpeg frame extraction. Import linking,
+    /// manual linking and metadata probing must stay on `hidden_command`.
+    /// Creation flags can't be read back from a `Command`, so this scans the
+    /// source (the needle is assembled at runtime to avoid matching itself).
+    #[test]
+    fn background_priority_is_used_only_by_the_generation_calls() {
+        let source = include_str!("ffmpeg.rs");
+        let call = |bin: &str| format!("{}(\"{bin}\")", "background_command");
+        assert_eq!(source.matches(&call("ffprobe")).count(), 1);
+        assert_eq!(source.matches(&call("ffmpeg")).count(), 1);
+        let uses = source
+            .matches(&format!("{}(", "background_command"))
+            .count();
+        // The definition, the two calls, and the two needles built above
+        // (which contain the name without a following "(" literal).
+        assert_eq!(uses, 3);
     }
 
     #[test]
