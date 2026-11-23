@@ -292,12 +292,16 @@ fn handle_walked_file(
                 ctx.notifier.notify_changed();
                 ctx.follow_up.trigger();
             }
-            // Same reasoning as watch::handle_watch_event: the
-            // remaining outcomes (Unchanged shouldn't occur here
+            // Same reasoning as watch::process_changed_file: only the
+            // unregistered list changed, so notify without waking the
+            // thumbnail/metadata queues.
+            Ok(outcome) if outcome.recorded_skipped_file() => {
+                ctx.notifier.notify_changed();
+            }
+            // The remaining outcomes (Unchanged shouldn't occur here
             // given the classification check above,
-            // SkippedInvalidName/SkippedUnreadable/
-            // BlockedByCollision) never write, so nothing to
-            // notify the frontend about.
+            // SkippedUnreadable/BlockedByCollision) write nothing, so
+            // nothing to notify the frontend about.
             Ok(_) => {}
             Err(err) => {
                 log::error!("failed to process NAS file {path_str}: {err}");
@@ -498,6 +502,31 @@ mod tests {
         .unwrap();
 
         assert!(follow_up.has_pending());
+    }
+
+    #[test]
+    fn diff_scan_announces_an_unregistered_file_without_a_follow_up() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("\u{E000}movie.mp4"), b"bytes").unwrap();
+        let follow_up =
+            FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {});
+        let notifier = FakeCatalogNotifier::default();
+
+        run_nas_diff_scan(
+            &db,
+            thumbs_root.path(),
+            &dir.path().to_string_lossy(),
+            &AtomicBool::new(false),
+            &notifier,
+            &follow_up,
+            &all_reachable(),
+        )
+        .unwrap();
+
+        assert_eq!(notifier.calls(), 1);
+        assert!(!follow_up.has_pending());
     }
 
     #[test]

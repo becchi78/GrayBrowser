@@ -48,12 +48,21 @@ pub enum ProcessOutcome {
 
 impl ProcessOutcome {
     /// Whether the catalog changed, i.e. the frontend must be told and the
-    /// thumbnail/metadata queues woken. The other outcomes never write.
+    /// thumbnail/metadata queues woken. `SkippedInvalidName` also writes (to
+    /// `skipped_files`) but is deliberately excluded: it adds no video, so there
+    /// is nothing for the thumbnail/metadata queues to do. See
+    /// `recorded_skipped_file` for telling the frontend.
     pub fn changed_catalog(&self) -> bool {
         matches!(
             self,
             Self::Registered | Self::Reconciled | Self::PathFollowed { .. }
         )
+    }
+
+    /// Whether a row was written to `skipped_files`. The frontend's
+    /// unregistered list needs a refresh for this, but no queue needs waking.
+    pub fn recorded_skipped_file(&self) -> bool {
+        matches!(self, Self::SkippedInvalidName { .. })
     }
 }
 
@@ -661,5 +670,24 @@ mod process_outcome_tests {
         ];
         assert!(changed.iter().all(ProcessOutcome::changed_catalog));
         assert!(!unchanged.iter().any(ProcessOutcome::changed_catalog));
+    }
+
+    #[test]
+    fn only_skipped_invalid_name_records_a_skipped_file() {
+        assert!(ProcessOutcome::SkippedInvalidName { detected_char: '?' }.recorded_skipped_file());
+        let others = [
+            ProcessOutcome::Registered,
+            ProcessOutcome::Reconciled,
+            ProcessOutcome::Unchanged,
+            ProcessOutcome::PathFollowed {
+                video_id: "v".into(),
+            },
+            ProcessOutcome::BlockedByCollision {
+                video_id: "a".into(),
+                colliding_video_id: "b".into(),
+            },
+            ProcessOutcome::SkippedUnreadable,
+        ];
+        assert!(!others.iter().any(ProcessOutcome::recorded_skipped_file));
     }
 }

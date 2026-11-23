@@ -11,6 +11,9 @@ import {
   missingRegistrationNotice,
 } from "../lib/skippedFileMissing";
 import { splitDirAndFileName } from "../lib/paths";
+import { onCatalogChanged } from "../events";
+import { createTrailingDebounce } from "../lib/timing";
+import { REFETCH_DELAY_MS } from "../useLibraryCounts";
 import type { SkippedFileDto } from "../types";
 import { errorText } from "../lib/errorText";
 
@@ -69,6 +72,18 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
   useEffect(() => {
     void reload();
   }, [refreshKey, reload]);
+
+  // スキャンや監視は未登録の行を書き込んだあとに catalog:changed を出す。続けて
+  // 届くので、最後の通知から待って1回だけ取り直す。閉じていてもバッジの件数を
+  // 保つため、open には依存させない。
+  useEffect(() => {
+    const debounced = createTrailingDebounce(() => void reload(), REFETCH_DELAY_MS);
+    const unlisten = onCatalogChanged(debounced.call);
+    return () => {
+      debounced.cancel();
+      unlisten();
+    };
+  }, [reload]);
 
   const startEdit = (f: SkippedFileDto) => {
     if (busy) return;
