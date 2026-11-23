@@ -65,10 +65,23 @@ pub fn upsert_skipped_file_with_wb_payload(
 /// Like `upsert_skipped_file`, but for a file a scan has just seen on disk:
 /// it also un-dismisses the row, so a file that exists again is never left
 /// hidden from the list.
+///
+/// Returns whether the visible list changed: a new row, or a dismissed row
+/// brought back. A plain refresh of `detected_at` returns false, so a caller
+/// that sees the same file again every poll can avoid announcing it each time.
+/// The previous state is read first; callers hold the single writer, so nothing
+/// can change the row between the read and the upsert.
 pub fn upsert_skipped_file_found_on_disk(
     conn: &Connection,
     skipped: &NewSkippedFile,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
+    let previously_dismissed: Option<bool> = conn
+        .query_row(
+            "SELECT dismissed != 0 FROM skipped_files WHERE file_path = ?1",
+            params![skipped.file_path],
+            |r| r.get(0),
+        )
+        .optional()?;
     conn.execute(
         "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
          VALUES (?1, ?2, ?3, ?4)
@@ -80,7 +93,7 @@ pub fn upsert_skipped_file_found_on_disk(
             skipped.detected_char.to_string()
         ],
     )?;
-    Ok(())
+    Ok(previously_dismissed.unwrap_or(true))
 }
 
 /// Maps a row selected as
@@ -424,6 +437,23 @@ mod skipped_file_tests {
         let rows = list_skipped_files(&db.read_pool).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, id);
+    }
+
+    #[test]
+    fn found_on_disk_upsert_reports_only_changes_to_the_visible_list() {
+        let (_d, db) = init_temp_db();
+        let found = |db: &crate::db::Db| {
+            upsert_skipped_file_found_on_disk(&db.writer.lock().unwrap(), &skipped("C:/v/a.mp4"))
+                .unwrap()
+        };
+
+        assert!(found(&db), "a new row is a change");
+        assert!(!found(&db), "re-seeing the same row is not");
+
+        let id = id_of(&db, "C:/v/a.mp4");
+        dismiss_skipped_file(&db.writer.lock().unwrap(), id).unwrap();
+        assert!(found(&db), "bringing a dismissed row back is a change");
+        assert!(!found(&db));
     }
 
     #[test]

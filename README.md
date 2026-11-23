@@ -7,7 +7,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/becchi78/GrayBrowser/actions/workflows/ci.yml/badge.svg)](https://github.com/becchi78/GrayBrowser/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.18.5-blue.svg)
+![Version](https://img.shields.io/badge/version-0.18.6-blue.svg)
 
 大量のローカル動画ファイルを高速にスキャン・カタログ化し、タグ付け・レーティング・検索で整理できる、Windows向けのローカル動画管理デスクトップアプリです。
 

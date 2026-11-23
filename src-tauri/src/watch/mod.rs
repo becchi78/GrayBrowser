@@ -377,9 +377,15 @@ fn process_changed_file(
         // Locked by a writer (e.g. a copy in progress): the caller retries
         // later, as no further event is guaranteed once the lock is released.
         Ok(scan::ProcessOutcome::SkippedUnreadable) => RetryOutcome::StillUnreadable,
-        // Unchanged/SkippedInvalidName/BlockedByCollision (this branch never
-        // actually writes -- see scan::mod's register_new_path doc comment)
-        // -- nothing changed in the catalog, so no emit.
+        // Only a row newly added to (or restored in) the unregistered list is
+        // announced; an already-listed file seen again changes nothing. No
+        // video was added, so the thumbnail/metadata queues are not woken.
+        Ok(outcome) if outcome.recorded_skipped_file() => {
+            notifier.notify_changed();
+            RetryOutcome::Done
+        }
+        // Unchanged/BlockedByCollision/an already-listed skipped file change
+        // nothing visible, so no emit.
         Ok(_) => RetryOutcome::Done,
         Err(e) => {
             log::error!("failed to process watch event for {}: {e}", path.display());
@@ -642,6 +648,63 @@ mod tests {
         assert_eq!(env.video_count(), 1);
         assert_eq!(notifier.calls(), 1, "a fresh registration must notify");
         assert!(follow_up.has_pending());
+    }
+
+    #[test]
+    fn a_file_recorded_as_unregistered_is_announced_without_a_follow_up() {
+        let env = Env::new();
+        let video = env.file("\u{E000}movie.mp4", b"bytes");
+        let notifier = FakeCatalogNotifier::default();
+        let follow_up = parked_follow_up();
+
+        env.send(WatchEventKind::Created, &video, &notifier, &follow_up);
+
+        assert_eq!(env.video_count(), 0);
+        assert_eq!(notifier.calls(), 1, "a new unregistered row must notify");
+        assert!(
+            !follow_up.has_pending(),
+            "no video was added, so no thumbnail/metadata work"
+        );
+    }
+
+    #[test]
+    fn a_second_event_for_an_already_listed_unregistered_file_is_not_announced() {
+        let env = Env::new();
+        let video = env.file("\u{E000}movie.mp4", b"bytes");
+        env.send_quietly(WatchEventKind::Created, &video);
+
+        let notifier = FakeCatalogNotifier::default();
+        env.send(
+            WatchEventKind::Modified,
+            &video,
+            &notifier,
+            &parked_follow_up(),
+        );
+
+        assert_eq!(notifier.calls(), 0);
+    }
+
+    #[test]
+    fn a_dismissed_unregistered_file_seen_again_is_announced() {
+        let env = Env::new();
+        let video = env.file("\u{E000}movie.mp4", b"bytes");
+        env.send_quietly(WatchEventKind::Created, &video);
+        env.db
+            .writer
+            .lock()
+            .unwrap()
+            .execute("UPDATE skipped_files SET dismissed = 1", [])
+            .unwrap();
+
+        let notifier = FakeCatalogNotifier::default();
+        env.send(
+            WatchEventKind::Modified,
+            &video,
+            &notifier,
+            &parked_follow_up(),
+        );
+
+        assert_eq!(notifier.calls(), 1);
     }
 
     #[test]
