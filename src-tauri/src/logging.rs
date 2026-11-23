@@ -11,11 +11,15 @@
 //! 10MB/5-generation behavior), so it is used as-is rather than building a
 //! custom rotation writer to match a specific filename literally.
 
+use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use flexi_logger::{Cleanup, Criterion, FileSpec, LogSpecification, Logger, LoggerHandle, Naming};
+use flexi_logger::{
+    Cleanup, Criterion, DeferredNow, FileSpec, LogSpecification, Logger, LoggerHandle, Naming,
+};
 use gb_core::log_level::LogLevel;
+use log::Record;
 
 /// Failure here must not stop the app from starting -- logging is a
 /// diagnostic aid, not a startup precondition. Errors are downgraded to a
@@ -34,6 +38,7 @@ pub fn init(app_dir: &Path) -> Option<LoggerHandle> {
                     .basename("app")
                     .suppress_timestamp(),
             )
+            .format_for_files(timestamped_format)
             .rotate(
                 Criterion::Size(10 * 1024 * 1024),
                 Naming::Numbers,
@@ -48,6 +53,41 @@ pub fn init(app_dir: &Path) -> Option<LoggerHandle> {
             None
         }
     }
+}
+
+/// Local-time timestamp with milliseconds. Local rather than UTC so entries
+/// line up with file modification times and the clock the user is looking at.
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
+
+/// `flexi_logger`'s built-in formats either omit the timestamp (the default)
+/// or replace `[module]` with file/line, so the line is built here.
+/// A multi-line message (e.g. ffmpeg output) is stamped on its first line
+/// only, to keep large outputs from ballooning.
+fn timestamped_format(
+    w: &mut dyn Write,
+    now: &mut DeferredNow,
+    record: &Record,
+) -> std::io::Result<()> {
+    let timestamp = now.format(TIMESTAMP_FORMAT).to_string();
+    write_line(
+        w,
+        &timestamp,
+        record.level().as_str(),
+        record.module_path().unwrap_or("<unnamed>"),
+        record.args(),
+    )
+}
+
+/// Split from `timestamped_format` so the layout can be tested without a
+/// real clock.
+fn write_line(
+    w: &mut dyn Write,
+    timestamp: &str,
+    level: &str,
+    module: &str,
+    message: &std::fmt::Arguments<'_>,
+) -> std::io::Result<()> {
+    write!(w, "{timestamp} {level} [{module}] {message}")
 }
 
 /// The filter spec for `level`. Only this app's own crates get the verbose
@@ -90,6 +130,70 @@ impl LogLevelControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line(timestamp: &str, level: &str, module: &str, message: &str) -> String {
+        let mut buf = Vec::new();
+        write_line(
+            &mut buf,
+            timestamp,
+            level,
+            module,
+            &format_args!("{message}"),
+        )
+        .unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn line_starts_with_timestamp_then_level_and_module() {
+        assert_eq!(
+            line(
+                "2026-11-23 20:53:21.123",
+                "INFO",
+                "graybrowser_lib::startup",
+                "graybrowser starting"
+            ),
+            "2026-11-23 20:53:21.123 INFO [graybrowser_lib::startup] graybrowser starting"
+        );
+    }
+
+    #[test]
+    fn multi_line_message_is_stamped_on_the_first_line_only() {
+        assert_eq!(
+            line(
+                "2026-11-23 20:53:21.123",
+                "WARN",
+                "m",
+                "a
+b"
+            ),
+            "2026-11-23 20:53:21.123 WARN [m] a
+b"
+        );
+    }
+
+    #[test]
+    fn empty_message_and_non_ascii_are_kept() {
+        assert_eq!(line("T", "ERROR", "m", ""), "T ERROR [m] ");
+        assert_eq!(line("T", "INFO", "m", "失敗"), "T INFO [m] 失敗");
+    }
+
+    #[test]
+    fn timestamp_format_has_millisecond_precision() {
+        let ts = DeferredNow::new().format(TIMESTAMP_FORMAT).to_string();
+        let b = ts.as_bytes();
+        // YYYY-MM-DD HH:MM:SS.mmm
+        assert_eq!(b.len(), 23, "{ts}");
+        for (i, c) in b.iter().enumerate() {
+            match i {
+                4 | 7 => assert_eq!(*c, b'-', "{ts}"),
+                10 => assert_eq!(*c, b' ', "{ts}"),
+                13 | 16 => assert_eq!(*c, b':', "{ts}"),
+                19 => assert_eq!(*c, b'.', "{ts}"),
+                _ => assert!(c.is_ascii_digit(), "{ts}"),
+            }
+        }
+    }
 
     #[test]
     fn every_level_yields_a_spec_flexi_logger_accepts() {
