@@ -94,7 +94,7 @@ WhiteBrowser では `★` / `★★★` のような★だけのタグを評価�
 
 ### 3.6 機種依存文字を含むファイル名
 
-通常のスキャンと同じ検査（`gb_core::filename_validation::is_machine_dependent_filename`）を、各行のファイル名（3.5 の復元後の名前）に対して、ハッシュ計算より前に行う。該当した行は `videos` に登録せず、ハッシュ計算・サムネイル生成も行わず、`skipped_files` に記録して「未登録」パネルに出す（結果画面には `skipped_invalid_name` として件数を出す）。
+通常のスキャンと同じ検査（`gb_core::filename_validation::is_machine_dependent_filename`。対象は外字領域 U+E000〜U+F8FF だけで、丸数字・ローマ数字・`㈱` などは対象外）を、各行のファイル名（3.5 の復元後の名前）に対して、ハッシュ計算より前に行う。該当した行は `videos` に登録せず、ハッシュ計算・サムネイル生成も行わず、`skipped_files` に記録して「未登録」パネルに出す（結果画面には `skipped_invalid_name` として件数を出す）。
 
 - オフライン行も、名前だけで判定するので同じ扱い。
 - 該当行の親フォルダは監視フォルダの自動追加の対象外。

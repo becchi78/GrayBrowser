@@ -84,7 +84,7 @@ pub fn validate_new_file_name(old_name: &str, input: &str) -> Result<String, Ren
 mod tests {
     use super::*;
 
-    const OLD: &str = "movie①.mp4";
+    const OLD: &str = "movie\u{E000}.mp4";
 
     fn check(input: &str) -> Result<String, RenameRejection> {
         validate_new_file_name(OLD, input)
@@ -104,7 +104,10 @@ mod tests {
     #[test]
     fn rejects_the_unchanged_name_even_with_surrounding_spaces() {
         assert_eq!(check(OLD), Err(RenameRejection::Unchanged));
-        assert_eq!(check(" movie①.mp4 "), Err(RenameRejection::Unchanged));
+        assert_eq!(
+            check(" movie\u{E000}.mp4 "),
+            Err(RenameRejection::Unchanged)
+        );
     }
 
     #[test]
@@ -194,8 +197,8 @@ mod tests {
     #[test]
     fn rejects_a_remaining_machine_dependent_char() {
         assert_eq!(
-            check("movie②.mp4"),
-            Err(RenameRejection::MachineDependentChar('②'))
+            check("movie\u{E001}.mp4"),
+            Err(RenameRejection::MachineDependentChar('\u{E001}'))
         );
     }
 
@@ -220,8 +223,8 @@ mod tests {
             RenameRejection::Empty.to_string(),
             "新しい名前を入力してください。"
         );
-        assert!(RenameRejection::MachineDependentChar('①')
+        assert!(RenameRejection::MachineDependentChar('\u{E000}')
             .to_string()
-            .contains('①'));
+            .contains('\u{E000}'));
     }
 }

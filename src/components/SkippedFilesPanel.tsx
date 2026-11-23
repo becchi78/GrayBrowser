@@ -142,7 +142,7 @@ export function SkippedFilesPanel({ refreshKey, open, onCountChange }: Props) {
       ) : (
         <>
           <p className="skipped-files-guidance">
-            「名前を変更」で機種依存文字を取り除いた名前に変えると、そのまま通常の動画として登録されます。
+            対象は、外字(そのPC専用に登録した文字)を含むファイル名です。「名前を変更」で外字を取り除いた名前に変えると、そのまま通常の動画として登録されます。
             エクスプローラーで直した場合は、次回のスキャンで登録されます。
             {files.some((f) => f.file_missing) && ` ${MISSING_FILE_GUIDANCE}`}
           </p>

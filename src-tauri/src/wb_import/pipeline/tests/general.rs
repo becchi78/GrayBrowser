@@ -751,8 +751,8 @@ fn counts_add_up_with_every_kind_of_row_and_on_a_repeat_import() {
         }),
         row(|r| {
             r.movie_id = 3;
-            r.movie_name = "bad\u{2460}.mp4".to_string();
-            r.movie_path = "Z:\\gone\\bad\u{2460}.mp4".to_string();
+            r.movie_name = "bad\u{E000}.mp4".to_string();
+            r.movie_path = "Z:\\gone\\bad\u{E000}.mp4".to_string();
         }),
         row(|r| {
             r.movie_id = 4;

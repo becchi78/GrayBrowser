@@ -217,7 +217,7 @@ test("thumbnail grid stays at its floor even with the status panel open and full
   // content. One filename with a machine-dependent character populates
   // SkippedFilesPanel the same way.
   const dupContent = "identical duplicate content for the grid-visible-after-scan e2e regression test";
-  const fixtureDir = createFixtureFolder([`${token}_grid_visible.mp4`, `${token}①_skip.mp4`]);
+  const fixtureDir = createFixtureFolder([`${token}_grid_visible.mp4`, `${token}\uE000_skip.mp4`]);
   fs.writeFileSync(path.join(fixtureDir, `${token}_dup_a.mp4`), dupContent);
   fs.writeFileSync(path.join(fixtureDir, `${token}_dup_b.mp4`), dupContent);
   seedWatchFolder(fixtureDir);

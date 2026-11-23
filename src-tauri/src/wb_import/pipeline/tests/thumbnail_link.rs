@@ -958,8 +958,8 @@ fn a_jpg_shared_with_a_registered_row_is_still_linked() {
     let h = harness();
     let bad = row(|r| {
         r.movie_id = 1;
-        r.movie_name = "dup\u{2460}.mp4".to_string();
-        r.movie_path = "Z:\\gone\\dup\u{2460}.mp4".to_string();
+        r.movie_name = "dup\u{E000}.mp4".to_string();
+        r.movie_path = "Z:\\gone\\dup\u{E000}.mp4".to_string();
         r.hash = "2f6f1cc0".to_string();
     });
     let good = row(|r| {

@@ -21,7 +21,7 @@ fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
     )
     .unwrap();
     fs::write(
-        scan_dir.path().join("\u{2460}movie.mp4"),
+        scan_dir.path().join("\u{E000}movie.mp4"),
         b"fake video bytes 2",
     )
     .unwrap();
@@ -67,8 +67,40 @@ fn scan_registers_normal_files_and_skips_machine_dependent_ones() {
             Ok((r.get(0)?, r.get(1)?))
         })
         .unwrap();
-    assert_eq!(skipped_name, "\u{2460}movie.mp4");
+    assert_eq!(skipped_name, "\u{E000}movie.mp4");
     assert_eq!(reason, "machine_dependent_char");
+}
+
+#[test]
+fn scan_registers_circled_and_roman_numerals_and_other_non_private_use_symbols() {
+    let (_db_dir, db) = init_temp_db();
+    let thumbs_root = temp_thumbs_root();
+    let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
+    let names = [
+        "\u{2460}a.mp4",
+        "b\u{2162}.mp4",
+        "c\u{3231}.mp4",
+        "d\u{2660}.mp4",
+    ];
+    for name in names {
+        fs::write(scan_dir.path().join(name), format!("bytes of {name}")).unwrap();
+    }
+
+    let folders = vec![scan_dir.path().to_string_lossy().to_string()];
+    let summary = scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable)
+        .expect("scan should succeed");
+
+    assert_eq!(summary.registered, 4);
+    assert_eq!(summary.skipped, 0);
+    let conn = db.writer.lock().unwrap();
+    let video_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(video_count, 4);
+    let skipped_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM skipped_files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(skipped_count, 0);
 }
 
 #[test]
@@ -77,7 +109,7 @@ fn rescanning_the_same_folder_is_idempotent() {
     let thumbs_root = temp_thumbs_root();
     let scan_dir = tempfile::tempdir().expect("failed to create scan tempdir");
     fs::write(scan_dir.path().join("movie.mp4"), b"bytes").unwrap();
-    fs::write(scan_dir.path().join("\u{2460}movie.mp4"), b"bytes2").unwrap();
+    fs::write(scan_dir.path().join("\u{E000}movie.mp4"), b"bytes2").unwrap();
     let folders = vec![scan_dir.path().to_string_lossy().to_string()];
 
     scan::scan_folders(&folders, &db, thumbs_root.path(), &scan::AssumeReachable).unwrap();

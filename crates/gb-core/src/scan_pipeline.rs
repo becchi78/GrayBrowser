@@ -121,8 +121,8 @@ mod tests {
 
     #[test]
     fn validate_rejects_machine_dependent_filenames() {
-        match validate(&scanned("①movie.mp4")) {
-            ValidationOutcome::Invalid { detected_char } => assert_eq!(detected_char, '①'),
+        match validate(&scanned("\u{E000}movie.mp4")) {
+            ValidationOutcome::Invalid { detected_char } => assert_eq!(detected_char, '\u{E000}'),
             ValidationOutcome::Valid => panic!("expected Invalid"),
         }
     }
@@ -142,11 +142,11 @@ mod tests {
 
     #[test]
     fn build_skipped_file_fills_expected_fields() {
-        let file = scanned("①movie.mp4");
-        let skipped = build_skipped_file(&file, '①');
-        assert_eq!(skipped.file_path, "C:/videos/①movie.mp4");
+        let file = scanned("\u{E000}movie.mp4");
+        let skipped = build_skipped_file(&file, '\u{E000}');
+        assert_eq!(skipped.file_path, "C:/videos/\u{E000}movie.mp4");
         assert_eq!(skipped.reason, "machine_dependent_char");
-        assert_eq!(skipped.detected_char, '①');
+        assert_eq!(skipped.detected_char, '\u{E000}');
     }
 
     #[test]

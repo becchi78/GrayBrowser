@@ -3,15 +3,19 @@
 
 /// Unicode ranges (inclusive) treated as machine-dependent characters.
 ///
-/// `U+3251..=U+32FF` (circled-kanji IBM extension) is a subset of
-/// `U+3200..=U+33FF` (Enclosed CJK Letters and Months / CJK Compatibility) and
-/// is therefore folded into that single range rather than listed separately.
+/// Only the Private Use Area is listed. Windows "external characters" (gaiji)
+/// registered in the character editor live there, and the glyph for a given
+/// code point differs from PC to PC: on another PC or on a Mac the same name
+/// shows a different character, or nothing at all. A name that cannot be read
+/// back reliably elsewhere is refused.
+///
+/// Circled numbers, Roman numerals, unit/era ligatures, circled kanji and card
+/// suits used to be listed here too. They are standard, named characters with
+/// the same meaning everywhere, and the media tools open files named with them
+/// fine, so refusing them only left a large part of real libraries
+/// unregistered.
 const MACHINE_DEPENDENT_RANGES: &[(char, char)] = &[
-    ('\u{2460}', '\u{24FF}'), // 丸囲み数字 (Enclosed Alphanumerics)
-    ('\u{2160}', '\u{2188}'), // ローマ数字 (Number Forms)
-    ('\u{3200}', '\u{33FF}'), // 単位記号・元号合字・丸囲み漢字拡張 (Enclosed CJK Letters and Months / CJK Compatibility)
-    ('\u{2660}', '\u{2667}'), // トランプ柄記号
-    ('\u{E000}', '\u{F8FF}'), // 外字領域 (Private Use Area) -- unconditionally machine-dependent
+    ('\u{E000}', '\u{F8FF}'), // 外字領域 (Private Use Area)
 ];
 
 fn is_machine_dependent_char(c: char) -> bool {
@@ -36,59 +40,26 @@ mod tests {
     }
 
     #[test]
-    fn each_range_flags_its_start_and_end_but_not_the_codepoints_just_outside() {
-        // (range name, first flagged, last flagged, just before, just after).
-        // Just-outside values are the nearest valid `char`s: for the PUA,
+    fn private_use_area_flags_its_start_and_end_but_not_the_codepoints_just_outside() {
         // U+D800..=U+DFFF are surrogates and cannot be a `char`, so U+D7FF
-        // stands in for "just before".
-        let ranges = [
-            (
-                "Enclosed Alphanumerics",
-                '\u{2460}',
-                '\u{24FF}',
-                '\u{245F}',
-                '\u{2500}',
-            ),
-            (
-                "Number Forms (Roman numerals)",
-                '\u{2160}',
-                '\u{2188}',
-                '\u{215F}',
-                '\u{2189}',
-            ),
-            // U+3400 just after is the start of CJK Unified Ideographs Extension A.
-            (
-                "Enclosed CJK / CJK Compatibility",
-                '\u{3200}',
-                '\u{33FF}',
-                '\u{31FF}',
-                '\u{3400}',
-            ),
-            ("Card suits", '\u{2660}', '\u{2667}', '\u{265F}', '\u{2668}'),
-            // U+F900 just after is the start of CJK Compatibility Ideographs.
-            (
-                "Private Use Area",
-                '\u{E000}',
-                '\u{F8FF}',
-                '\u{D7FF}',
-                '\u{F900}',
-            ),
-        ];
-        for (name, start, end, before, after) in ranges {
-            assert_eq!(flagged(start), Some(start), "{name}: start");
-            assert_eq!(flagged(end), Some(end), "{name}: end");
-            assert_eq!(flagged(before), None, "{name}: just before");
-            assert_eq!(flagged(after), None, "{name}: just after");
-        }
+        // stands in for "just before". U+F900 is the start of CJK
+        // Compatibility Ideographs.
+        assert_eq!(flagged('\u{E000}'), Some('\u{E000}'), "start");
+        assert_eq!(flagged('\u{F8FF}'), Some('\u{F8FF}'), "end");
+        assert_eq!(flagged('\u{D7FF}'), None, "just before");
+        assert_eq!(flagged('\u{F900}'), None, "just after");
     }
 
     #[test]
-    fn well_known_machine_dependent_characters_are_flagged() {
-        // Spot-checks with real characters; U+3251..=U+32FF (circled kanji)
-        // is a subset of the enclosed-CJK range above.
-        for c in ['①', 'Ⅰ', '㉑', '♠'] {
-            assert_eq!(flagged(c), Some(c));
+    fn standard_symbols_that_used_to_be_refused_are_not_flagged() {
+        // Circled numbers, Roman numerals, circled kanji, unit and era
+        // ligatures and card suits, including both ends of the old ranges.
+        for c in [
+            '①', '⑳', '㉑', '⓿', 'Ⅰ', 'Ⅻ', 'ↈ', '㈱', '㌔', '㍻', '㏿', '♠', '♧',
+        ] {
+            assert_eq!(flagged(c), None, "{c}");
         }
+        assert_eq!(is_machine_dependent_filename("①②_Ⅲ㈱♠.mp4"), None);
     }
 
     #[test]
@@ -100,11 +71,25 @@ mod tests {
 
     #[test]
     fn returns_the_first_offending_character_when_multiple_are_present() {
-        assert_eq!(is_machine_dependent_filename("①②③.mp4"), Some('①'));
+        assert_eq!(
+            is_machine_dependent_filename("a\u{E001}b\u{E000}.mp4"),
+            Some('\u{E001}')
+        );
     }
 
     #[test]
     fn detects_offending_characters_in_the_extension() {
-        assert_eq!(is_machine_dependent_filename("movie.①mp4"), Some('①'));
+        assert_eq!(
+            is_machine_dependent_filename("movie.\u{E000}mp4"),
+            Some('\u{E000}')
+        );
+    }
+
+    #[test]
+    fn an_offending_character_next_to_allowed_symbols_is_still_found() {
+        assert_eq!(
+            is_machine_dependent_filename("①\u{E000}②.mp4"),
+            Some('\u{E000}')
+        );
     }
 }

@@ -73,8 +73,8 @@ fn the_log_records_every_kind_of_row_and_the_summary() {
         }),
         row(|r| {
             r.movie_id = 4;
-            r.movie_name = "bad\u{2460}.mp4".into();
-            r.movie_path = "Z:\\gone\\bad\u{2460}.mp4".into();
+            r.movie_name = "bad\u{E000}.mp4".into();
+            r.movie_path = "Z:\\gone\\bad\u{E000}.mp4".into();
         }),
         row(|r| {
             r.movie_id = 5;
@@ -127,7 +127,7 @@ fn the_log_records_every_kind_of_row_and_the_summary() {
     assert!(line(2).contains("紐付け=紐付け成功"));
     assert!(line(3).contains("紐付け=変換失敗(WebPへの変換に失敗"));
     assert!(line(4).starts_with("[未登録]") && line(4).contains("状態=判定前"));
-    assert!(line(4).contains("機種依存文字のため未登録(検出した文字: \u{2460})"));
+    assert!(line(4).contains("機種依存文字のため未登録(検出した文字: \u{E000})"));
     assert!(line(5).starts_with("[失敗]") && line(5).contains("取り込めなかった(日付が不正"));
     assert!(line(6).starts_with("[失敗]") && line(6).contains("データベースへの書き込みに失敗"));
     assert!(line(7).starts_with("[スキップ]") && line(7).contains("登録済みのためスキップ"));

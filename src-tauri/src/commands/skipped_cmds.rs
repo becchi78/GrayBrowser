@@ -337,7 +337,7 @@ mod tests {
     use gb_core::testing::fake_path_existence::FakePathExistence;
     use std::cell::RefCell;
 
-    const OLD_PATH: &str = "C:/videos/movie\u{2460}.mp4";
+    const OLD_PATH: &str = "C:/videos/movie\u{E000}.mp4";
 
     fn setup(existing: &[&str]) -> (tempfile::TempDir, Db, i64, FakeFileRenamer) {
         let (dir, db) = init_temp_db();
@@ -345,9 +345,9 @@ mod tests {
             &db.writer.lock().unwrap(),
             &NewSkippedFile {
                 file_path: OLD_PATH.to_string(),
-                file_name: "movie\u{2460}.mp4".to_string(),
+                file_name: "movie\u{E000}.mp4".to_string(),
                 reason: "machine_dependent_char",
-                detected_char: '\u{2460}',
+                detected_char: '\u{E000}',
             },
         )
         .unwrap();
@@ -488,9 +488,9 @@ mod tests {
             &db.writer.lock().unwrap(),
             &NewSkippedFile {
                 file_path: OLD_PATH.to_string(),
-                file_name: "movie\u{2460}.mp4".to_string(),
+                file_name: "movie\u{E000}.mp4".to_string(),
                 reason: "machine_dependent_char",
-                detected_char: '\u{2460}',
+                detected_char: '\u{E000}',
             },
             &payload().to_json(),
         )
@@ -604,9 +604,9 @@ mod tests {
             &db.writer.lock().unwrap(),
             &NewSkippedFile {
                 file_path: OLD_PATH.to_string(),
-                file_name: "movie\u{2460}.mp4".to_string(),
+                file_name: "movie\u{E000}.mp4".to_string(),
                 reason: "machine_dependent_char",
-                detected_char: '\u{2460}',
+                detected_char: '\u{E000}',
             },
         )
         .unwrap();
@@ -652,7 +652,7 @@ mod tests {
             &fs,
             &notifier,
             id,
-            "movie\u{2461}.mp4",
+            "movie\u{E001}.mp4",
         );
 
         let err = r.unwrap_err();
@@ -762,7 +762,7 @@ mod tests {
                 Ok(())
             },
             id,
-            "movie\u{2461}.mp4",
+            "movie\u{E001}.mp4",
         );
 
         let err = r.unwrap_err();

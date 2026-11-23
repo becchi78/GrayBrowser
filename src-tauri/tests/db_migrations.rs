@@ -325,7 +325,7 @@ fn migrating_from_a_real_v8_database_keeps_existing_skipped_rows_visible() {
         apply_up_to(&conn, 8);
         conn.execute(
             "INSERT INTO skipped_files (file_path, file_name, reason, detected_char)
-             VALUES ('D:\\v\\a\u{2460}.mp4', 'a\u{2460}.mp4', 'machine_dependent_char', '\u{2460}')",
+             VALUES ('D:\\v\\a\u{E000}.mp4', 'a\u{E000}.mp4', 'machine_dependent_char', '\u{E000}')",
             [],
         )
         .unwrap();
