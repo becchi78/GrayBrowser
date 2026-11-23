@@ -377,14 +377,15 @@ fn process_changed_file(
         // Locked by a writer (e.g. a copy in progress): the caller retries
         // later, as no further event is guaranteed once the lock is released.
         Ok(scan::ProcessOutcome::SkippedUnreadable) => RetryOutcome::StillUnreadable,
-        // A new "unregistered" row only changes that list, so the frontend is
-        // told but the thumbnail/metadata queues are not woken (no video was
-        // added).
+        // Only a row newly added to (or restored in) the unregistered list is
+        // announced; an already-listed file seen again changes nothing. No
+        // video was added, so the thumbnail/metadata queues are not woken.
         Ok(outcome) if outcome.recorded_skipped_file() => {
             notifier.notify_changed();
             RetryOutcome::Done
         }
-        // Unchanged/BlockedByCollision write nothing, so no emit.
+        // Unchanged/BlockedByCollision/an already-listed skipped file change
+        // nothing visible, so no emit.
         Ok(_) => RetryOutcome::Done,
         Err(e) => {
             log::error!("failed to process watch event for {}: {e}", path.display());
@@ -664,6 +665,46 @@ mod tests {
             !follow_up.has_pending(),
             "no video was added, so no thumbnail/metadata work"
         );
+    }
+
+    #[test]
+    fn a_second_event_for_an_already_listed_unregistered_file_is_not_announced() {
+        let env = Env::new();
+        let video = env.file("\u{E000}movie.mp4", b"bytes");
+        env.send_quietly(WatchEventKind::Created, &video);
+
+        let notifier = FakeCatalogNotifier::default();
+        env.send(
+            WatchEventKind::Modified,
+            &video,
+            &notifier,
+            &parked_follow_up(),
+        );
+
+        assert_eq!(notifier.calls(), 0);
+    }
+
+    #[test]
+    fn a_dismissed_unregistered_file_seen_again_is_announced() {
+        let env = Env::new();
+        let video = env.file("\u{E000}movie.mp4", b"bytes");
+        env.send_quietly(WatchEventKind::Created, &video);
+        env.db
+            .writer
+            .lock()
+            .unwrap()
+            .execute("UPDATE skipped_files SET dismissed = 1", [])
+            .unwrap();
+
+        let notifier = FakeCatalogNotifier::default();
+        env.send(
+            WatchEventKind::Modified,
+            &video,
+            &notifier,
+            &parked_follow_up(),
+        );
+
+        assert_eq!(notifier.calls(), 1);
     }
 
     #[test]

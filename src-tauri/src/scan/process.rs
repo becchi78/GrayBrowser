@@ -38,6 +38,9 @@ pub enum ProcessOutcome {
     },
     SkippedInvalidName {
         detected_char: char,
+        /// The unregistered list changed (a new row, or a dismissed one came
+        /// back), as opposed to the same row merely being seen again.
+        newly_recorded: bool,
     },
     /// File couldn't be opened or hashed (lock, permission, vanished
     /// between discovery and here). Skipped and retried on the next
@@ -59,10 +62,18 @@ impl ProcessOutcome {
         )
     }
 
-    /// Whether a row was written to `skipped_files`. The frontend's
-    /// unregistered list needs a refresh for this, but no queue needs waking.
+    /// Whether the unregistered list changed. The frontend needs a refresh for
+    /// this, but no queue needs waking. Seeing an already-listed file again is
+    /// not a change: the NAS poll re-detects every such file each cycle, and
+    /// announcing each time would refetch the whole library for nothing.
     pub fn recorded_skipped_file(&self) -> bool {
-        matches!(self, Self::SkippedInvalidName { .. })
+        matches!(
+            self,
+            Self::SkippedInvalidName {
+                newly_recorded: true,
+                ..
+            }
+        )
     }
 }
 
@@ -121,9 +132,12 @@ pub fn process_detected_file(
             skipped.file_name
         );
         let conn = db.writer.lock().unwrap();
-        queries::upsert_skipped_file_found_on_disk(&conn, &skipped)
+        let newly_recorded = queries::upsert_skipped_file_found_on_disk(&conn, &skipped)
             .inspect_err(|e| log::error!("failed to record skipped file {file_path}: {e}"))?;
-        return Ok(ProcessOutcome::SkippedInvalidName { detected_char });
+        return Ok(ProcessOutcome::SkippedInvalidName {
+            detected_char,
+            newly_recorded,
+        });
     }
 
     let known = {
@@ -665,7 +679,10 @@ mod process_outcome_tests {
                 video_id: "a".into(),
                 colliding_video_id: "b".into(),
             },
-            ProcessOutcome::SkippedInvalidName { detected_char: '?' },
+            ProcessOutcome::SkippedInvalidName {
+                detected_char: '?',
+                newly_recorded: true,
+            },
             ProcessOutcome::SkippedUnreadable,
         ];
         assert!(changed.iter().all(ProcessOutcome::changed_catalog));
@@ -673,8 +690,13 @@ mod process_outcome_tests {
     }
 
     #[test]
-    fn only_skipped_invalid_name_records_a_skipped_file() {
-        assert!(ProcessOutcome::SkippedInvalidName { detected_char: '?' }.recorded_skipped_file());
+    fn only_a_newly_recorded_skipped_file_counts_as_a_list_change() {
+        let skipped = |newly_recorded| ProcessOutcome::SkippedInvalidName {
+            detected_char: '?',
+            newly_recorded,
+        };
+        assert!(skipped(true).recorded_skipped_file());
+        assert!(!skipped(false).recorded_skipped_file());
         let others = [
             ProcessOutcome::Registered,
             ProcessOutcome::Reconciled,

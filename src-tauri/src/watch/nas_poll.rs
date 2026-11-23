@@ -292,16 +292,19 @@ fn handle_walked_file(
                 ctx.notifier.notify_changed();
                 ctx.follow_up.trigger();
             }
-            // Same reasoning as watch::process_changed_file: only the
-            // unregistered list changed, so notify without waking the
-            // thumbnail/metadata queues.
+            // Only a newly listed (or restored) unregistered file is
+            // announced. The poll sees every such file as a candidate each
+            // cycle, so announcing the re-detections would refetch the
+            // whole library every cycle for no visible change. No video
+            // was added, so the thumbnail/metadata queues stay asleep.
             Ok(outcome) if outcome.recorded_skipped_file() => {
                 ctx.notifier.notify_changed();
             }
             // The remaining outcomes (Unchanged shouldn't occur here
             // given the classification check above,
-            // SkippedUnreadable/BlockedByCollision) write nothing, so
-            // nothing to notify the frontend about.
+            // SkippedUnreadable/BlockedByCollision/an already-listed
+            // skipped file) change nothing visible, so nothing to notify
+            // the frontend about.
             Ok(_) => {}
             Err(err) => {
                 log::error!("failed to process NAS file {path_str}: {err}");
@@ -527,6 +530,70 @@ mod tests {
 
         assert_eq!(notifier.calls(), 1);
         assert!(!follow_up.has_pending());
+    }
+
+    #[test]
+    fn repeated_polls_announce_an_unregistered_file_only_the_first_time() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("\u{E000}movie.mp4"), b"bytes").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let follow_up =
+            FollowUp::with_timing(Duration::from_secs(60), Duration::from_secs(60), || {});
+        let poll = |notifier: &FakeCatalogNotifier| {
+            run_nas_diff_scan(
+                &db,
+                thumbs_root.path(),
+                &folder,
+                &AtomicBool::new(false),
+                notifier,
+                &follow_up,
+                &all_reachable(),
+            )
+            .unwrap();
+        };
+
+        let first = FakeCatalogNotifier::default();
+        poll(&first);
+        let second = FakeCatalogNotifier::default();
+        poll(&second);
+
+        assert_eq!(first.calls(), 1);
+        assert_eq!(second.calls(), 0);
+        assert!(!follow_up.has_pending());
+    }
+
+    #[test]
+    fn a_poll_announces_a_dismissed_unregistered_file_coming_back() {
+        let (_db_dir, db) = init_temp_db();
+        let thumbs_root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("\u{E000}movie.mp4"), b"bytes").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let poll = |notifier: &FakeCatalogNotifier| {
+            run_nas_diff_scan(
+                &db,
+                thumbs_root.path(),
+                &folder,
+                &AtomicBool::new(false),
+                notifier,
+                &FollowUp::noop(),
+                &all_reachable(),
+            )
+            .unwrap();
+        };
+        poll(&FakeCatalogNotifier::default());
+        db.writer
+            .lock()
+            .unwrap()
+            .execute("UPDATE skipped_files SET dismissed = 1", [])
+            .unwrap();
+
+        let notifier = FakeCatalogNotifier::default();
+        poll(&notifier);
+
+        assert_eq!(notifier.calls(), 1);
     }
 
     #[test]
