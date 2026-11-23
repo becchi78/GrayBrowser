@@ -518,20 +518,25 @@ test("期限前に条件が変わると、古い条件では取り直さず、�
   expect(lastListArgs()?.search).toBe("dog");
 });
 
-test("応答の順序が入れ替わったら、最新の要求の応答だけを反映する", async () => {
+test("取得中に届いた通知は重ねて取得せず、完了後に1回だけ取り直して最新を反映する", async () => {
   const first = deferred<VideoDto[]>();
   const second = deferred<VideoDto[]>();
   vi.mocked(api.listVideos).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   await renderGrid();
   await emitCatalogChanged();
+  await emitCatalogChanged();
+  expect(api.listVideos).toHaveBeenCalledTimes(1);
+
+  await act(async () => first.resolve(videos("old")));
+  await settle();
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
+  expect(rowIds()).toEqual(["old"]);
 
   await act(async () => second.resolve(videos("new")));
   await settle();
-  await act(async () => first.resolve(videos("old")));
-  await settle();
-
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
   expect(rowIds()).toEqual(["new"]);
-  expect(catalogVersions()).toEqual(["1"]);
+  expect(catalogVersions()).toEqual(["2"]);
 });
 
 test("条件が変わった後に届いた古い条件の応答は捨てる", async () => {
@@ -548,6 +553,43 @@ test("条件が変わった後に届いた古い条件の応答は捨てる", as
 
   expect(rowIds()).toEqual(["dog"]);
   expect(catalogVersions()).toEqual(["1"]);
+});
+
+test("取得中に条件が変わっても予約にせず、新しい条件で即座に取得し、古い応答は反映しない", async () => {
+  const first = deferred<VideoDto[]>();
+  const second = deferred<VideoDto[]>();
+  vi.mocked(api.listVideos).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  const { update } = await renderGrid();
+  expect(api.listVideos).toHaveBeenCalledTimes(1);
+
+  // 1回目が未解決のまま条件を変える。取得中でも待たずに呼ばれる。
+  await update({ search: "dog" });
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
+  expect(lastListArgs()?.search).toBe("dog");
+
+  await act(async () => second.resolve(videos("dog")));
+  await settle();
+  expect(rowIds()).toEqual(["dog"]);
+
+  // 古い条件の応答が後から届いても、一覧にも後続の取得にも影響しない。
+  await act(async () => first.resolve(videos("stale")));
+  await settle();
+  expect(rowIds()).toEqual(["dog"]);
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
+});
+
+test("取得中の通知で予約した後にアンマウントすると、取得の完了後に取り直さない", async () => {
+  const first = deferred<VideoDto[]>();
+  vi.mocked(api.listVideos).mockReturnValueOnce(first.promise);
+  const { unmount } = await renderGrid();
+  await emitCatalogChanged();
+  expect(api.listVideos).toHaveBeenCalledTimes(1);
+
+  unmount();
+  await act(async () => first.resolve(videos("late")));
+  await settle();
+
+  expect(api.listVideos).toHaveBeenCalledTimes(1);
 });
 
 test("取り直しに失敗しても、一覧と catalogVersion は変わらない", async () => {

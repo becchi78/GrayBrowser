@@ -228,7 +228,10 @@ pub async fn start_scan(
 /// `ratings`, when non-empty, restricts results to videos whose `rating`
 /// equals any listed value exactly (the rating bar; OR) -- `None` or an empty
 /// list is a no-op (matches every row, same as omitting it).
-#[tauri::command]
+///
+/// `async` so a tens-of-thousands-row read runs off the main thread, which
+/// would otherwise stall window events while a large library is being read.
+#[tauri::command(async)]
 pub fn list_videos(
     db: State<Db>,
     search: Option<String>,

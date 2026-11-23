@@ -75,7 +75,9 @@ pub struct GenerationFailuresDto {
 
 /// Returns every online video whose thumbnail and/or metadata generation has
 /// exhausted its automatic-retry budget, for a notification panel.
-#[tauri::command]
+///
+/// `async` so the read doesn't occupy the main thread.
+#[tauri::command(async)]
 pub fn list_generation_failures(db: State<Db>) -> Result<GenerationFailuresDto, String> {
     let thumbnail_failures = queries::list_videos_with_exhausted_thumbnail_attempts(&db.read_pool)
         .map_err(|e| e.to_string())?

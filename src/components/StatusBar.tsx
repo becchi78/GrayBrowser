@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { getThumbnailProgress } from "../api";
 import { onThumbnailProgress } from "../events";
 import { JUMP_PERCENTS } from "../lib/jumpToPercent";
-import { formatThumbnailProgress } from "../lib/thumbnailProgress";
+import { formatThumbnailProgress, isFinalProgress } from "../lib/thumbnailProgress";
+import { createThrottledSink } from "../lib/timing";
 import type { ThumbnailProgress } from "../types";
 import { DuplicateGroupsPanel } from "./DuplicateGroupsPanel";
 import { DevModeBadge } from "./DevModeBadge";
@@ -19,6 +20,8 @@ import { SkippedFilesPanel } from "./SkippedFilesPanel";
 // below current even while their own panel is closed; each component
 // decides from its `open` prop whether to render its section markup.
 type PanelKind = "unregistered" | "duplicates" | "failed";
+
+const PROGRESS_THROTTLE_MS = 250;
 
 interface Props {
   refreshKey: number;
@@ -109,16 +112,26 @@ export function StatusBar({ refreshKey, videoCount, selectedCount, onJump }: Pro
     // so read the current value once; events take over after that. A read
     // that resolves after an event must not overwrite the newer value.
     let received = false;
+    // 1件ごとに届く進捗をそのまま描画すると、大量生成中は描画が止まない。
+    // 完了(done が total に達した)と total が 0 の値は、最終状態なので間引かない。
+    const sink = createThrottledSink<ThumbnailProgress>(
+      setThumbnailProgress,
+      PROGRESS_THROTTLE_MS,
+      isFinalProgress,
+    );
     const unsubscribe = onThumbnailProgress((p) => {
       received = true;
-      setThumbnailProgress(p);
+      sink.push(p);
     });
     getThumbnailProgress()
       .then((p) => {
         if (!received) setThumbnailProgress(p);
       })
       .catch(() => {});
-    return unsubscribe;
+    return () => {
+      sink.cancel();
+      unsubscribe();
+    };
   }, []);
 
   const thumbnailProgressText = thumbnailProgress

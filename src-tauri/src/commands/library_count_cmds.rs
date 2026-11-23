@@ -50,7 +50,9 @@ fn library_counts(db: &Db) -> anyhow::Result<LibraryCountsDto> {
     })
 }
 
-#[tauri::command]
+/// `async` so the aggregate queries over the whole library don't occupy the
+/// main thread.
+#[tauri::command(async)]
 pub fn get_library_counts(db: State<Db>) -> Result<LibraryCountsDto, String> {
     library_counts(&db).map_err(|e| e.to_string())
 }

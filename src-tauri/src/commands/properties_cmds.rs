@@ -35,7 +35,8 @@ impl From<queries::VideoPropertiesRow> for VideoPropertiesDto {
     }
 }
 
-#[tauri::command]
+/// `async` so the read doesn't occupy the main thread.
+#[tauri::command(async)]
 pub fn get_video_properties(
     db: State<Db>,
     video_id: String,
