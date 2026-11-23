@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listVideos } from "./api";
 import { onCatalogChanged } from "./events";
+import { createCoalescingRunner } from "./lib/coalescingRunner";
 import { createLatestOnlyGuard } from "./lib/latestRequest";
 import type { SortDirection, SortField, VideoDto } from "./types";
 
@@ -76,7 +77,11 @@ export function useVideoList(
         console.error(e);
       }
     };
-    tick();
+    // 取得中に届いた要求は重ねて呼ばず、終了後に最新の条件で1回だけ取り直す。
+    // 数万行の取得を重ねると、重い応答の処理が積み上がって画面が固まるため。
+    // 上のガードは、effect をまたいだ古い応答を捨てる役目として残す。
+    const runner = createCoalescingRunner(tick);
+    runner.request();
 
     let lastRun = 0;
     let trailingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -87,7 +92,7 @@ export function useVideoList(
       if (elapsed >= NOTIFY_THROTTLE_MS) {
         lastRun = Date.now();
         trailingPending = false;
-        tick();
+        runner.request();
         return;
       }
       trailingPending = true;
@@ -97,7 +102,7 @@ export function useVideoList(
           if (trailingPending) {
             trailingPending = false;
             lastRun = Date.now();
-            tick();
+            runner.request();
           }
         }, NOTIFY_THROTTLE_MS - elapsed);
       }
@@ -107,6 +112,7 @@ export function useVideoList(
 
     return () => {
       cancelled = true;
+      runner.cancel();
       unlisten();
       if (trailingTimer !== null) clearTimeout(trailingTimer);
     };

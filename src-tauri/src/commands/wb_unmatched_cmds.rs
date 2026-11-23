@@ -133,12 +133,14 @@ fn db_err(e: impl std::fmt::Display) -> String {
     format!("データベースの操作に失敗しました: {e}")
 }
 
-#[tauri::command]
+/// `async` so the read doesn't occupy the main thread.
+#[tauri::command(async)]
 pub fn list_unmatched_thumbnails(db: State<Db>) -> Result<Vec<UnmatchedThumbnail>, String> {
     list_impl(&db).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+/// `async` so the candidate search doesn't occupy the main thread.
+#[tauri::command(async)]
 pub fn search_link_candidates(
     db: State<Db>,
     term: String,

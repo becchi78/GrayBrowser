@@ -44,7 +44,10 @@ fn progress_dto(queue: &ThumbnailQueueHandle) -> ThumbnailProgressDto {
 /// `db: State<Db>` is a Tauri-managed dependency, not a caller-supplied
 /// argument, so resolving `file_path` -> `watch_folders` -> the video's
 /// resolved subdirectory here doesn't affect the IPC contract at all.
-#[tauri::command]
+///
+/// `async` so the DB and file reads don't occupy the main thread while
+/// thumbnails are being generated in bulk.
+#[tauri::command(async)]
 pub fn get_thumbnails(db: State<Db>, video_id: String) -> Result<Option<Vec<String>>, String> {
     let file_path = queries::find_video_by_id(&db.read_pool, &video_id)
         .map_err(|e| e.to_string())?

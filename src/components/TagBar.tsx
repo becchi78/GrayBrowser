@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getCollapsedTagGroups, getTagLayout, setCollapsedTagGroups } from "../api";
 import { onCatalogChanged } from "../events";
+import { createTrailingDebounce } from "../lib/timing";
+import { REFETCH_DELAY_MS } from "../useLibraryCounts";
 import type { TagLayoutItemDto, TagWithCountDto } from "../types";
 import { CountPill } from "./CountPill";
 import { ChevronRightIcon, TagGroupIcon } from "./SidebarIcons";
@@ -42,9 +44,12 @@ export function TagBar({ selected, onChange, refreshKey, showCounts = false }: P
         .catch(console.error);
     };
     reload();
-    const unlisten = onCatalogChanged(reload);
+    // 生成中は通知が続けて届くので、最後の通知から待って1回だけ取り直す。
+    const debounced = createTrailingDebounce(reload, REFETCH_DELAY_MS);
+    const unlisten = onCatalogChanged(debounced.call);
     return () => {
       cancelled = true;
+      debounced.cancel();
       unlisten();
     };
   }, [refreshKey]);

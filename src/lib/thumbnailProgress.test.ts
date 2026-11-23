@@ -2,7 +2,7 @@
 // パターン(package.jsonのtest:unit参照)。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatThumbnailProgress } from "./thumbnailProgress.ts";
+import { formatThumbnailProgress, isFinalProgress } from "./thumbnailProgress.ts";
 
 test("totalが0なら表示しない(null)", () => {
   assert.equal(formatThumbnailProgress({ done: 0, total: 0 }), null);
@@ -20,4 +20,12 @@ test("開始直後(0件完了)でも表示する", () => {
     formatThumbnailProgress({ done: 0, total: 3 }),
     "サムネイル生成（0/3件）",
   );
+});
+
+test("isFinalProgress: 完了とtotal==0は最終値、進行中は違う", () => {
+  assert.equal(isFinalProgress({ done: 0, total: 0 }), true);
+  assert.equal(isFinalProgress({ done: 5, total: 5 }), true);
+  assert.equal(isFinalProgress({ done: 6, total: 5 }), true);
+  assert.equal(isFinalProgress({ done: 4, total: 5 }), false);
+  assert.equal(isFinalProgress({ done: 0, total: 5 }), false);
 });

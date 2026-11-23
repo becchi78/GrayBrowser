@@ -9,7 +9,9 @@ import {
   retryThumbnailGeneration,
 } from "./api";
 import { onCatalogChanged } from "./events";
+import { createTrailingDebounce } from "./lib/timing";
 import { withoutItem } from "./lib/withoutKey";
+import { REFETCH_DELAY_MS } from "./useLibraryCounts";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "./types";
 import { errorText } from "./lib/errorText";
 
@@ -85,8 +87,11 @@ export function useGenerationFailures(
   }, [refreshKey]);
 
   useEffect(() => {
-    const unlisten = onCatalogChanged(() => refresh());
+    // 生成中は通知が続けて届くので、最後の通知から待って1回だけ取り直す。
+    const debounced = createTrailingDebounce(() => refresh(), REFETCH_DELAY_MS);
+    const unlisten = onCatalogChanged(debounced.call);
     return () => {
+      debounced.cancel();
       unlisten();
     };
   }, []);

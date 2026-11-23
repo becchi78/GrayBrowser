@@ -6,6 +6,7 @@ import * as events from "../events";
 import { deferred, never, settle } from "../testing/async";
 import { renderWithProviders } from "../testing/render";
 import type { ExhaustedMetadataDto, ExhaustedThumbnailDto, GenerationFailuresDto } from "../types";
+import { REFETCH_DELAY_MS } from "../useLibraryCounts";
 import { GenerationFailuresPanel } from "./GenerationFailuresPanel";
 
 vi.mock("../api", () => ({
@@ -77,11 +78,20 @@ beforeEach(() => {
   vi.mocked(api.retryMetadataProbe).mockResolvedValue(undefined);
 });
 
-/** catalog:changed を届け、取り直しの結果が描画されるまで待つ。 */
+/** catalog:changed を届け、デバウンスの待ちを進めて、取り直しの結果が描画されるまで待つ。 */
 async function emitCatalogChanged() {
-  await act(async () => {
-    emitCatalog!();
-  });
+  // デバウンスのタイマーは通知を届けた時点で作られるので、その前から偽にしておく。
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    await act(async () => {
+      emitCatalog!();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(REFETCH_DELAY_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
   await settle();
 }
 

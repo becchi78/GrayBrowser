@@ -200,7 +200,9 @@ fn layout_dto(rows: Vec<queries::LayoutItemRow>) -> Vec<TagLayoutItemDto> {
 
 /// Ungrouped tags and tag groups in display order, tags with their video
 /// counts.
-#[tauri::command]
+///
+/// `async` so the per-tag count query doesn't occupy the main thread.
+#[tauri::command(async)]
 pub fn get_tag_layout(db: State<Db>) -> Result<Vec<TagLayoutItemDto>, String> {
     queries::get_tag_layout(&db.read_pool)
         .map(layout_dto)

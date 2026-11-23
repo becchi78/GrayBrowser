@@ -518,20 +518,25 @@ test("期限前に条件が変わると、古い条件では取り直さず、�
   expect(lastListArgs()?.search).toBe("dog");
 });
 
-test("応答の順序が入れ替わったら、最新の要求の応答だけを反映する", async () => {
+test("取得中に届いた通知は重ねて取得せず、完了後に1回だけ取り直して最新を反映する", async () => {
   const first = deferred<VideoDto[]>();
   const second = deferred<VideoDto[]>();
   vi.mocked(api.listVideos).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   await renderGrid();
   await emitCatalogChanged();
+  await emitCatalogChanged();
+  expect(api.listVideos).toHaveBeenCalledTimes(1);
+
+  await act(async () => first.resolve(videos("old")));
+  await settle();
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
+  expect(rowIds()).toEqual(["old"]);
 
   await act(async () => second.resolve(videos("new")));
   await settle();
-  await act(async () => first.resolve(videos("old")));
-  await settle();
-
+  expect(api.listVideos).toHaveBeenCalledTimes(2);
   expect(rowIds()).toEqual(["new"]);
-  expect(catalogVersions()).toEqual(["1"]);
+  expect(catalogVersions()).toEqual(["2"]);
 });
 
 test("条件が変わった後に届いた古い条件の応答は捨てる", async () => {
