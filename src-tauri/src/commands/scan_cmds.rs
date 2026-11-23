@@ -383,9 +383,9 @@ mod tests {
             let conn = db.writer.lock().unwrap();
             queries::set_watch_folders(&conn, &["C:/a".to_string(), "W:/n".to_string()]).unwrap();
             for path in [
-                "C:/a/gone\u{2460}.mp4",
-                "C:/a/here\u{2460}.mp4",
-                "W:/n/x\u{2460}.mp4",
+                "C:/a/gone\u{E000}.mp4",
+                "C:/a/here\u{E000}.mp4",
+                "W:/n/x\u{E000}.mp4",
             ] {
                 queries::upsert_skipped_file(
                     &conn,
@@ -393,7 +393,7 @@ mod tests {
                         file_path: path.to_string(),
                         file_name: path[4..].to_string(),
                         reason: "machine_dependent_char",
-                        detected_char: '\u{2460}',
+                        detected_char: '\u{E000}',
                     },
                 )
                 .unwrap();
@@ -402,7 +402,7 @@ mod tests {
         // W:/n is down; its parent "exists" in the fake, so only the
         // reachability check can keep its row from reading as missing.
         let registry = registry_over(Arc::new(FakeFolderProbe::with_unreachable(&["W:/n"])));
-        let fs = FakePathExistence::with_paths(&["C:/a", "C:/a/here\u{2460}.mp4", "W:/n"]);
+        let fs = FakePathExistence::with_paths(&["C:/a", "C:/a/here\u{E000}.mp4", "W:/n"]);
 
         let list = list_skipped_files_impl(&db, &registry, &fs).unwrap();
 
@@ -412,8 +412,8 @@ mod tests {
                 .unwrap()
                 .file_missing
         };
-        assert!(missing("gone\u{2460}.mp4"));
-        assert!(!missing("here\u{2460}.mp4"));
-        assert!(!missing("x\u{2460}.mp4"));
+        assert!(missing("gone\u{E000}.mp4"));
+        assert!(!missing("here\u{E000}.mp4"));
+        assert!(!missing("x\u{E000}.mp4"));
     }
 }

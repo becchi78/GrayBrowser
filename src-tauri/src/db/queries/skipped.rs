@@ -202,9 +202,9 @@ mod skipped_file_tests {
     fn skipped(path: &str) -> NewSkippedFile {
         NewSkippedFile {
             file_path: path.to_string(),
-            file_name: "a\u{2460}.mp4".to_string(),
+            file_name: "a\u{E000}.mp4".to_string(),
             reason: "machine_dependent_char",
-            detected_char: '\u{2460}',
+            detected_char: '\u{E000}',
         }
     }
 

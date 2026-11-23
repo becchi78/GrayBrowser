@@ -126,10 +126,10 @@ mod tests {
             queries::upsert_skipped_file(
                 &conn,
                 &NewSkippedFile {
-                    file_path: "C:/a/x\u{2460}.mp4".into(),
-                    file_name: "x\u{2460}.mp4".into(),
+                    file_path: "C:/a/x\u{E000}.mp4".into(),
+                    file_name: "x\u{E000}.mp4".into(),
                     reason: "machine_dependent_char",
-                    detected_char: '\u{2460}',
+                    detected_char: '\u{E000}',
                 },
             )
             .unwrap();
@@ -154,7 +154,7 @@ mod tests {
             .unwrap();
 
         assert!(text.contains("Thumbnails: 3 processed, 1 failed"));
-        assert!(text.contains("machine_dependent_char (character \u{2460})"));
+        assert!(text.contains("machine_dependent_char (character \u{E000})"));
         assert!(text.contains("Thumbnail generation failures: 1\n  C:/a/broken.mp4"));
     }
 }

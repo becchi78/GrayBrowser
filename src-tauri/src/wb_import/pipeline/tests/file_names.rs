@@ -25,9 +25,9 @@ fn skipped_file_paths(h: &Harness) -> Vec<String> {
 fn machine_dependent_names_are_recorded_as_skipped_files_not_videos() {
     let h = harness();
     let names = [
-        "circled\u{2460}.mp4",
-        "roman\u{2163}.mp4",
-        "corp\u{3231}.mp4",
+        "pua_start\u{E000}.mp4",
+        "pua_next\u{E001}.mp4",
+        "pua_end\u{F8FF}.mp4",
     ];
     let dir = OnlineDir::new("plain.mp4");
     for name in names {
@@ -65,9 +65,35 @@ fn machine_dependent_names_are_recorded_as_skipped_files_not_videos() {
 }
 
 #[test]
+fn circled_and_roman_numerals_in_names_register_normally() {
+    let h = harness();
+    let names = [
+        "circled\u{2460}.mp4",
+        "roman\u{2163}.mp4",
+        "corp\u{3231}.mp4",
+    ];
+    let dir = OnlineDir::new("plain.mp4");
+    for name in names {
+        std::fs::write(dir.dir.path().join(name), b"video bytes").unwrap();
+    }
+    let rows = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| named_row(i as i64 + 1, &dir.folder(), n))
+        .collect();
+
+    let summary = import_with_lister(&h, rows, &FakeDirLister::default(), None);
+
+    assert_eq!(summary.skipped_invalid_name, 0);
+    assert_eq!(summary.registered, 3);
+    assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 3);
+    assert!(skipped_file_paths(&h).is_empty());
+}
+
+#[test]
 fn offline_rows_are_judged_by_name_alone() {
     let h = harness();
-    let row = named_row(1, "Z:\\gone", "off\u{2460}.mp4");
+    let row = named_row(1, "Z:\\gone", "off\u{E000}.mp4");
 
     let summary = import_with_lister(&h, vec![row], &FakeDirLister::default(), None);
 
@@ -76,7 +102,7 @@ fn offline_rows_are_judged_by_name_alone() {
     assert_eq!(count_of(&h, "SELECT COUNT(*) FROM videos"), 0);
     assert_eq!(
         skipped_file_paths(&h),
-        vec!["Z:\\gone\\off\u{2460}.mp4".to_string()]
+        vec!["Z:\\gone\\off\u{E000}.mp4".to_string()]
     );
     let payload: Option<String> =
         h.db.writer
@@ -92,7 +118,7 @@ fn offline_rows_are_judged_by_name_alone() {
 #[test]
 fn the_name_is_judged_after_restoring_question_marks() {
     let h = harness();
-    let real = "a\u{2460}.mp4".to_string();
+    let real = "a\u{E000}.mp4".to_string();
     let dir = OnlineDir::new(&real);
     let lister = FakeDirLister::default().with_dir(&dir.folder(), &[&real]);
 
@@ -120,12 +146,12 @@ fn a_question_mark_name_that_restores_to_a_clean_name_still_registers() {
 #[test]
 fn a_refused_rows_folder_does_not_become_a_watch_folder() {
     let h = harness();
-    let dir = OnlineDir::new("bad\u{2460}.mp4");
+    let dir = OnlineDir::new("bad\u{E000}.mp4");
     let reconf = FakeWatchReconfigurer::default();
 
     let summary = import_registering(
         &h,
-        vec![named_row(1, &dir.folder(), "bad\u{2460}.mp4")],
+        vec![named_row(1, &dir.folder(), "bad\u{E000}.mp4")],
         &reconf,
     );
 
@@ -138,7 +164,7 @@ fn a_refused_rows_folder_does_not_become_a_watch_folder() {
 #[test]
 fn reimporting_does_not_duplicate_skipped_files() {
     let h = harness();
-    let rows = || vec![named_row(1, "Z:\\gone", "off\u{2460}.mp4")];
+    let rows = || vec![named_row(1, "Z:\\gone", "off\u{E000}.mp4")];
 
     import_with_lister(&h, rows(), &FakeDirLister::default(), None);
     let second = import_with_lister(&h, rows(), &FakeDirLister::default(), None);
@@ -151,22 +177,22 @@ fn reimporting_does_not_duplicate_skipped_files() {
 #[test]
 fn a_refused_rows_legacy_jpg_is_not_counted_for_manual_attention() {
     let h = harness();
-    let dir = OnlineDir::new("bad\u{2460}.mp4");
+    let dir = OnlineDir::new("bad\u{E000}.mp4");
     let bad = row(|r| {
         r.movie_id = 1;
-        r.movie_name = "bad\u{2460}.mp4".to_string();
-        r.movie_path = dir.file("bad\u{2460}.mp4");
+        r.movie_name = "bad\u{E000}.mp4".to_string();
+        r.movie_path = dir.file("bad\u{E000}.mp4");
         r.hash = "1e5e0fbf".to_string();
     });
     let offline_bad = row(|r| {
         r.movie_id = 2;
-        r.movie_name = "off\u{2460}.mp4".to_string();
-        r.movie_path = "Z:\\gone\\off\u{2460}.mp4".to_string();
+        r.movie_name = "off\u{E000}.mp4".to_string();
+        r.movie_path = "Z:\\gone\\off\u{E000}.mp4".to_string();
         r.hash = "2f6f1cc0".to_string();
     });
     for name in [
-        "bad\u{2460}.mp4.#1e5e0fbf.jpg",
-        "off\u{2460}.mp4.#2f6f1cc0.jpg",
+        "bad\u{E000}.mp4.#1e5e0fbf.jpg",
+        "off\u{E000}.mp4.#2f6f1cc0.jpg",
     ] {
         std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
     }
@@ -201,11 +227,11 @@ fn an_unrelated_jpg_is_still_unmatched_next_to_refused_rows() {
     let h = harness();
     let bad = row(|r| {
         r.movie_id = 1;
-        r.movie_name = "off\u{2460}.mp4".to_string();
-        r.movie_path = "Z:\\gone\\off\u{2460}.mp4".to_string();
+        r.movie_name = "off\u{E000}.mp4".to_string();
+        r.movie_path = "Z:\\gone\\off\u{E000}.mp4".to_string();
         r.hash = "2f6f1cc0".to_string();
     });
-    for name in ["off\u{2460}.mp4.#2f6f1cc0.jpg", "Other.mp4.#deadbeef.jpg"] {
+    for name in ["off\u{E000}.mp4.#2f6f1cc0.jpg", "Other.mp4.#deadbeef.jpg"] {
         std::fs::write(h.paths.thumbnail_folder.join(name), b"fake jpg").unwrap();
     }
     let notifier = FakeWbImportNotifier::default();

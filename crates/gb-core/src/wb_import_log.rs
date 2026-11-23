@@ -741,13 +741,13 @@ mod tests {
     #[test]
     fn invalid_name_row_line_shows_the_char_and_undecided_state() {
         let mut r = row(RowOutcome::InvalidName {
-            detected_char: '①'
+            detected_char: '\u{E000}',
         });
         r.availability = Availability::NotJudged;
         let line = format_row(&r, &LinkStatus::NotApplicable);
         assert!(line.starts_with("[未登録] "));
         assert!(line.contains("状態=判定前"));
-        assert!(line.contains("機種依存文字のため未登録(検出した文字: ①)"));
+        assert!(line.contains("機種依存文字のため未登録(検出した文字: \u{E000})"));
     }
 
     #[test]

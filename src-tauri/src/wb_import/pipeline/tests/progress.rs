@@ -158,7 +158,7 @@ fn a_row_whose_database_write_fails_reports_no_progress_even_at_the_interval() {
 
 #[test]
 fn a_row_refused_for_its_name_still_reports_progress_at_the_interval() {
-    let rows = rows_with_special_at_the_interval(named_row(1000, "Z:\\gone", "bad\u{2460}.mp4"));
+    let rows = rows_with_special_at_the_interval(named_row(1000, "Z:\\gone", "bad\u{E000}.mp4"));
     let total = rows.len() as u32;
 
     let notifier = import_rows(rows);
